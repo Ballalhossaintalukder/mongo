@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-
-#include <boost/move/utility_core.hpp>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_transform.h"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -42,32 +37,35 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/pipeline/change_stream_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream.h"
-#include "mongo/db/pipeline/document_source_change_stream_transform.h"
 #include "mongo/db/pipeline/resume_token.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
+#include "mongo/util/string_map.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
-
 namespace mongo {
-
-using boost::intrusive_ptr;
-using boost::optional;
 
 REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamTransform,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamTransform::createFromBson,
                                   true);
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamTransform, DocumentSourceChangeStreamTransform::id)
 
-intrusive_ptr<DocumentSourceChangeStreamTransform> DocumentSourceChangeStreamTransform::create(
-    const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const DocumentSourceChangeStreamSpec& spec) {
+boost::intrusive_ptr<DocumentSourceChangeStreamTransform>
+DocumentSourceChangeStreamTransform::create(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                            const DocumentSourceChangeStreamSpec& spec) {
     return new DocumentSourceChangeStreamTransform(expCtx, spec);
 }
 
-intrusive_ptr<DocumentSourceChangeStreamTransform>
+boost::intrusive_ptr<DocumentSourceChangeStreamTransform>
 DocumentSourceChangeStreamTransform::createFromBson(
     BSONElement rawSpec, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5467601,
@@ -78,6 +76,30 @@ DocumentSourceChangeStreamTransform::createFromBson(
 
     // Set the change stream spec on the expression context.
     expCtx->setChangeStreamSpec(spec);
+
+    auto canUseSupportedEvents = [&]() {
+        if (expCtx->getInRouter()) {
+            // 'supportedEvents' are not supposed to be used on a router.
+            return false;
+        }
+
+        const auto* shardingState = ShardingState::get(expCtx->getOperationContext());
+        if (!shardingState) {
+            // Sharding state is not initialized. This is the case in unit tests and also on
+            // standalone mongods. But on standalone mongods we do not support change streams, so we
+            // will never get here.
+            return true;
+        }
+
+        // Also 'supportedEvents' cannot be used in a non-shard replica set.
+        auto role = shardingState->pollClusterRole();
+        const bool isReplSet = !role.has_value();
+        return !isReplSet;
+    };
+    uassert(10498501,
+            "Expecting 'supportedEvents' to be set only on a shard mongod, not on router or "
+            "replica set member",
+            canUseSupportedEvents());
 
     return new DocumentSourceChangeStreamTransform(expCtx, std::move(spec));
 }
@@ -205,6 +227,12 @@ void serializeSpec(const DocumentSourceChangeStreamSpec& spec,
                        opts,
                        DocumentSourceChangeStreamSpec::kShowRawUpdateDescriptionFieldName,
                        spec.getShowRawUpdateDescription());
+    if (spec.getVersion()) {
+        serializeSpecField(builder,
+                           opts,
+                           DocumentSourceChangeStreamSpec::kVersionFieldName,
+                           ChangeStreamReaderVersion_serializer(*spec.getVersion()));
+    }
 }
 
 }  // namespace

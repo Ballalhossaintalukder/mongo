@@ -28,17 +28,7 @@
  */
 
 
-#include "mongo/platform/random.h"
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <initializer_list>
-#include <memory>
-#include <ostream>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/resharding/resharding_recipient_service.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -76,7 +66,6 @@
 #include "mongo/db/s/resharding/resharding_data_replication.h"
 #include "mongo/db/s/resharding/resharding_oplog_applier_progress_gen.h"
 #include "mongo/db/s/resharding/resharding_oplog_fetcher_progress_gen.h"
-#include "mongo/db/s/resharding/resharding_recipient_service.h"
 #include "mongo/db/s/resharding/resharding_recipient_service_external_state.h"
 #include "mongo/db/s/resharding/resharding_service_test_helpers.h"
 #include "mongo/db/s/resharding/resharding_util.h"
@@ -85,6 +74,7 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/logv2/log.h"
+#include "mongo/platform/random.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog_cache.h"
@@ -102,6 +92,17 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/functional.h"
 #include "mongo/util/uuid.h"
+
+#include <initializer_list>
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -556,8 +557,12 @@ public:
             CancellationSource cancelSource;
             SemiFuture<void> future =
                 notifyToStartCloningUsingCmd(cancelSource.token(), recipient, recipientDoc);
+            // There is a race here where the recipient can fulfill the future before cancelSource
+            // is canceled. Due to this we need to check for Status::OK() as well as
+            // CallbackCanceled.
             cancelSource.cancel();
-            ASSERT_EQ(future.getNoThrow(), ErrorCodes::CallbackCanceled);
+            auto status = future.getNoThrow();
+            ASSERT_TRUE(status == ErrorCodes::CallbackCanceled || status == Status::OK()) << status;
         } else {
             _onReshardingFieldsChanges(
                 opCtx, recipient, recipientDoc, CoordinatorStateEnum::kCloning);
@@ -784,6 +789,22 @@ protected:
                     opCtx, testOptions, testMetricsForDonor, metadata, metrics);
             }
         }
+    }
+
+    ChangeStreamsMonitorContext createChangeStreamsMonitorContext(OperationContext* opCtx) {
+        // Perform an insert to ensure the change streams monitor has a valid startAt timestamp.
+        auto testNss = NamespaceString::createNamespaceString_forTest("testDb", "testColl");
+        resharding::data_copy::ensureCollectionExists(opCtx, testNss, CollectionOptions());
+        insertDocuments(opCtx, testNss, {makeTestDocumentForInsert(0)});
+
+        WriteUnitOfWork wuow(opCtx);
+        auto ts = repl::getNextOpTime(opCtx).getTimestamp();
+        wuow.commit();
+
+        ChangeStreamsMonitorContext changeStreams;
+        changeStreams.setStartAtOperationTime(ts - 1);
+        changeStreams.setDocumentsDelta(0);
+        return changeStreams;
     }
 
     int64_t getExpectedDocumentsDelta() {
@@ -2050,15 +2071,7 @@ TEST_F(ReshardingRecipientServiceTest, RestoreMetricsAfterStepUpWithMissingProgr
         doc.setCommonReshardingMetadata(metadata);
 
         if (testOptions.performVerification) {
-            ChangeStreamsMonitorContext changeStreams;
-
-            WriteUnitOfWork wuow(opCtx.get());
-            auto ts = repl::getNextOpTime(opCtx.get()).getTimestamp();
-            wuow.commit();
-
-            changeStreams.setStartAtOperationTime(ts - 1);
-            changeStreams.setDocumentsDelta(0);
-            doc.setChangeStreamsMonitor(changeStreams);
+            doc.setChangeStreamsMonitor(createChangeStreamsMonitorContext(opCtx.get()));
         }
 
         createTempReshardingCollection(opCtx.get(), doc);
@@ -2088,14 +2101,7 @@ TEST_F(ReshardingRecipientServiceTest, AbortWhileChangeStreamsMonitorInProgress)
     doc.setMutableState(mutableState);
     doc.setCloneTimestamp(Timestamp{10, 0});
     doc.setStartConfigTxnCloneTime(Date_t::now());
-
-    ChangeStreamsMonitorContext changeStreams;
-    WriteUnitOfWork wuow(opCtx.get());
-    auto ts = repl::getNextOpTime(opCtx.get()).getTimestamp();
-    wuow.commit();
-    changeStreams.setStartAtOperationTime(ts - 1);
-    changeStreams.setDocumentsDelta(0);
-    doc.setChangeStreamsMonitor(changeStreams);
+    doc.setChangeStreamsMonitor(createChangeStreamsMonitorContext(opCtx.get()));
 
     createTempReshardingCollection(opCtx.get(), doc);
     RecipientStateMachine::insertStateDocument(opCtx.get(), doc);

@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <string>
-#include <wiredtiger.h>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
@@ -57,6 +52,13 @@
 #include "mongo/util/system_clock_source.h"
 #include "mongo/util/uuid.h"
 
+#include <memory>
+#include <string>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace {
 
@@ -68,7 +70,8 @@ public:
         invariantWTOK(ret, nullptr);
 
         _fastClockSource = std::make_unique<SystemClockSource>();
-        _connection = std::make_unique<WiredTigerConnection>(_conn, _fastClockSource.get());
+        _connection = std::make_unique<WiredTigerConnection>(
+            _conn, _fastClockSource.get(), /*sessionCacheMax=*/33000);
         _isReplSet = getGlobalReplSettings().isReplSet();
         _shouldRecoverFromOplogAsStandalone =
             repl::ReplSettings::shouldRecoverFromOplogAsStandalone();
@@ -106,15 +109,13 @@ public:
                                                   isLogged);
         ASSERT_OK(result.getStatus());
 
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
         std::string uri = "table:" + ns;
         invariant(Status::OK() ==
-                  WiredTigerIndex::create(
-                      WiredTigerRecoveryUnit::get(*shard_role_details::getRecoveryUnit(opCtx)),
-                      uri,
-                      result.getValue()));
+                  WiredTigerIndex::create(WiredTigerRecoveryUnit::get(ru), uri, result.getValue()));
 
         return std::make_unique<WiredTigerIdIndex>(
-            opCtx, uri, UUID::gen(), "" /* ident */, config, isLogged);
+            opCtx, ru, uri, UUID::gen(), "" /* ident */, config, isLogged);
     }
 
     std::unique_ptr<SortedDataInterface> newSortedDataInterface(OperationContext* opCtx,
@@ -149,16 +150,15 @@ public:
             WiredTigerUtil::useTableLogging(nss, _isReplSet, _shouldRecoverFromOplogAsStandalone));
         ASSERT_OK(result.getStatus());
 
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
         std::string uri = "table:" + ns;
         invariant(Status::OK() ==
-                  WiredTigerIndex::create(
-                      WiredTigerRecoveryUnit::get(*shard_role_details::getRecoveryUnit(opCtx)),
-                      uri,
-                      result.getValue()));
+                  WiredTigerIndex::create(WiredTigerRecoveryUnit::get(ru), uri, result.getValue()));
 
         if (unique) {
             return std::make_unique<WiredTigerIndexUnique>(
                 opCtx,
+                ru,
                 uri,
                 UUID::gen(),
                 "" /* ident */,
@@ -169,6 +169,7 @@ public:
         }
         return std::make_unique<WiredTigerIndexStandard>(
             opCtx,
+            ru,
             uri,
             UUID::gen(),
             "" /* ident */,

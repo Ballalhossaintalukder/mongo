@@ -27,8 +27,9 @@
  *    it in the license file.
  */
 
-#include "mongo/bson/bsonelement.h"
 #include "mongo/bson/column/bsoncolumn.h"
+
+#include "mongo/bson/bsonelement.h"
 
 #include <absl/numeric/int128.h>
 #include <boost/cstdint.hpp>
@@ -36,13 +37,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <array>
-#include <cstdint>
-#include <cstring>
-#include <forward_list>
-#include <limits>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -62,6 +56,13 @@
 #include "mongo/util/base64.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/tracking/context.h"
+
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <forward_list>
+#include <limits>
+#include <string>
 
 namespace mongo::bsoncolumn {
 namespace {
@@ -1284,12 +1285,14 @@ TEST_F(BSONColumnTest, BuilderFuzzerGenerationDiscoveredEdgeCases) {
         while (ptr < end) {
             BSONElement element;
             int repetition;
-            if (mongo::bsoncolumn::createFuzzedElement(
+            if (!mongo::bsoncolumn::createFuzzedElement(
                     ptr, end, elementMemory, repetition, element)) {
-                for (int i = 0; i < repetition; ++i)
-                    generatedElements.push_back(element);
-            } else {
-                generatedElements.clear();
+                generatedElements.clear();  // Bad input string to element generation
+                break;
+            }
+            if (!bsoncolumn::addFuzzedElements(
+                    ptr, end, elementMemory, element, repetition, generatedElements)) {
+                generatedElements.clear();  // Bad input string to run generation
                 break;
             }
         }
@@ -1326,7 +1329,10 @@ TEST_F(BSONColumnTest, BuilderFuzzerReopenDiscoveredEdgeCases) {
     //
     // Column: <base64 string>
     //
-    std::vector<StringData> binariesBase64 = {};
+    std::vector<StringData> binariesBase64 = {
+        // Pending fix of SERVER-100659
+        //        "gPz/////////CAAAgP7/////////AQAAAAAAAAAAYI/OxcXFxcXFAQ4AAAAAAAAB7uLi4uLi4gAuHR0dHR2dAI5xcXFxcXEAjnFxcXFxcQCOcXFxcXFxAK6rq6urq2sAzri4uLi4OADOuLi4uLg4AM64uLi4uDgAzri4uLi4OADOuLi4uLg4AM64uLi4uDgAzri4uLi4OADOuLi4uLg4AI9ulpaWlpY2AG5cXFxcXBwAblxcXFxcHABuXFxcXFwcAG5cXFxcXBwAblxcXFxcHABuXFxcXFwcAG5cXFxcXBwAblxcXFxcHABuXFxcXFwcAG5cXFxcXBwAblxcXFxcHABuXFxcXFwcAG5cXFxcXBwAblxcXFxcHABuXFxcXFwcAI9uXFxcXFwcAG5cXFxcXBwA7gsMDAwMHAAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAI8uLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAI8uLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAC4uLi4uLg4ALi4uLi4uDgAuLi4uLi4OAK6wr6+vrwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAI8uFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAIYuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAC4XFxcXFwcALhcXFxcXBwAuFxcXFxcHAAA="_sd,
+    };
 
     for (auto&& binaryBase64 : binariesBase64) {
         auto binary = base64::decode(binaryBase64);

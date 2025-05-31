@@ -27,23 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/hash/hash.h>
-#include <boost/container_hash/extensions.hpp>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/numeric/conversion/converter_policies.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cmath>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <ostream>
-#include <type_traits>
-#include <typeinfo>
-
-#include <absl/strings/string_view.h>
+#include "mongo/db/exec/document_value/value.h"
 
 #include "mongo/base/compare_numbers.h"
 #include "mongo/base/data_type_endian.h"
@@ -55,12 +39,29 @@
 #include "mongo/bson/simple_bsonobj_comparator.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_internal.h"
-#include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/query/datetime/date_time_support.h"
 #include "mongo/platform/decimal128.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/represent_as.h"
 #include "mongo/util/str.h"
+
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <ostream>
+#include <type_traits>
+#include <typeinfo>
+
+#include <absl/hash/hash.h>
+#include <absl/strings/string_view.h>
+#include <boost/cstdint.hpp>
+#include <boost/functional/hash.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/numeric/conversion/converter_policies.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -367,7 +368,7 @@ BSONObjBuilder& operator<<(BSONObjBuilder::ValueStream& builder, const Value& va
             return builder << BSONDBRef(val._storage.getDBRef()->ns, val._storage.getDBRef()->oid);
 
         case BinData:
-            return builder << BSONBinData(val.getRawData().rawData(),  // looking for void*
+            return builder << BSONBinData(val.getRawData().data(),  // looking for void*
                                           val.getRawData().size(),
                                           val._storage.binDataType());
 
@@ -852,7 +853,7 @@ namespace {
  * Hashes the given 'StringData', combines the resulting hash with 'seed', and returns the result.
  */
 size_t hashStringData(StringData sd, size_t seed) {
-    size_t strHash = absl::Hash<absl::string_view>{}(absl::string_view(sd.rawData(), sd.size()));
+    size_t strHash = absl::Hash<absl::string_view>{}(absl::string_view(sd.data(), sd.size()));
     boost::hash_combine(seed, strHash);
     return seed;
 }

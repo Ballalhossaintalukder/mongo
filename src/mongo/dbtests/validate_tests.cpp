@@ -32,18 +32,6 @@
 #include <fmt/format.h>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
 // IWYU pragma: no_include "boost/move/algo/detail/set_difference.hpp"
-#include <algorithm>
-#include <boost/move/algo/move.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <ostream>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/data_view.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -59,6 +47,7 @@
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/database.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/catalog_raii.h"
@@ -78,9 +67,9 @@
 #include "mongo/db/record_id_helpers.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/key_string/key_string.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/snapshot.h"
@@ -98,6 +87,19 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/shared_buffer_fragment.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/algo/move.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace ValidateTests {
@@ -997,8 +999,12 @@ public:
                 nullptr,
                 id1);
 
-            auto removeStatus = iam->removeKeys(
-                &_opCtx, descriptor->getEntry(), {keys.begin(), keys.end()}, options, &numDeleted);
+            auto removeStatus = iam->removeKeys(&_opCtx,
+                                                *shard_role_details::getRecoveryUnit(&_opCtx),
+                                                descriptor->getEntry(),
+                                                {keys.begin(), keys.end()},
+                                                options,
+                                                &numDeleted);
             auto insertStatus = iam->insert(&_opCtx,
                                             pooledBuilder,
                                             coll(),
@@ -1124,7 +1130,10 @@ public:
                                         recordId)
                     .release();
             ASSERT_SDI_INSERT_OK(
-                sortedDataInterface->insert(&_opCtx, indexKey, true /* dupsAllowed */));
+                sortedDataInterface->insert(&_opCtx,
+                                            *shard_role_details::getRecoveryUnit(&_opCtx),
+                                            indexKey,
+                                            true /* dupsAllowed */));
             commitTransaction();
         }
 
@@ -1145,7 +1154,10 @@ public:
                                         sortedDataInterface->getOrdering(),
                                         recordId)
                     .release();
-            sortedDataInterface->unindex(&_opCtx, indexKey, true /* dupsAllowed */);
+            sortedDataInterface->unindex(&_opCtx,
+                                         *shard_role_details::getRecoveryUnit(&_opCtx),
+                                         indexKey,
+                                         true /* dupsAllowed */);
             commitTransaction();
         }
 
@@ -1241,7 +1253,10 @@ public:
                                         sortedDataInterface->getOrdering(),
                                         recordId)
                     .release();
-            sortedDataInterface->unindex(&_opCtx, indexKey, true /* dupsAllowed */);
+            sortedDataInterface->unindex(&_opCtx,
+                                         *shard_role_details::getRecoveryUnit(&_opCtx),
+                                         indexKey,
+                                         true /* dupsAllowed */);
             commitTransaction();
         }
         releaseDb();
@@ -1403,8 +1418,12 @@ public:
                 nullptr,
                 nullptr,
                 rid);
-            auto removeStatus = iam->removeKeys(
-                &_opCtx, descriptor->getEntry(), {keys.begin(), keys.end()}, options, &numDeleted);
+            auto removeStatus = iam->removeKeys(&_opCtx,
+                                                *shard_role_details::getRecoveryUnit(&_opCtx),
+                                                descriptor->getEntry(),
+                                                {keys.begin(), keys.end()},
+                                                options,
+                                                &numDeleted);
 
             ASSERT_EQUALS(numDeleted, 1);
             ASSERT_OK(removeStatus);
@@ -1770,8 +1789,12 @@ public:
                 nullptr,
                 nullptr,
                 rid);
-            auto removeStatus = iam->removeKeys(
-                &_opCtx, descriptor->getEntry(), {keys.begin(), keys.end()}, options, &numDeleted);
+            auto removeStatus = iam->removeKeys(&_opCtx,
+                                                *shard_role_details::getRecoveryUnit(&_opCtx),
+                                                descriptor->getEntry(),
+                                                {keys.begin(), keys.end()},
+                                                options,
+                                                &numDeleted);
 
             ASSERT_EQUALS(numDeleted, 1);
             ASSERT_OK(removeStatus);
@@ -2116,6 +2139,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -2203,17 +2227,31 @@ public:
             {
                 const NamespaceString lostAndFoundNss = NamespaceString::makeLocalCollection(
                     "lost_and_found." + coll()->uuid().toString());
-                AutoGetCollectionForRead autoColl(&_opCtx, lostAndFoundNss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          lostAndFoundNss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(1), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(1), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:1, a:1}"));
             }
 
             // Verify the newer duplicate document still appears in the collection as expected.
             {
-                AutoGetCollectionForRead autoColl(&_opCtx, _nss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          _nss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(3), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(3), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:2, a:1}"));
             }
 
@@ -2366,6 +2404,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -2460,17 +2499,31 @@ public:
             {
                 const NamespaceString lostAndFoundNss = NamespaceString::makeLocalCollection(
                     "lost_and_found." + coll()->uuid().toString());
-                AutoGetCollectionForRead autoColl(&_opCtx, lostAndFoundNss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          lostAndFoundNss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(1), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(1), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:1, a:1, b:1}"));
             }
 
             // Verify the newer duplicate document still appears in the collection as expected.
             {
-                AutoGetCollectionForRead autoColl(&_opCtx, _nss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          _nss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(3), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(3), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:2, a:1, b:1}"));
             }
 
@@ -2608,6 +2661,7 @@ public:
                     nullptr,
                     rid1);
                 auto removeStatus = iam->removeKeys(&_opCtx,
+                                                    *shard_role_details::getRecoveryUnit(&_opCtx),
                                                     descriptor->getEntry(),
                                                     {keys.begin(), keys.end()},
                                                     options,
@@ -2671,6 +2725,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -2718,6 +2773,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -2809,17 +2865,31 @@ public:
             {
                 const NamespaceString lostAndFoundNss = NamespaceString::makeLocalCollection(
                     "lost_and_found." + coll()->uuid().toString());
-                AutoGetCollectionForRead autoColl(&_opCtx, lostAndFoundNss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          lostAndFoundNss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(1), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(1), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:1, a:1, b:1}"));
             }
 
             // Verify the newer duplicate document still appears in the collection as expected.
             {
-                AutoGetCollectionForRead autoColl(&_opCtx, _nss);
+                const auto coll =
+                    acquireCollection(&_opCtx,
+                                      CollectionAcquisitionRequest(
+                                          _nss,
+                                          PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                          repl::ReadConcernArgs::get(&_opCtx),
+                                          AcquisitionPrerequisites::kRead),
+                                      MODE_IS);
                 Snapshotted<BSONObj> result;
-                ASSERT(autoColl.getCollection()->findDoc(&_opCtx, RecordId(3), &result));
+                ASSERT(coll.getCollectionPtr()->findDoc(&_opCtx, RecordId(3), &result));
                 ASSERT_BSONOBJ_EQ(result.value(), fromjson("{_id:2, a:1, b:1}"));
             }
 
@@ -2930,6 +3000,7 @@ public:
 
                 int64_t numDeleted;
                 auto removeStatus = iam->removeKeys(&_opCtx,
+                                                    *shard_role_details::getRecoveryUnit(&_opCtx),
                                                     descriptor->getEntry(),
                                                     {keys.begin(), keys.end()},
                                                     options,
@@ -3129,8 +3200,12 @@ public:
                 nullptr,
                 nullptr,
                 rid);
-            auto removeStatus = iam->removeKeys(
-                &_opCtx, descriptor->getEntry(), {keys.begin(), keys.end()}, options, &numDeleted);
+            auto removeStatus = iam->removeKeys(&_opCtx,
+                                                *shard_role_details::getRecoveryUnit(&_opCtx),
+                                                descriptor->getEntry(),
+                                                {keys.begin(), keys.end()},
+                                                options,
+                                                &numDeleted);
 
             ASSERT_EQUALS(numDeleted, 1);
             ASSERT_OK(removeStatus);
@@ -3167,8 +3242,12 @@ public:
                 nullptr,
                 nullptr,
                 rid);
-            auto removeStatus = iam->removeKeys(
-                &_opCtx, descriptor->getEntry(), {keys.begin(), keys.end()}, options, &numDeleted);
+            auto removeStatus = iam->removeKeys(&_opCtx,
+                                                *shard_role_details::getRecoveryUnit(&_opCtx),
+                                                descriptor->getEntry(),
+                                                {keys.begin(), keys.end()},
+                                                options,
+                                                &numDeleted);
 
             ASSERT_EQUALS(numDeleted, 1);
             ASSERT_OK(removeStatus);
@@ -3284,6 +3363,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -3331,6 +3411,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},
@@ -3673,6 +3754,7 @@ public:
 
                 int64_t numDeleted;
                 auto removeStatus = iam->removeKeys(&_opCtx,
+                                                    *shard_role_details::getRecoveryUnit(&_opCtx),
                                                     descriptor->getEntry(),
                                                     {keys.begin(), keys.end()},
                                                     options,
@@ -3712,11 +3794,14 @@ public:
                 ASSERT_EQ(keys.size(), 2);
                 ASSERT_EQ(multikeyPaths.size(), 1);
 
+                auto& ru = *shard_role_details::getRecoveryUnit(&_opCtx);
+
                 // Insert index keys one at a time in order to avoid marking index as multikey
                 // and allows us to pass in an empty set of MultikeyPaths.
                 int64_t numInserted;
                 auto keysIterator = keys.begin();
                 auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(&_opCtx,
+                                                                          ru,
                                                                           coll(),
                                                                           descriptor->getEntry(),
                                                                           {*keysIterator},
@@ -3731,6 +3816,7 @@ public:
                 keysIterator++;
                 numInserted = 0;
                 insertStatus = iam->insertKeysAndUpdateMultikeyPaths(&_opCtx,
+                                                                     ru,
                                                                      coll(),
                                                                      descriptor->getEntry(),
                                                                      {*keysIterator},
@@ -3904,6 +3990,7 @@ public:
 
                 int64_t numDeleted;
                 auto removeStatus = iam->removeKeys(&_opCtx,
+                                                    *shard_role_details::getRecoveryUnit(&_opCtx),
                                                     descriptor->getEntry(),
                                                     {keys.begin(), keys.end()},
                                                     options,
@@ -3944,15 +4031,17 @@ public:
                 ASSERT_EQ(keys.size(), 2);
 
                 int64_t numInserted;
-                auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(&_opCtx,
-                                                                          coll(),
-                                                                          descriptor->getEntry(),
-                                                                          keys,
-                                                                          {},
-                                                                          oldMultikeyPaths,
-                                                                          options,
-                                                                          nullptr,
-                                                                          &numInserted);
+                auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
+                    &_opCtx,
+                    *shard_role_details::getRecoveryUnit(&_opCtx),
+                    coll(),
+                    descriptor->getEntry(),
+                    keys,
+                    {},
+                    oldMultikeyPaths,
+                    options,
+                    nullptr,
+                    &numInserted);
 
                 ASSERT_EQUALS(numInserted, 2);
                 ASSERT_OK(insertStatus);
@@ -4077,8 +4166,8 @@ public:
         // of a pre-3.4 index.
         {
             beginTransaction();
-            auto collMetadata = DurableCatalog::get(&_opCtx)
-                                    ->getParsedCatalogEntry(&_opCtx, coll()->getCatalogId())
+            auto collMetadata = durable_catalog::getParsedCatalogEntry(
+                                    &_opCtx, coll()->getCatalogId(), MDBCatalog::get(&_opCtx))
                                     ->metadata;
             int offset = collMetadata->findIndexOffset(indexName);
             ASSERT_GTE(offset, 0);
@@ -4503,6 +4592,7 @@ public:
                     int64_t numInserted;
                     auto insertStatus = iam->insertKeysAndUpdateMultikeyPaths(
                         &_opCtx,
+                        *shard_role_details::getRecoveryUnit(&_opCtx),
                         coll(),
                         entry,
                         {keys.begin(), keys.end()},

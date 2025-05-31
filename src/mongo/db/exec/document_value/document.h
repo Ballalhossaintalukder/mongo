@@ -29,24 +29,9 @@
 
 #pragma once
 
-#include <boost/functional/hash.hpp>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstring>
-#include <initializer_list>
-#include <iosfwd>
-#include <string>
-#include <typeinfo>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/base/string_data_comparator.h"
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -60,6 +45,21 @@
 #include "mongo/util/bufreader.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/string_map.h"
+
+#include <cstring>
+#include <initializer_list>
+#include <iosfwd>
+#include <string>
+#include <type_traits>
+#include <typeinfo>
+#include <utility>
+#include <vector>
+
+#include <boost/functional/hash.hpp>
+#include <boost/intrusive_ptr.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 class BSONObj;
@@ -149,7 +149,7 @@ public:
      * auto document = Document{{"hello", "world"}, {"number", 1}};
      */
     Document(std::initializer_list<std::pair<StringData, ImplicitValue>> initializerList);
-    Document(std::vector<std::pair<StringData, Value>> fields);
+    Document(const std::vector<std::pair<StringData, Value>>& fields);
 
     void swap(Document& rhs) {
         _storage.swap(rhs._storage);
@@ -165,11 +165,11 @@ public:
      * Note that this method does *not* traverse nested documents and arrays, use getNestedField()
      * instead.
      */
-    template <typename T>
+    template <AnyFieldNameTypeButStdString T>
     Value operator[](T key) const {
         return getField(key);
     }
-    template <typename T>
+    template <AnyFieldNameTypeButStdString T>
     Value getField(T key) const {
         return storage().getField(key);
     }

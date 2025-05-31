@@ -28,23 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <list>
-#include <mutex>
-#include <set>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
+#include "mongo/db/s/create_collection_coordinator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -78,7 +62,6 @@
 #include "mongo/db/repl/read_concern_level.h"
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
-#include "mongo/db/s/create_collection_coordinator.h"
 #include "mongo/db/s/create_collection_coordinator_document_gen.h"
 #include "mongo/db/s/forwardable_operation_metadata.h"
 #include "mongo/db/s/remove_chunks_gen.h"
@@ -90,6 +73,7 @@
 #include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_logging.h"
 #include "mongo/db/s/sharding_recovery_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_util.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/service_context.h"
@@ -129,7 +113,6 @@
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/s/write_ops/batch_write_exec.h"
 #include "mongo/s/write_ops/batched_command_request.h"
@@ -140,6 +123,24 @@
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <list>
+#include <mutex>
+#include <set>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 MONGO_FAIL_POINT_DEFINE(failAtCommitCreateCollectionCoordinator);
@@ -1626,7 +1627,7 @@ ExecutorFuture<void> CreateCollectionCoordinator::_runImpl(
                     std::find(allShardIds.begin(), allShardIds.end(), *_doc.getDataShard()) ==
                         allShardIds.end()) {
                     triggerCleanup(opCtx, status);
-                    MONGO_UNREACHABLE;
+                    MONGO_UNREACHABLE_TASSERT(10083520);
                 }
 
                 _doc.setShardIds(std::move(involvedShardIds));
@@ -2080,7 +2081,7 @@ void CreateCollectionCoordinator::_commitOnShardingCatalog(
             // addZone and/or addShard violating the actual set of involved shards or the shard key
             // selected.
             triggerCleanup(opCtx, ex.toStatus());
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083521);
         }
     }
 

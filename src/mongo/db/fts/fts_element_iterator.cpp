@@ -29,16 +29,16 @@
 
 #include "mongo/db/fts/fts_element_iterator.h"
 
-#include <map>
-#include <ostream>
-#include <stack>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/fts/fts_spec.h"
 #include "mongo/util/str.h"
+
+#include <map>
+#include <ostream>
+#include <stack>
+#include <utility>
 
 namespace mongo {
 
@@ -160,7 +160,7 @@ FTSIteratorValue FTSElementIterator::advance() {
                 // Only index strings on exact match or wildcard.
                 if (exactMatch || _spec.wildcard()) {
                     return FTSIteratorValue(
-                        elem.valueStringData().rawData(), _frame._language, weight);
+                        elem.valueStringData().data(), _frame._language, weight);
                 }
                 break;
 

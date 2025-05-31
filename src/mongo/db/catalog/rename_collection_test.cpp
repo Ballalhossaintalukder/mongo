@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <ostream>
-#include <string>
-#include <utility>
-#include <vector>
+#include "mongo/db/catalog/rename_collection.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -52,7 +43,6 @@
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/catalog/index_catalog.h"
-#include "mongo/db/catalog/rename_collection.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/client.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
@@ -60,7 +50,6 @@
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/op_observer/op_observer.h"
@@ -85,6 +74,18 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -419,6 +420,20 @@ void RenameCollectionTest::tearDown() {
 }
 
 /**
+ * Returns true if collection exists.
+ */
+bool _collectionExists(OperationContext* opCtx, const NamespaceString& nss) {
+    const auto coll = acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     AcquisitionPrerequisites::kRead),
+        MODE_IS);
+    return coll.exists();
+}
+
+/**
  * Creates a collection without any namespace restrictions.
  */
 void _createCollection(OperationContext* opCtx,
@@ -437,7 +452,7 @@ void _createCollection(OperationContext* opCtx,
         wuow.commit();
     });
 
-    ASSERT_TRUE(AutoGetCollectionForRead(opCtx, nss).getCollection());
+    ASSERT_TRUE(_collectionExists(opCtx, nss));
 }
 
 /**
@@ -459,20 +474,21 @@ UUID _createCollectionWithUUID(OperationContext* opCtx, const NamespaceString& n
 }
 
 /**
- * Returns true if collection exists.
- */
-bool _collectionExists(OperationContext* opCtx, const NamespaceString& nss) {
-    return static_cast<bool>(AutoGetCollectionForRead(opCtx, nss).getCollection());
-}
-
-/**
  * Returns collection options.
  */
 CollectionOptions _getCollectionOptions(OperationContext* opCtx, const NamespaceString& nss) {
-    AutoGetCollectionForRead collection(opCtx, nss);
-    ASSERT_TRUE(collection) << "Unable to get collections options for " << nss.toStringForErrorMsg()
-                            << " because collection does not exist.";
-    return collection->getCollectionOptions();
+    const auto coll = acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     AcquisitionPrerequisites::kRead),
+        MODE_IS);
+
+    ASSERT_TRUE(coll.exists()) << "Unable to get collections options for "
+                               << nss.toStringForErrorMsg()
+                               << " because collection does not exist.";
+    return coll.getCollectionPtr()->getCollectionOptions();
 }
 
 /**
@@ -496,9 +512,9 @@ NamespaceString _getCollectionNssFromUUID(OperationContext* opCtx, const UUID& u
  * Returns true if namespace refers to a temporary collection.
  */
 bool _isTempCollection(OperationContext* opCtx, const NamespaceString& nss) {
-    AutoGetCollectionForRead collection(opCtx, nss);
-    ASSERT_TRUE(collection) << "Unable to check if " << nss.toStringForErrorMsg()
-                            << " is a temporary collection because collection does not exist.";
+    ASSERT_TRUE(_collectionExists(opCtx, nss))
+        << "Unable to check if " << nss.toStringForErrorMsg()
+        << " is a temporary collection because collection does not exist.";
     auto options = _getCollectionOptions(opCtx, nss);
     return options.temp;
 }
@@ -529,7 +545,7 @@ void _createIndexOnEmptyCollection(OperationContext* opCtx,
         wuow.commit();
     });
 
-    ASSERT_TRUE(AutoGetCollectionForRead(opCtx, nss).getCollection());
+    ASSERT_TRUE(_collectionExists(opCtx, nss));
 }
 
 /**
@@ -674,7 +690,7 @@ TEST_F(RenameCollectionTest, RenameCollectionForApplyOpsDropTargetByUUIDTargetEx
     const auto& tmpB =
         CollectionCatalog::get(_opCtx.get())->lookupNSSByUUID(_opCtx.get(), collBUUID);
     ASSERT(tmpB);
-    ASSERT_TRUE(tmpB->coll().startsWith("tmp"));
+    ASSERT_TRUE(tmpB->coll().starts_with("tmp"));
     ASSERT_TRUE(*tmpB != collB);
 }
 
@@ -707,7 +723,7 @@ TEST_F(RenameCollectionTest,
         CollectionCatalog::get(_opCtx.get())->lookupNSSByUUID(_opCtx.get(), collBUUID);
     ASSERT(tmpB);
     ASSERT_TRUE(*tmpB != collB);
-    ASSERT_TRUE(tmpB->coll().startsWith("tmp"));
+    ASSERT_TRUE(tmpB->coll().starts_with("tmp"));
     ASSERT_TRUE(_isTempCollection(_opCtx.get(), *tmpB));
 }
 
@@ -732,7 +748,7 @@ TEST_F(RenameCollectionTest,
         CollectionCatalog::get(_opCtx.get())->lookupNSSByUUID(_opCtx.get(), collBUUID);
     ASSERT(tmpB);
     ASSERT_TRUE(*tmpB != collB);
-    ASSERT_TRUE(tmpB->coll().startsWith("tmp"));
+    ASSERT_TRUE(tmpB->coll().starts_with("tmp"));
 }
 
 TEST_F(RenameCollectionTest,

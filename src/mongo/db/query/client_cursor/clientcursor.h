@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/client/read_preference.h"
@@ -69,6 +59,17 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -239,7 +240,7 @@ public:
         _metrics.incrementNreturned(n);
     }
 
-    void incrementCursorMetrics(OpDebug::AdditiveMetrics newMetrics) {
+    void incrementCursorMetrics(const OpDebug::AdditiveMetrics& newMetrics) {
         _metrics.add(newMetrics);
         if (!_firstResponseExecutionTime) {
             _firstResponseExecutionTime = _metrics.executionTime;
@@ -322,14 +323,6 @@ public:
 
     boost::optional<OperationKey> getOperationKey() const {
         return _opKey;
-    }
-
-    std::unique_ptr<RecoveryUnit> releaseStashedRecoveryUnit() {
-        return std::move(_stashedRecoveryUnit);
-    }
-
-    void stashRecoveryUnit(std::unique_ptr<RecoveryUnit> ru) {
-        _stashedRecoveryUnit = std::move(ru);
     }
 
     /**
@@ -450,12 +443,6 @@ private:
     // Unused maxTime budget for this cursor.
     Microseconds _leftoverMaxTimeMicros = Microseconds::max();
 
-    // Stashed recovery unit. Maintains valid and positioned cursors across commands, so that data
-    // pointers remain valid and safe to access. May be nullptr. This field MUST come before
-    // '_exec' as we cannot destroy the recovery unit until the plan executor and its resources
-    // (cursors) have been destroyed.
-    std::unique_ptr<RecoveryUnit> _stashedRecoveryUnit;
-
     // The transaction resources used throughout executions. This contains the yielded version of
     // all collection/view acquisitions so that in a getMore call we can restore the acquisitions.
     // Will only be set if the underlying plan executor uses shard role acquisitions.
@@ -480,6 +467,8 @@ private:
     // 1) You have a lock on the appropriate partition in CursorManager.
     // 2) You know you have the cursor pinned.
     OperationContext* _operationUsingCursor;
+    // The name of the command that is using the cursor.
+    std::string _commandUsingCursor;
 
     Date_t _lastUseDate;
     Date_t _createdDate;
@@ -603,18 +592,6 @@ public:
         return _cursor;
     }
 
-    /*
-     * Unstashes resources in the cursor onto the operation context using the cursor. This _must_
-     * be called before using the plan executor associated with the cursor.
-     */
-    void unstashResourcesOntoOperationContext();
-
-    /**
-     * Inverse of above: Transfers resources which need the same lifetime as the cursor from the
-     * operation context to the cursor itself.
-     */
-    void stashResourcesFromOperationContext();
-
 private:
     friend class CursorManager;
 
@@ -636,8 +613,6 @@ private:
     // InterruptibleLockGuard ensures that operations holding a ClientCursorPin will eventually
     // observe and obey interrupt signals in the locking layer.
     std::unique_ptr<InterruptibleLockGuard> _interruptibleLockGuard;
-
-    bool _shouldSaveRecoveryUnit = false;
 };
 
 void startClientCursorMonitor();

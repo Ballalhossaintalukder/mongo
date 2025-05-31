@@ -29,15 +29,15 @@
 
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 
-#include <ostream>
-#include <vector>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/query/query_feature_flags_gen.h"
 #include "mongo/util/string_map.h"
+
+#include <ostream>
+#include <vector>
 
 namespace mongo {
 using MetaType = DocumentMetadataFields::MetaType;
@@ -264,7 +264,7 @@ void DocumentMetadataFields::setScoreDetails(Value scoreDetails, bool featureFla
 void DocumentMetadataFields::setScoreAndScoreDetails(Value scoreDetails) {
     if (feature_flags::gFeatureFlagRankFusionFull.isEnabledUseLastLTSFCVWhenUninitialized(
             serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
-        auto score = scoreDetails.getDocument().getField(scoreDetailsScoreField);
+        auto score = scoreDetails.getDocument().getField(StringData{scoreDetailsScoreField});
         tassert(9679300,
                 str::stream() << "scoreDetails must provide a numeric 'value' field with which to "
                                  "set the score too, but got "

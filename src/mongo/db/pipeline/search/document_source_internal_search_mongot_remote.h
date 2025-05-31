@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <queue>
-
 #include "mongo/db/index/sort_key_generator.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_set_variable_from_subpipeline.h"
@@ -44,12 +42,14 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/stacktrace.h"
 
+#include <queue>
+
 namespace mongo {
 
 /**
  * A class to retrieve $search results from a mongot process.
  */
-class DocumentSourceInternalSearchMongotRemote : public DocumentSource {
+class DocumentSourceInternalSearchMongotRemote : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalSearchMongotRemote"_sd;
 

@@ -29,12 +29,12 @@
 
 #pragma once
 
-#include <boost/container/small_vector.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonelementvalue.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
+
+#include <boost/container/small_vector.hpp>
 
 namespace mongo {
 /**
@@ -266,7 +266,7 @@ public:
         char* objdata = _allocator.allocate(2 + _fieldNameSize);
         objdata[0] = type;
         if (_fieldNameSize > 0) {
-            memcpy(objdata + 1, fieldName.rawData(), _fieldNameSize);
+            memcpy(objdata + 1, fieldName.data(), _fieldNameSize);
         }
         objdata[_fieldNameSize + 1] = '\0';
 

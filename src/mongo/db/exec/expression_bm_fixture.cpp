@@ -27,26 +27,27 @@
  *    it in the license file.
  */
 
-#include <benchmark/benchmark.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/random/normal_distribution.hpp>
+#include "mongo/db/exec/expression_bm_fixture.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/json.h"
+#include "mongo/db/server_options.h"
+#include "mongo/platform/decimal128.h"
+#include "mongo/util/time_support.h"
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <random>
 #include <utility>
 
+#include <benchmark/benchmark.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/json.h"
-#include "mongo/db/exec/expression_bm_fixture.h"
-#include "mongo/db/server_options.h"
-#include "mongo/platform/decimal128.h"
-#include "mongo/util/time_support.h"
+#include <boost/random/normal_distribution.hpp>
 
 namespace mongo {
 
@@ -1616,10 +1617,6 @@ BSONArray ExpressionBenchmarkFixture::randomBSONArray(int count, int max, int of
 void ExpressionBenchmarkFixture::benchmarkPercentile(benchmark::State& state,
                                                      int arraySize,
                                                      const std::vector<double>& ps) {
-    // (Generic FCV reference): Must be initialized to check the AccuratePercentiles feature flag
-    serverGlobalParams.mutableFCV.setVersion(multiversion::GenericFCV::kLatest);
-    ON_BLOCK_EXIT([&] { serverGlobalParams.mutableFCV.reset(); });
-
     std::vector<double> inputs = generateNormal(arraySize);
     benchmarkExpression(BSON("$percentile" << BSON("input" << "$data"
                                                            << "p" << vectorToBSON(ps) << "method"

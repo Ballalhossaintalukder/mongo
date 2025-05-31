@@ -28,13 +28,6 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
-#include <boost/optional/optional.hpp>
-#include <cstdlib>
-#include <fstream>
-#include <memory>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/init.h"
 #include "mongo/base/status.h"
@@ -56,6 +49,12 @@
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/net/ssl_parameters_gen.h"
 #include "mongo/util/net/ssl_peer_info.h"
+
+#include <cstdlib>
+#include <fstream>
+#include <memory>
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 

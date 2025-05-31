@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <iterator>
-#include <list>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <boost/utility/in_place_factory.hpp>
+#include "mongo/db/pipeline/document_source_redact.h"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
@@ -45,12 +35,23 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/document_source_match.h"
-#include "mongo/db/pipeline/document_source_redact.h"
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <iterator>
+#include <list>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/utility/in_place_factory.hpp>
 
 namespace mongo {
 
@@ -61,6 +62,7 @@ DocumentSourceRedact::DocumentSourceRedact(const intrusive_ptr<ExpressionContext
                                            const intrusive_ptr<Expression>& expression,
                                            Variables::Id currentId)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _redactProcessor(boost::in_place(expCtx, expression, currentId)) {}
 
 REGISTER_DOCUMENT_SOURCE(redact,
@@ -70,7 +72,7 @@ REGISTER_DOCUMENT_SOURCE(redact,
 ALLOCATE_DOCUMENT_SOURCE_ID(redact, DocumentSourceRedact::id)
 
 const char* DocumentSourceRedact::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 static const Value descendVal = Value("descend"_sd);

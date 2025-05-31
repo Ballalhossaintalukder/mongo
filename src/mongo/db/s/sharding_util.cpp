@@ -30,13 +30,6 @@
 
 #include "mongo/db/s/sharding_util.h"
 
-#include <fmt/format.h>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status_with.h"
 #include "mongo/client/index_spec.h"
 #include "mongo/client/read_preference.h"
@@ -65,6 +58,13 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -190,8 +190,6 @@ Status createIndexOnCollection(OperationContext* opCtx,
                                const BSONObj& keys,
                                bool unique) {
     try {
-        // TODO SERVER-50983: Create abstraction for creating collection when using
-        // AutoGetCollection
         AutoGetCollection autoColl(opCtx, ns, MODE_X);
         const Collection* collection = autoColl.getCollection().get();
         if (!collection) {

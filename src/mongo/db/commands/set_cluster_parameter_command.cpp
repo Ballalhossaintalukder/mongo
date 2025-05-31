@@ -28,12 +28,6 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/shim.h"
 #include "mongo/base/string_data.h"
@@ -46,8 +40,8 @@
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/cluster_server_parameter_cmds_gen.h"
 #include "mongo/db/commands/feature_compatibility_version.h"
-#include "mongo/db/commands/set_cluster_parameter_command_impl.h"
 #include "mongo/db/commands/set_cluster_parameter_invocation.h"
+#include "mongo/db/commands/set_cluster_parameter_replset_impl.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/feature_flag.h"
@@ -62,6 +56,13 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -116,11 +117,10 @@ public:
                     !request().getCommandParameter()
                          [query_settings::getQuerySettingsClusterParameterName()]);
 
-            static auto impl = getSetClusterParameterImpl(service);
-            impl(opCtx,
-                 request(),
-                 boost::none /* clusterParameterTime */,
-                 boost::none /* previousTime */);
+            setClusterParameterImplReplicaSetOrStandalone(opCtx,
+                                                          request(),
+                                                          boost::none /* clusterParameterTime */,
+                                                          boost::none /* previousTime */);
         }
 
     private:

@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/collection_routing_info_targeter.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -56,7 +49,6 @@
 #include "mongo/s/catalog_cache_mock.h"
 #include "mongo/s/catalog_cache_test_fixture.h"
 #include "mongo/s/chunk.h"
-#include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
 #include "mongo/s/sharding_index_catalog_cache.h"
@@ -67,6 +59,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -1076,7 +1077,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, RefreshOnStaleResponse) {
 
     auto sci = StaleConfigInfo(bucketsNss, ShardVersion::UNSHARDED(), boost::none, _shard0);
 
-    // No need to refresh
+    // No need to refresh when no stale info or targeting error is present.
     ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
 
     // Setup new metadata on the CatalogCache representing nss is now a sharded time series.
@@ -1116,6 +1117,111 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, RefreshOnStaleResponse) {
     ASSERT_EQ(nss, cri.getNS());
     ASSERT_EQ(false, cri.isTrackedTimeSeriesBucketsNamespace());
     ASSERT_FALSE(cri.timeseriesNamespaceNeedsRewrite(nss));
+}
+
+/*
+ * Verifies that refreshIfNeeded() compares StaleConfigInfo metadata against refreshed routing
+ * information as expected.
+ */
+TEST_F(ShardingTestFixtureWithMockCatalogCache, TestRefreshIfNeededAgainstUntrackedCollection) {
+    const auto dbName = DatabaseName::createDatabaseName_forTest(boost::none, "testDB");
+    const auto nss = NamespaceString::createNamespaceString_forTest(dbName, "testColl");
+    const ShardId shard0{"shard0"};
+    const ShardId shard1{"shard1"};
+    const ShardId primaryShard{shard0};
+
+    DatabaseVersion dbVersion{UUID::gen(), Timestamp(0, 1)};
+    getCatalogCacheMock()->setDatabaseReturnValue(
+        dbName, CatalogCacheMock::makeDatabaseInfo(dbName, primaryShard, dbVersion));
+
+    const StaleConfigInfo dummyStaleConfigInfo(nss, ShardVersion::UNSHARDED(), boost::none, shard0);
+
+    // Install metadata for an untracked collection - then verify against:
+    const auto initialCollVersion =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, initialCollVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    initialCollVersion);
+    CollectionRoutingInfoTargeter cri(operationContext(), nss);
+
+    // 1) No error noted.
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 2) An error notification, but with no changes in the metadata returned by the catalog cache.
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 3) An error notification, plus an updated unsharded version returned by the catalog cache.
+    dbVersion = dbVersion.makeUpdated();
+    const auto collVersionWithBumpedDbVersion =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, collVersionWithBumpedDbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    collVersionWithBumpedDbVersion);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+
+    // 4) An error notification, plus an updated tracked version returned by the catalog cache.
+    const ShardId dataShard{shard1};
+    const auto versionAfterSimulatedMoveCollection =
+        CatalogCacheMock::makeCollectionRoutingInfoUnsplittable(
+            nss, primaryShard, dbVersion, dataShard);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, versionAfterSimulatedMoveCollection);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+}
+
+TEST_F(ShardingTestFixtureWithMockCatalogCache, TestRefreshIfNeededAgainstTrackedCollection) {
+    const auto dbName = DatabaseName::createDatabaseName_forTest(boost::none, "testDB");
+    const auto nss = NamespaceString::createNamespaceString_forTest(dbName, "testColl");
+    const ShardId shard0{"shard0"};
+    const ShardId shard1{"shard1"};
+    const ShardId primaryShard{"shard0"};
+    const ShardId dataShard{"shard1"};
+
+    DatabaseVersion dbVersion{UUID::gen(), Timestamp(0, 1)};
+    getCatalogCacheMock()->setDatabaseReturnValue(
+        dbName, CatalogCacheMock::makeDatabaseInfo(dbName, primaryShard, dbVersion));
+
+    const StaleConfigInfo dummyStaleConfigInfo(nss, ShardVersion::UNSHARDED(), boost::none, shard0);
+
+    // Install metadata for a tracked collection - then verify against:
+    const auto initialCollVersion = CatalogCacheMock::makeCollectionRoutingInfoUnsplittable(
+        nss, primaryShard, dbVersion, dataShard);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, initialCollVersion);
+    CollectionRoutingInfoTargeter cri(operationContext(), nss);
+
+    // 1) No error noted.
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 2) An error notification, but with no changes in the metadata returned by the catalog cache.
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 3) An error notification, plus an updated tracked version returned by the catalog cache.
+    const auto collVersionWhenSharded = CatalogCacheMock::makeCollectionRoutingInfoSharded(
+        nss,
+        primaryShard,
+        dbVersion,
+        KeyPattern(BSON("_id" << 1)),
+        {{ChunkRange(BSON("_id" << MINKEY), BSON("_id" << 0)), shard0},
+         {ChunkRange(BSON("_id" << 0), BSON("_id" << MAXKEY)), shard1}});
+    getCatalogCacheMock()->setCollectionReturnValue(nss, collVersionWhenSharded);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+
+    // 4) An error notification, plus an updated unsharded version returned by the catalog cache.
+    const auto versionAfterUntrackCollection =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, versionAfterUntrackCollection);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    versionAfterUntrackCollection);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
 }
 
 }  // namespace

@@ -28,11 +28,14 @@
  */
 
 #include "mongo/db/s/create_database_coordinator.h"
+
 #include "mongo/db/generic_argument_util.h"
 #include "mongo/db/s/config/sharding_catalog_manager.h"
 #include "mongo/db/s/create_database_util.h"
 #include "mongo/db/s/participant_block_gen.h"
+#include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_util.h"
+#include "mongo/executor/async_rpc.h"
 
 namespace mongo {
 
@@ -255,7 +258,7 @@ ExecutorFuture<void> CreateDatabaseCoordinator::_runImpl(
             if (status == ErrorCodes::ShardNotFound) {
                 create_database_util::logCommitCreateDatabaseFailed(dbName, status.reason());
                 triggerCleanup(opCtx, status);
-                MONGO_UNREACHABLE;
+                MONGO_UNREACHABLE_TASSERT(10083522);
             }
 
             return status;

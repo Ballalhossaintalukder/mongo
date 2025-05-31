@@ -30,20 +30,6 @@
 #include "mongo/db/query/stage_builder/sbe/builder.h"
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
-#include <absl/container/inlined_vector.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <limits>
-#include <set>
-#include <tuple>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -103,6 +89,21 @@
 #include "mongo/logv2/log.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/util/string_map.h"
+
+#include <cstdint>
+#include <limits>
+#include <set>
+#include <tuple>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+#include <absl/container/inlined_vector.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -1829,7 +1830,7 @@ std::pair<SbStage, PlanStageSlots> SlotBasedStageBuilder::buildSortMerge(
 
     // Define a lambda for creating a SortedMergeStage.
     auto makeSortedMergeStage = [&](sbe::PlanStage::Vector inputStages,
-                                    std::vector<SbSlotVector> inputSlots) {
+                                    const std::vector<SbSlotVector>& inputSlots) {
         return b.makeSortedMerge(std::move(inputStages), inputSlots, keys, std::move(dirs));
     };
 
@@ -3124,7 +3125,7 @@ std::pair<SbStage, PlanStageSlots> SlotBasedStageBuilder::buildOr(const QuerySol
 
     // Define a lambda for creating a UnionStage.
     auto makeUnionStage = [&](sbe::PlanStage::Vector inputStages,
-                              std::vector<SbSlotVector> inputSlots) {
+                              const std::vector<SbSlotVector>& inputSlots) {
         return b.makeUnion(std::move(inputStages), inputSlots);
     };
 
@@ -3520,7 +3521,7 @@ std::pair<SbStage, PlanStageSlots> SlotBasedStageBuilder::makeUnionForTailableCo
 
     // Define a lambda for creating a UnionStage.
     auto makeUnionStage = [&](sbe::PlanStage::Vector inputStages,
-                              std::vector<SbSlotVector> inputSlots) {
+                              const std::vector<SbSlotVector>& inputSlots) {
         return b.makeUnion(std::move(inputStages), inputSlots);
     };
 
@@ -4719,6 +4720,7 @@ std::pair<SbStage, PlanStageSlots> SlotBasedStageBuilder::buildWindow(const Quer
         SbBuilder b(_state, windowNode->nodeId());
 
         std::vector<ProjectNode> nodes;
+        nodes.reserve(windowFields.size());
         for (size_t i = 0; i < windowFields.size(); ++i) {
             nodes.emplace_back(SbExpr{windowFinalSlots[i]});
         }

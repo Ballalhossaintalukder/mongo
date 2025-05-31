@@ -139,11 +139,15 @@ register_execution_platforms("@internal_platforms_do_not_use//host:host")
 #
 mongo_apple_toolchain_config = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_toolchain_config")
 
-mongo_apple_toolchain_setup = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_toolchain_setup")
-
 mongo_apple_toolchain_config(name = "mongo_apple_toolchain_config")
 
+mongo_apple_toolchain_setup = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_toolchain_setup")
+
 mongo_apple_toolchain_setup(name = "mongo_apple_toolchain")
+
+mongo_apple_brew_llvm_toolchain_config = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_brew_llvm_toolchain_config")
+
+mongo_apple_brew_llvm_toolchain_config(name = "mongo_apple_brew_llvm_toolchain_config")
 
 register_toolchains(
     "@mongo_apple_toolchain//...",
@@ -180,3 +184,8 @@ setup_local_host_values(name = "local_host_values")
 setup_evergreen_variables = use_repo_rule("//bazel/repository_rules:evergreen_variables.bzl", "setup_evergreen_variables")
 
 setup_evergreen_variables(name = "evergreen_variables")
+
+setup_mongo_windows_toolchains_extension = use_extension("//bazel/toolchains/cc/mongo_windows:mongo_toolchain.bzl", "setup_mongo_windows_toolchain_extension")
+use_repo(setup_mongo_windows_toolchains_extension, "mongo_windows_toolchain")
+
+register_toolchains("@mongo_windows_toolchain//...")

@@ -31,15 +31,6 @@
 #include <boost/container/small_vector.hpp>
 #include <boost/optional.hpp>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <algorithm>
-#include <array>
-#include <iterator>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/basic_types.h"
@@ -71,6 +62,14 @@
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <iterator>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 using boost::intrusive_ptr;
 using boost::optional;
@@ -379,6 +378,14 @@ Value DocumentSourceInternalSetWindowFields::serialize(const SerializationOption
         out["maxTotalMemoryUsageBytes"] =
             opts.serializeLiteral(static_cast<long long>(_memoryTracker.maxMemoryBytes()));
         out["usedDisk"] = opts.serializeLiteral(_iterator.usedDisk());
+        out["spills"] =
+            opts.serializeLiteral(static_cast<long long>(_stats.spillingStats.getSpills()));
+        out["spilledDataStorageSize"] = opts.serializeLiteral(
+            static_cast<long long>(_stats.spillingStats.getSpilledDataStorageSize()));
+        out["numBytesSpilledEstimate"] =
+            opts.serializeLiteral(static_cast<long long>(_stats.spillingStats.getSpilledBytes()));
+        out["spilledRecords"] =
+            opts.serializeLiteral(static_cast<long long>(_stats.spillingStats.getSpilledRecords()));
     }
 
     return Value(out.freezeToValue());
@@ -561,6 +568,7 @@ DocumentSource::GetNextResult DocumentSourceInternalSetWindowFields::doGetNext()
         if (!inMemoryLimit && _memoryTracker.allowDiskUse()) {
             // Attempt to spill where possible.
             _iterator.spillToDisk();
+            _stats.spillingStats = _iterator.getSpillingStats();
         }
         if (!_memoryTracker.withinMemoryLimit()) {
             _iterator.finalize();
@@ -585,6 +593,7 @@ DocumentSource::GetNextResult DocumentSourceInternalSetWindowFields::doGetNext()
         case PartitionIterator::AdvanceResult::kEOF:
             _eof = true;
             _iterator.finalize();
+            _stats.spillingStats = _iterator.getSpillingStats();
             break;
     }
 
@@ -593,6 +602,11 @@ DocumentSource::GetNextResult DocumentSourceInternalSetWindowFields::doGetNext()
         pExpCtx, std::move(projSpec));
 
     return projExec->applyProjection(*curDoc);
+}
+
+void DocumentSourceInternalSetWindowFields::doDispose() {
+    _iterator.finalize();
+    _stats.spillingStats = _iterator.getSpillingStats();
 }
 
 }  // namespace mongo

@@ -29,17 +29,6 @@
 
 #include <absl/container/flat_hash_map.h>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <algorithm>
-#include <cstddef>
-#include <iterator>
-#include <list>
-#include <memory>
-#include <type_traits>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -58,6 +47,17 @@
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/ctype.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <list>
+#include <memory>
+#include <type_traits>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -88,14 +88,14 @@ ALLOCATE_DOCUMENT_SOURCE_ID(match, DocumentSourceMatch::id)
 
 DocumentSourceMatch::DocumentSourceMatch(std::unique_ptr<MatchExpression> expr,
                                          const boost::intrusive_ptr<ExpressionContext>& expCtx)
-    : DocumentSource(kStageName, expCtx) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {
     auto bsonObj = expr->serialize();
     rebuild(std::move(bsonObj), std::move(expr));
 }
 
 DocumentSourceMatch::DocumentSourceMatch(const BSONObj& query,
                                          const intrusive_ptr<ExpressionContext>& expCtx)
-    : DocumentSource(kStageName, expCtx) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {
     rebuild(query);
 }
 
@@ -117,11 +117,11 @@ void DocumentSourceMatch::rebuild(BSONObj predicate, std::unique_ptr<MatchExpres
     DepsTracker dependencies =
         DepsTracker(_isTextQuery ? DepsTracker::kOnlyTextScore : DepsTracker::kNoMetadata);
     getDependencies(expr.get(), &dependencies);
-    _matchProcessor.emplace(MatchProcessor(std::move(expr), std::move(dependencies)));
+    _matchProcessor.emplace(std::move(expr), std::move(dependencies));
 }
 
 const char* DocumentSourceMatch::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Value DocumentSourceMatch::serialize(const SerializationOptions& opts) const {
@@ -355,7 +355,7 @@ Document redactSafePortionTopLevel(BSONObj query) {
     MutableDocument output;
     for (BSONElement field : query) {
         StringData fieldName = field.fieldNameStringData();
-        if (fieldName.startsWith("$")) {
+        if (fieldName.starts_with("$")) {
             if (fieldName == "$or") {
                 // $or must be all-or-nothing (line $in). Can't include subset of elements.
                 vector<Value> okClauses;

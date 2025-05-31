@@ -28,12 +28,6 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
-#include <fstream>
-#include <memory>
-#include <string>
-
 #include "mongo/client/authenticate.h"
 #include "mongo/db/auth/authorization_session_impl.h"
 #include "mongo/executor/network_interface_factory.h"
@@ -43,6 +37,10 @@
 #include "mongo/unittest/integration_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/net/ssl_options.h"
+
+#include <fstream>
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 

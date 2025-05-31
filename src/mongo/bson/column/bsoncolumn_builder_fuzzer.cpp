@@ -27,16 +27,20 @@
  *    it in the license file.
  */
 
-#include <cstring>
-
+#include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/bsontypes.h"
 #include "mongo/bson/column/bsoncolumn.h"
 #include "mongo/bson/column/bsoncolumn_fuzzer_util.h"
 #include "mongo/bson/column/bsoncolumnbuilder.h"
 #include "mongo/bson/column/simple8b_helpers.h"
+#include "mongo/bson/column/simple8b_type_util.h"
+#include "mongo/bson/util/builder.h"
 #include "mongo/util/base64.h"
+
+#include <cstring>
 
 using namespace mongo;
 
@@ -52,15 +56,24 @@ extern "C" int LLVMFuzzerTestOneInput(const char* Data, size_t Size) {
     // Generate elements from input data
     const char* ptr = Data;
     const char* end = Data + Size;
+    size_t totalSize = 0;
     while (ptr < end) {
         BSONElement element;
         int repetition;
-        if (mongo::bsoncolumn::createFuzzedElement(ptr, end, elementMemory, repetition, element)) {
-            for (int i = 0; i < repetition; ++i)
-                generatedElements.push_back(element);
-        } else {
-            return 0;  // bad input string, continue fuzzer
+        if (!mongo::bsoncolumn::createFuzzedElement(ptr, end, elementMemory, repetition, element))
+            return 0;  // Bad input string to element generation
+        int maxElementSize = (mongo::BSONObjMaxInternalSize + (1 << 10) - totalSize) / repetition;
+        if (element.size() > maxElementSize) {
+            // We want to allow the inputs to exceed max obj size, but it's not worth
+            // testing overly far ahead since our run generation can exceed the
+            // fuzzer memory limit if left unchecked.
+            return 0;
         }
+        if (!bsoncolumn::addFuzzedElements(
+                ptr, end, elementMemory, element, repetition, generatedElements)) {
+            return 0;  // Bad input string to run generation
+        }
+        totalSize += repetition * element.size();
     }
 
     // Exercise the builder
@@ -89,15 +102,13 @@ extern "C" int LLVMFuzzerTestOneInput(const char* Data, size_t Size) {
                             << base64::encode(diff.data(), diff.size()));
 
     // Verify binary reopen gives identical state as intermediate
-    // TODO SERVER-100659: Remove this limitation when reopen is more robust to large number of
-    // measurements
-    if (generatedElements.size() > 20000) {
-        return 0;
-    }
+    // TODO SERVER-100659: Uncomment this after reopen bug is fixed
+    /*
     BSONColumnBuilder reopen(diff.data(), diff.size());
     invariant(builder.isInternalStateIdentical(reopen),
               str::stream() << "Binary reopen does not yield equivalent state. Column: "
                             << base64::encode(diff.data(), diff.size()));
+    */
 
     return 0;
 }

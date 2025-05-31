@@ -27,11 +27,8 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/update/update_object_node.h"
-
-#include <memory>
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/update/field_checker.h"
@@ -39,6 +36,8 @@
 #include "mongo/db/update/update_array_node.h"
 #include "mongo/db/update/update_leaf_node.h"
 #include "mongo/util/str.h"
+
+#include <memory>
 
 namespace mongo {
 

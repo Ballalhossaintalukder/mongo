@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <set>
-#include <stack>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -58,6 +49,7 @@
 #include "mongo/db/s/forwardable_operation_metadata.h"
 #include "mongo/db/s/sharding_ddl_coordinator_gen.h"
 #include "mongo/db/s/sharding_ddl_coordinator_service.h"
+#include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/session/internal_session_pool.h"
 #include "mongo/db/session/logical_session_id_gen.h"
@@ -74,6 +66,15 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/version/releases.h"
+
+#include <memory>
+#include <set>
+#include <stack>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -507,7 +508,8 @@ protected:
         auto newDoc = _getDoc();
 
         auto coordinatorMetadata = newDoc.getShardingDDLCoordinatorMetadata();
-        coordinatorMetadata.setAbortReason(status);
+
+        coordinatorMetadata.setAbortReason(sharding_ddl_util::possiblyTruncateErrorStatus(status));
         newDoc.setShardingDDLCoordinatorMetadata(std::move(coordinatorMetadata));
 
         _updateStateDocument(opCtx, std::move(newDoc));

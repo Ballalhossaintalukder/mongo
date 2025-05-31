@@ -27,14 +27,14 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <cstring>
-
 #include "mongo/base/data_type.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <cstring>
 
 namespace mongo {
 
@@ -71,7 +71,7 @@ Status DataType::Handler<StringData>::store(
     }
 
     if (ptr) {
-        std::memcpy(ptr, sdata.rawData(), sdata.size());
+        std::memcpy(ptr, sdata.data(), sdata.size());
     }
 
     if (advanced) {

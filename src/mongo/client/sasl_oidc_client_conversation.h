@@ -29,13 +29,13 @@
 
 #pragma once
 
-#include <functional>
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/client/sasl_client_conversation.h"
 #include "mongo/client/sasl_oidc_client_params.h"
+
+#include <functional>
+#include <string>
+#include <utility>
 
 namespace mongo {
 
@@ -48,8 +48,8 @@ public:
                                StringData principalName,
                                StringData accessToken)
         : SaslClientConversation(clientSession),
-          _principalName(principalName.rawData()),
-          _accessToken(accessToken.rawData()) {}
+          _principalName(principalName.data()),
+          _accessToken(accessToken.data()) {}
 
     static void setOIDCIdPAuthCallback(std::function<oidcIdPAuthCallbackT> callback) {
         oidcClientGlobalParams.oidcIdPAuthCallback = std::move(callback);

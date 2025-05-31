@@ -30,22 +30,6 @@
 
 #include "mongo/db/query/canonical_query_encoder.h"
 
-#include <algorithm>
-#include <boost/iterator/transform_iterator.hpp>
-#include <cstddef>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <vector>
-
-#include <boost/iterator/iterator_facade.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <s2cellid.h>
-
 #include "mongo/base/string_data_comparator.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -91,6 +75,23 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/base64.h"
 #include "mongo/util/decorable.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include <s2cellid.h>
+
+#include <boost/iterator/iterator_facade.hpp>
+#include <boost/iterator/transform_iterator.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -824,7 +825,7 @@ void encodeFindCommandRequest(const CanonicalQuery& cq, BufBuilder* bufBuilder) 
     // Read concern "available" results in SBE plans that do not perform shard filtering, so it must
     // be encoded differently from other read concerns.
     bool isAvailableReadConcern{false};
-    if (const auto readConcern = findCommand.getReadConcern()) {
+    if (const auto& readConcern = findCommand.getReadConcern()) {
         isAvailableReadConcern =
             readConcern->getLevel() == repl::ReadConcernLevel::kAvailableReadConcern;
     }
@@ -1144,7 +1145,7 @@ private:
         SerializationOptions opts;
         opts.inMatchExprSortAndDedupElements = false;
 
-        encodeHelper(expr->getSerializedRightHandSide(std::move(opts)));
+        encodeHelper(expr->getSerializedRightHandSide(opts));
     }
 
     /**
@@ -1157,7 +1158,7 @@ private:
         encodeHelper(expr->serialize());
     }
 
-    void encodeHelper(BSONObj toEncode) {
+    void encodeHelper(const BSONObj& toEncode) {
         tassert(6142102, "expected object to encode to be non-empty", !toEncode.isEmpty());
         BSONObjIterator objIter{toEncode};
         BSONElement firstElem = objIter.next();

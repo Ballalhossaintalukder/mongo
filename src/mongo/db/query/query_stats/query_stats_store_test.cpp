@@ -27,20 +27,6 @@
  *    it in the license file.
  */
 
-#include <absl/hash/hash.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -70,6 +56,21 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <absl/hash/hash.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::query_stats {
 
@@ -1560,21 +1561,7 @@ TEST_F(QueryStatsStoreTest, BasicDiskUsage) {
     // Verify the serialization works correctly
     {
         auto qse = getMetrics(query1);
-
-        // Empty
-        ASSERT_BSONOBJ_EQ(qse.toBSON(false),
-                          BSONObjBuilder{}
-                              .append("lastExecutionMicros", 123456LL)
-                              .append("execCount", 1LL)
-                              .append("totalExecMicros", emptyIntMetric)
-                              .append("firstResponseExecMicros", emptyIntMetric)
-                              .append("docsReturned", emptyIntMetric)
-                              .append("firstSeenTimestamp", qse.firstSeenTimestamp)
-                              .append("latestSeenTimestamp", Date_t())
-                              .obj());
-
-        // With Disk Usage
-        ASSERT_BSONOBJ_EQ(qse.toBSON(true),
+        ASSERT_BSONOBJ_EQ(qse.toBSON(),
                           BSONObjBuilder{}
                               .append("lastExecutionMicros", 123456LL)
                               .append("execCount", 1LL)
@@ -1609,7 +1596,7 @@ TEST_F(QueryStatsStoreTest, BasicDiskUsage) {
     {
         auto qse2 = getMetrics(query1);
 
-        ASSERT_BSONOBJ_EQ(qse2.toBSON(true),
+        ASSERT_BSONOBJ_EQ(qse2.toBSON(),
                           BSONObjBuilder{}
                               .append("lastExecutionMicros", 246912LL)
                               .append("execCount", 2LL)

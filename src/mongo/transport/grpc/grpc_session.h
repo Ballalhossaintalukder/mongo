@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
-
-#include <boost/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/rpc/metadata/client_metadata.h"
@@ -51,6 +46,11 @@
 #include "mongo/util/shared_buffer.h"
 #include "mongo/util/synchronized_value.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/optional.hpp>
 
 namespace mongo::transport::grpc {
 
@@ -193,7 +193,7 @@ public:
     }
 #endif
 
-    bool shouldOverrideMaxConns(
+    bool isExemptedByCIDRList(
         const std::vector<std::variant<CIDR, std::string>>& exemptions) const override {
         return false;
     }

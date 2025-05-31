@@ -26,8 +26,6 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include <benchmark/benchmark.h>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/catalog/collection_mock.h"
@@ -44,6 +42,8 @@
 #include "mongo/db/query/query_planner_test_fixture.h"
 #include "mongo/db/query/query_test_service_context.h"
 #include "mongo/unittest/unittest.h"
+
+#include <benchmark/benchmark.h>
 
 namespace mongo {
 
@@ -363,8 +363,10 @@ void BM_PlanCacheClassic(benchmark::State& state) {
 
     auto collection =
         std::make_shared<CollectionMock>(UUID::gen(), kNss, std::make_unique<IndexCatalogMock>());
-    // TODO(SERVER-103405): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
-    auto collectionPtr = CollectionPtr::CollectionPtr_UNSAFE(collection.get());
+    auto catalog = CollectionCatalog::get(opCtx.get());
+    catalog->onCreateCollection(opCtx.get(), collection);
+    auto collectionPtr = CollectionPtr(
+        catalog->establishConsistentCollection(opCtx.get(), kNss, boost::none /* readTimestamp */));
     auto collectionsAccessor = MultipleCollectionAccessor(collectionPtr);
 
     // If there is an index specified, add it to the IndexCatalogMock.

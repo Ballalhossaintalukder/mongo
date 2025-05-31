@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/pipeline/document_source_internal_shred_documents.h"
 
@@ -46,7 +45,7 @@ ALLOCATE_DOCUMENT_SOURCE_ID(_internalShredDocuments, DocumentSourceInternalShred
 
 DocumentSourceInternalShredDocuments::DocumentSourceInternalShredDocuments(
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageName, pExpCtx) {}
+    : DocumentSource(kStageName, pExpCtx), exec::agg::Stage(kStageName, pExpCtx) {}
 
 DocumentSource::GetNextResult DocumentSourceInternalShredDocuments::doGetNext() {
     auto next = pSource->getNext();

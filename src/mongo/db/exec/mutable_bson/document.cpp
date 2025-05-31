@@ -28,21 +28,22 @@
  */
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <limits>
-#include <new>
-#include <type_traits>
-#include <vector>
+#include "mongo/db/exec/mutable_bson/document.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/static_assert.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/util/builder.h"
-#include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/storage/damage_vector.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/debug_util.h"
 #include "mongo/util/str_basic.h"
+
+#include <limits>
+#include <new>
+#include <type_traits>
+#include <vector>
 
 namespace mongo {
 namespace mutablebson {
@@ -751,7 +752,7 @@ public:
     StringData getFieldNameForNewElement(const ElementRep& rep) {
         StringData result = getFieldName(rep);
         if (rep.objIdx == kLeafObjIdx) {
-            _fieldNameScratch.assign(result.rawData(), result.size());
+            _fieldNameScratch.assign(result.data(), result.size());
             result = StringData(_fieldNameScratch);
         }
         return result;
@@ -940,11 +941,11 @@ public:
     }
 
     inline bool doesNotAliasFieldNameHeap(StringData s) const {
-        return !inFieldNameHeap(s.rawData());
+        return !inFieldNameHeap(s.data());
     }
 
     inline bool doesNotAliasLeafBuilder(StringData s) const {
-        return !inLeafBuilder(s.rawData());
+        return !inLeafBuilder(s.data());
     }
 
     inline bool doesNotAlias(const BSONElement& e) const {
@@ -1081,7 +1082,7 @@ private:
         const uint32_t id = _fieldNames.size();
         if (!fieldName.empty())
             _fieldNames.insert(
-                _fieldNames.end(), fieldName.rawData(), fieldName.rawData() + fieldName.size());
+                _fieldNames.end(), fieldName.data(), fieldName.data() + fieldName.size());
         _fieldNames.push_back('\0');
         if (kDebugBuild && paranoid) {
             // Force names to new addresses to catch invalidation errors.

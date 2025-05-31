@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -109,6 +99,16 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -284,6 +284,9 @@ protected:
                             BSON(kShardKey << 1));
         coll.setAllowMigrations(false);
 
+        getConfigServerCatalogCacheLoaderMock()->setDatabaseRefreshReturnValue(
+            DatabaseType(kNss.dbName(), kShardList[0].getName(), env.dbVersion));
+
         getCatalogCacheLoaderMock()->setDatabaseRefreshReturnValue(
             DatabaseType(kNss.dbName(), kShardList[0].getName(), env.dbVersion));
         getCatalogCacheLoaderMock()->setCollectionRefreshValues(
@@ -303,12 +306,21 @@ protected:
                          "y"),
             boost::none);
 
+        // Refresh the filtering metadata for the nss.
         ASSERT_OK(FilteringMetadataCache::get(opCtx)->forceDatabaseMetadataRefresh_DEPRECATED(
             opCtx, kNss.dbName()));
         FilteringMetadataCache::get(opCtx)->forceCollectionPlacementRefresh(opCtx, kNss);
 
-        if (refreshTempNss)
+        // Also refresh the routing information.
+        const auto catalogCache = Grid::get(opCtx)->catalogCache();
+        catalogCache->onStaleCollectionVersion(kNss, boost::none);
+        (void)catalogCache->getCollectionRoutingInfo(opCtx, kNss);
+
+        if (refreshTempNss) {
             FilteringMetadataCache::get(opCtx)->forceCollectionPlacementRefresh(opCtx, env.tempNss);
+            catalogCache->onStaleCollectionVersion(env.tempNss, boost::none);
+            (void)catalogCache->getCollectionRoutingInfo(opCtx, env.tempNss);
+        }
 
         return env;
     }

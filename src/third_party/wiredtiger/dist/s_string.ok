@@ -87,9 +87,12 @@ Crt
 Crummey
 CustomersPhone
 Cygwin
+DBI
 DESC
 DEST
 DHANDLE
+DISAGG
+DISAGGREGATED
 DNE
 DONTNEED
 DS
@@ -97,6 +100,7 @@ DUPLICATEV
 Decrypt
 DeleteFileW
 Deterministically
+Disaggregated
 Dk
 DmpRvXx
 Dxxx
@@ -206,6 +210,7 @@ LANGID
 LF
 LLVM
 LLVMFuzzerTestOneInput
+LMDB
 LOGOP
 LOGREC
 LOGSCAN
@@ -230,6 +235,7 @@ LogSink
 LogSystemInterface
 MADV
 MALLOC
+MDB
 MEM
 MERCHANTABILITY
 MONGODB
@@ -281,6 +287,7 @@ OVFL
 ObWgfvgw
 Optane
 Outfmt
+PALI
 PDEATHSIG
 PFX
 PID
@@ -291,6 +298,7 @@ PREFETCH
 PREV
 PRId
 PRIu
+PRIx
 PRNG
 PSD
 PSE
@@ -342,11 +350,13 @@ Readonly
 Realloc
 RedHat
 Redistributions
+Reentrancy
 Reify
 Rogerio
 Runtime
 SDK
 SIMD
+SLS
 SLVG
 SMT
 SPINLOCK
@@ -457,6 +467,8 @@ WiredTigerHS
 WiredTigerLAS
 WiredTigerLog
 WiredTigerPreplog
+WiredTigerShared
+WiredTigerSharedHS
 WiredTigerTmplog
 WithSeeds
 Wl
@@ -508,6 +520,7 @@ auximage
 auxincr
 aws
 bInheritHandle
+backlink
 backoff
 bal
 basecfg
@@ -533,6 +546,7 @@ blkincr
 blkmod
 blkmods
 bm
+bmd
 bms
 bnd
 bool
@@ -701,6 +715,8 @@ difftime
 dir
 directio
 dirlist
+disagg
+disaggregated
 disproportionally
 dlclose
 dlh
@@ -823,6 +839,7 @@ gettimeofday
 getv
 ggg
 github
+globals
 globfree
 gobare
 goesc
@@ -894,6 +911,7 @@ isalnum
 isalpha
 isascii
 isb
+isd
 isdigit
 ish
 ishld
@@ -971,6 +989,7 @@ lru
 lseek
 lsm
 lsn
+lsnp
 lt
 lte
 lu
@@ -988,6 +1007,7 @@ maxv
 mb
 mbll
 mbss
+md
 mem
 membar
 memcmp
@@ -1043,6 +1063,7 @@ nextprev
 nf
 nfilename
 nhex
+nilly
 nlohmann
 nlpo
 nocase
@@ -1113,6 +1134,8 @@ perf
 pfx
 pid
 pindexp
+plh
+plhandle
 pmem
 poptable
 popthreads
@@ -1331,6 +1354,7 @@ timespec
 tinfo
 tlb
 tmp
+tod
 tokenizer
 toklen
 tokname

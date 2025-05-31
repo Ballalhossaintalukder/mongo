@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/hash/hash.h>
-#include <absl/strings/string_view.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/numeric/conversion/converter_policies.hpp>
-#include <boost/optional/optional.hpp>
-#include <cmath>
+#include "mongo/db/exec/sbe/values/value.h"
 
 #include "mongo/base/compare_numbers.h"
 #include "mongo/base/string_data_comparator.h"
@@ -46,7 +39,6 @@
 #include "mongo/db/exec/sbe/values/generic_compare.h"
 #include "mongo/db/exec/sbe/values/slot.h"
 #include "mongo/db/exec/sbe/values/util.h"
-#include "mongo/db/exec/sbe/values/value.h"
 #include "mongo/db/exec/sbe/values/value_builder.h"
 #include "mongo/db/exec/sbe/values/value_printer.h"
 #include "mongo/db/index/btree_key_generator.h"
@@ -56,6 +48,16 @@
 #include "mongo/util/bufreader.h"
 #include "mongo/util/duration.h"
 
+#include <cmath>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/hash/hash.h>
+#include <absl/strings/string_view.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/numeric/conversion/converter_policies.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 namespace sbe {
 namespace value {
@@ -63,7 +65,7 @@ namespace {
 template <typename T>
 auto abslHash(const T& val) {
     if constexpr (std::is_same_v<T, StringData>) {
-        return absl::Hash<absl::string_view>{}(absl::string_view{val.rawData(), val.size()});
+        return absl::Hash<absl::string_view>{}(absl::string_view{val.data(), val.size()});
     } else if constexpr (IsEndian<T>::value) {
         return abslHash(val.value);
     } else {
@@ -100,8 +102,8 @@ std::pair<TypeTags, Value> makeNewBsonRegex(StringData pattern, StringData flags
     auto rawBuffer = buffer.get();
 
     // Copy pattern first and flags after it.
-    memcpy(rawBuffer, pattern.rawData(), pattern.size());
-    memcpy(rawBuffer + pattern.size() + 1, flags.rawData(), flags.size());
+    memcpy(rawBuffer, pattern.data(), pattern.size());
+    memcpy(rawBuffer + pattern.size() + 1, flags.data(), flags.size());
 
     // Ensure NULL byte is placed after each part.
     rawBuffer[pattern.size()] = '\0';
@@ -125,7 +127,7 @@ std::pair<TypeTags, Value> makeNewBsonDBPointer(StringData ns, const uint8_t* id
     ptr += sizeof(uint32_t);
 
     // Write 'ns' followed by a null terminator.
-    memcpy(ptr, ns.rawData(), nsLen);
+    memcpy(ptr, ns.data(), nsLen);
     ptr[nsLen] = '\0';
     ptr += nsLenWithNull;
 
@@ -152,7 +154,7 @@ std::pair<TypeTags, Value> makeNewBsonCodeWScope(StringData code, const char* sc
     ptr += sizeof(uint32_t);
 
     // Write 'code' followed by a null terminator.
-    memcpy(ptr, code.rawData(), codeLen);
+    memcpy(ptr, code.data(), codeLen);
     ptr[codeLen] = '\0';
     ptr += codeLenWithNull;
 

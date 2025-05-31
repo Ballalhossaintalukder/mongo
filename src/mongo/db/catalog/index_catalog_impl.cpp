@@ -29,15 +29,6 @@
 
 #include "mongo/db/catalog/index_catalog_impl.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/numeric/conversion/converter_policies.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/bson/bsonelement.h"
@@ -54,6 +45,7 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_catalog_helper.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry_impl.h"
 #include "mongo/db/catalog/index_key_validate.h"
 #include "mongo/db/collection_index_usage_tracker.h"
@@ -86,8 +78,8 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/kv/kv_engine.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage/storage_engine_init.h"
@@ -108,6 +100,16 @@
 #include "mongo/util/shared_buffer_fragment.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/numeric/conversion/converter_policies.hpp>
+#include <boost/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -628,7 +630,7 @@ IndexCatalogEntry* IndexCatalogImpl::createIndexEntry(OperationContext* opCtx,
     }
 
     auto engine = opCtx->getServiceContext()->getStorageEngine();
-    std::string ident = engine->getDurableCatalog()->getIndexIdent(
+    std::string ident = engine->getMDBCatalog()->getIndexIdent(
         opCtx, collection->getCatalogId(), descriptor.indexName());
 
     bool isReadyIndex = CreateIndexEntryFlags::kIsReady & flags;
@@ -645,21 +647,41 @@ IndexCatalogEntry* IndexCatalogImpl::createIndexEntry(OperationContext* opCtx,
 
     IndexDescriptor* desc = entry->descriptor();
 
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
+
     // In some cases, it may be necessary to update the index metadata in the storage engine in
     // order to obtain the correct SortedDataInterface. One such scenario is found in converting an
     // index to be unique.
     bool isUpdateMetadata = CreateIndexEntryFlags::kUpdateMetadata & flags;
     if (isUpdateMetadata) {
         bool isForceUpdateMetadata = CreateIndexEntryFlags::kForceUpdateMetadata & flags;
-        engine->getEngine()->alterIdentMetadata(*shard_role_details::getRecoveryUnit(opCtx),
-                                                ident,
-                                                desc->toIndexConfig(),
-                                                isForceUpdateMetadata);
+        engine->getEngine()->alterIdentMetadata(
+            ru, ident, desc->toIndexConfig(), isForceUpdateMetadata);
     }
 
     if (!frozen) {
-        entry->setAccessMethod(IndexAccessMethod::make(
-            opCtx, collection->ns(), collection->getCollectionOptions(), entry.get(), ident));
+        try {
+            entry->setAccessMethod(IndexAccessMethod::make(opCtx,
+                                                           ru,
+                                                           collection->ns(),
+                                                           collection->getCollectionOptions(),
+                                                           entry.get(),
+                                                           ident));
+        } catch (const ExceptionFor<ErrorCodes::NoSuchKey>& ex) {
+            // Ready indexes should always exist in the storage engine, and if they're missing
+            // something has gone significantly wrong.
+            if (isReadyIndex)
+                throw;
+
+            // Non-ready indexes being missing isn't normal, but isn't an error. We may have crashed
+            // while creating the index and added it to the catalog but not the storage engine, or
+            // while restarting an index build and have dropped the old ident but not recreated it
+            // yet. If the ident was present we'd just drop and recreate it anyway.
+            LOGV2(10398601,
+                  "Non-frozen, non-ready index was missing entirely when loading the index "
+                  "catalog. The index will be recreated by the index build process.",
+                  "error"_attr = ex);
+        }
     }
 
     IndexCatalogEntry* save = entry.get();
@@ -1359,7 +1381,7 @@ Status IndexCatalogImpl::resetUnfinishedIndexForRecovery(OperationContext* opCtx
         if (auto released = _frozenIndexes.release(entry->descriptor())) {
             return released;
         }
-        MONGO_UNREACHABLE;
+        MONGO_UNREACHABLE_TASSERT(10083504);
     }();
 
     LOGV2(6987700,
@@ -1370,23 +1392,25 @@ Status IndexCatalogImpl::resetUnfinishedIndexForRecovery(OperationContext* opCtx
 
     invariant(released.get() == entry);
 
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
+
     // Drop the ident if it exists. The storage engine will return OK if the ident is not found.
     auto engine = opCtx->getServiceContext()->getStorageEngine();
     const std::string ident = released->getIdent();
-    Status status = engine->getEngine()->dropIdent(
-        shard_role_details::getRecoveryUnit(opCtx), ident, /*identHasSizeInfo=*/false);
+    Status status = engine->getEngine()->dropIdent(ru, ident, /*identHasSizeInfo=*/false);
     if (!status.isOK()) {
         return status;
     }
 
-    // Recreate the ident on-disk. DurableCatalog::createIndex() will lookup the ident internally
+    // Recreate the ident on-disk. durable_catalog::createIndex() will lookup the ident internally
     // using the catalogId and index name.
     const auto indexDescriptor = released->descriptor();
-    status = DurableCatalog::get(opCtx)->createIndex(opCtx,
-                                                     collection->getCatalogId(),
-                                                     collection->ns(),
-                                                     collection->getCollectionOptions(),
-                                                     indexDescriptor->toIndexConfig());
+    status = durable_catalog::createIndex(opCtx,
+                                          collection->getCatalogId(),
+                                          collection->ns(),
+                                          collection->getCollectionOptions(),
+                                          indexDescriptor->toIndexConfig(),
+                                          MDBCatalog::get(opCtx));
     if (!status.isOK()) {
         return status;
     }
@@ -1394,7 +1418,7 @@ Status IndexCatalogImpl::resetUnfinishedIndexForRecovery(OperationContext* opCtx
     // Update the index entry state in preparation to rebuild the index.
     if (!entry->accessMethod()) {
         entry->setAccessMethod(IndexAccessMethod::make(
-            opCtx, collection->ns(), collection->getCollectionOptions(), entry, ident));
+            opCtx, ru, collection->ns(), collection->getCollectionOptions(), entry, ident));
     }
 
     entry->setIsFrozen(false);
@@ -1436,7 +1460,7 @@ Status IndexCatalogImpl::dropIndexEntry(OperationContext* opCtx,
         if (auto released = _frozenIndexes.release(entry->descriptor())) {
             return released;
         }
-        MONGO_UNREACHABLE;
+        MONGO_UNREACHABLE_TASSERT(10083505);
     }();
 
     _rebuildIndexUpdateIdentifier();
@@ -1775,6 +1799,7 @@ Status IndexCatalogImpl::_updateRecord(OperationContext* const opCtx,
     int64_t keysDeleted = 0;
 
     auto status = index->accessMethod()->update(opCtx,
+                                                *shard_role_details::getRecoveryUnit(opCtx),
                                                 pooledBuilder,
                                                 oldDoc,
                                                 newDoc,
@@ -2032,7 +2057,8 @@ StatusWith<int64_t> IndexCatalogImpl::compactIndexes(OperationContext* opCtx,
                     1,
                     "compacting index: {entry_descriptor}",
                     "entry_descriptor"_attr = *(entry->descriptor()));
-        auto status = entry->accessMethod()->compact(opCtx, options);
+        auto status = entry->accessMethod()->compact(
+            opCtx, *shard_role_details::getRecoveryUnit(opCtx), options);
         if (!status.isOK()) {
             LOGV2_ERROR(20377,
                         "Failed to compact index",

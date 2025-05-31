@@ -27,11 +27,11 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
+#include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 
-#include <wiredtiger.h>
-
+#include "mongo/db/global_settings.h"
+#include "mongo/db/repl/repl_set_member_in_standalone_mode.h"
+#include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/execution_context.h"
 #include "mongo/db/storage/prepare_conflict_tracker.h"
@@ -39,13 +39,17 @@
 #include "mongo/db/storage/storage_metrics.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/clock_source_mock.h"
 #include "mongo/util/future_test_utils.h"
+
+#include <memory>
+#include <string>
+
+#include <wiredtiger.h>
 
 namespace mongo {
 
@@ -65,7 +69,10 @@ std::unique_ptr<WiredTigerKVEngine> makeKVEngine(ServiceContext* serviceContext,
         clockSource,
         std::move(wtConfig),
         /*ephemeral=*/false,
-        /*repair=*/false);
+        /*repair=*/false,
+        getGlobalReplSettings().isReplSet(),
+        repl::ReplSettings::shouldRecoverFromOplogAsStandalone(),
+        getReplSetMemberInStandaloneMode(getGlobalServiceContext()));
 }
 
 class WiredTigerPrepareConflictTest : public unittest::Test {

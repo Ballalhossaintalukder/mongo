@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/fts/fts_spec.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -41,12 +36,18 @@
 #include "mongo/bson/dotted_path/dotted_path_support.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/db/fts/fts_element_iterator.h"
-#include "mongo/db/fts/fts_spec.h"
 #include "mongo/db/fts/fts_tokenizer.h"
 #include "mongo/db/fts/fts_util.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -200,7 +201,7 @@ void FTSSpec::_scoreStringV2(FTSTokenizer* tokenizer,
 
     unsigned numTokens = 0;
 
-    tokenizer->reset(raw.rawData(), FTSTokenizer::kFilterStopWords);
+    tokenizer->reset(raw.data(), FTSTokenizer::kFilterStopWords);
 
     while (tokenizer->moveNext()) {
         StringData term = tokenizer->get();
@@ -231,7 +232,7 @@ void FTSSpec::_scoreStringV2(FTSTokenizer* tokenizer,
         // if term is identical to the raw form of the
         // field (untokenized) give it a small boost.
         double adjustment = 1;
-        if (raw.size() == term.length() && raw.equalCaseInsensitive(term))
+        if (str::equalCaseInsensitive(raw, term))
             adjustment += 0.1;
 
         double& score = (*docScores)[term];
@@ -430,7 +431,7 @@ StatusWith<BSONObj> FTSSpec::fixSpec(const BSONObj& spec) {
                                 "weight cannot have empty path component"};
                     }
 
-                    if (part.startsWith("$")) {
+                    if (part.starts_with("$")) {
                         return {ErrorCodes::CannotCreateIndex,
                                 "weight cannot have path component with $ prefix"};
                     }

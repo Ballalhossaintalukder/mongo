@@ -28,13 +28,14 @@
  */
 
 
+#include "mongo/client/replica_set_change_notifier.h"
+
+#include "mongo/logv2/log.h"
+#include "mongo/util/assert_util.h"
+
 #include <mutex>
 
 #include <absl/container/node_hash_map.h>
-
-#include "mongo/client/replica_set_change_notifier.h"
-#include "mongo/logv2/log.h"
-#include "mongo/util/assert_util.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -45,7 +46,7 @@ void ReplicaSetChangeNotifier::_addListener(std::shared_ptr<Listener> listener) 
     stdx::lock_guard lk(_mutex);
 
     listener->init(this);
-    _listeners.push_back(listener);
+    _listeners.push_back(std::move(listener));
 }
 
 void ReplicaSetChangeNotifier::onFoundSet(const std::string& name) {

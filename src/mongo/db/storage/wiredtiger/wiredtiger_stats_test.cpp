@@ -29,15 +29,6 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_stats.h"
 
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <ostream>
-#include <string>
-#include <vector>
-
-#include <wiredtiger.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
@@ -50,6 +41,15 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/clock_source_mock.h"
 #include "mongo/util/tick_source_mock.h"
+
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include <wiredtiger.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWiredTiger
 
@@ -84,7 +84,8 @@ protected:
         WT_CONNECTION* wtConnection;
         ASSERT_WT_OK(wiredtiger_open(
             _path.path().c_str(), nullptr, "create,statistics=(fast),", &wtConnection));
-        _conn = std::make_unique<WiredTigerConnection>(wtConnection, &_clockSource);
+        _conn = std::make_unique<WiredTigerConnection>(
+            wtConnection, &_clockSource, /*sessionCacheMax=*/33000);
         _session = std::make_unique<WiredTigerSession>(_conn.get());
         _session->setTickSource_forTest(&tickSourceMock);
         ASSERT_WT_OK(_session->create(_uri.c_str(),

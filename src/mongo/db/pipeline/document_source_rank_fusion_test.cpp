@@ -27,16 +27,16 @@
  *    it in the license file.
  */
 
-#include "expression_context.h"
-#include "mongo/bson/json.h"
-
-#include "mongo/unittest/unittest.h"
-
-#include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source_rank_fusion.h"
+
+#include "mongo/bson/json.h"
+#include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/idl/server_parameter_test_util.h"
+#include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include "expression_context.h"
 
 namespace mongo {
 namespace {
@@ -432,12 +432,13 @@ TEST_F(DocumentSourceRankFusionTest,
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -1743,12 +1744,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsApplied) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -1968,12 +1970,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsAppliedToCorrectPipeline) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -2290,12 +2293,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsAppliedMultiplePipelines) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -2740,12 +2744,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckOneScorePipelineScoreDetailsDesugaring
         R"({
             "expectedStages": [
                 {
-                    "$search": {
-                        "index": "search_index",
-                        "text": {
-                            "query": "mystery",
-                            "path": "genres"
-                        }
+                    "$search": { 
+                        "mongotQuery": { 
+                            "index": "search_index", 
+                            "text": { "query": "mystery", "path": "genres" } 
+                        }, 
+                        "requiresSearchSequenceToken": false, 
+                        "requiresSearchMetaCursor": true 
                     }
                 },
                 {
@@ -3002,13 +3007,14 @@ TEST_F(DocumentSourceRankFusionTest, CheckTwoPipelineScoreDetailsDesugaring) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    },
-                                    "scoreDetails": true
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" },
+                                        "scoreDetails": true
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -3987,12 +3993,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckTwoPipelineRankFusionFullDesugaring) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {

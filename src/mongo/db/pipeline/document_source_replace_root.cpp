@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <fmt/format.h>
-#include <iterator>
-#include <memory>
-#include <string>
-
+#include "mongo/db/pipeline/document_source_replace_root.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -43,7 +38,6 @@
 #include "mongo/db/matcher/match_expression_dependencies.h"
 #include "mongo/db/pipeline/dependencies.h"
 #include "mongo/db/pipeline/document_source_match.h"
-#include "mongo/db/pipeline/document_source_replace_root.h"
 #include "mongo/db/pipeline/document_source_replace_root_gen.h"
 #include "mongo/db/pipeline/document_source_single_document_transformation.h"
 #include "mongo/db/pipeline/field_path.h"
@@ -55,6 +49,13 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 
+#include <iterator>
+#include <memory>
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
 using boost::intrusive_ptr;
@@ -64,7 +65,7 @@ Document ReplaceRootTransformation::applyTransformation(const Document& input) c
     Value newRoot = _newRoot->evaluate(input, &_expCtx->variables);
     // The newRoot expression, if it exists, must evaluate to an object.
     uassert(40228,
-            fmt::format(kErrorTemplate.rawData(),
+            fmt::format(kErrorTemplate.data(),
                         _errMsgContextForNonObject,
                         newRoot.toString(),
                         typeName(newRoot.getType()),
@@ -256,7 +257,7 @@ intrusive_ptr<DocumentSource> DocumentSourceReplaceRoot::createFromBson(
             newRootExpression,
             (stageName == kStageName) ? "'newRoot' expression " : "'replacement document' ",
             expCtx->getSbeCompatibility()),
-        kStageName.rawData(),
+        kStageName.data(),
         isIndependentOfAnyCollection);
 }
 
@@ -272,7 +273,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceReplaceRoot::create(
                                                     newRootExpression,
                                                     std::move(errMsgContextForNonObjects),
                                                     expCtx->getSbeCompatibility()),
-        kStageName.rawData(),
+        kStageName.data(),
         isIndependentOfAnyCollection);
 }
 }  // namespace mongo

@@ -30,8 +30,6 @@
 
 #include "mongo/db/storage/disk_space_monitor.h"
 
-#include <utility>
-
 #include "mongo/db/client.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/storage/disk_space_util.h"
@@ -41,6 +39,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/duration.h"
+
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -96,15 +96,22 @@ void DiskSpaceMonitor::_stop() {
     }
 }
 
-void DiskSpaceMonitor::registerAction(std::unique_ptr<Action> action) {
+int64_t DiskSpaceMonitor::registerAction(std::unique_ptr<Action> action) {
     stdx::lock_guard<stdx::mutex> lock(_mutex);
-    _actions.push_back(std::move(action));
+    invariant(_actions.try_emplace(_actionId, std::move(action)).second);
+    return _actionId++;
+}
+
+void DiskSpaceMonitor::deregisterAction(int64_t actionId) {
+    stdx::lock_guard<stdx::mutex> lock(_mutex);
+    invariant(actionId >= 0 && actionId < _actionId);
+    invariant(_actions.erase(actionId));
 }
 
 void DiskSpaceMonitor::takeAction(OperationContext* opCtx, int64_t availableBytes) {
     stdx::lock_guard<stdx::mutex> lock(_mutex);
 
-    for (auto& action : _actions) {
+    for (auto&& [id, action] : _actions) {
         if (availableBytes <= action->getThresholdBytes()) {
             action->act(opCtx, availableBytes);
             tookAction.increment();

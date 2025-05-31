@@ -45,6 +45,7 @@ executor:
           TestData:
             skipValidationOnInvalidViewDefinitions: true
             shardsAddedRemoved: true
+            hasRandomShardsAddedRemoved: true
     - class: CheckRoutingTableConsistency
       shell_options:
         global_vars:

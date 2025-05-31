@@ -27,12 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
-
-#include <CommonCrypto/CommonCryptor.h>
-#include <Security/Security.h>
-#include <memory>
-#include <set>
 
 #include "mongo/base/init.h"
 #include "mongo/base/status.h"
@@ -41,6 +35,12 @@
 #include "mongo/platform/random.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <set>
+
+#include <CommonCrypto/CommonCryptor.h>
+#include <Security/Security.h>
 
 namespace mongo {
 namespace crypto {

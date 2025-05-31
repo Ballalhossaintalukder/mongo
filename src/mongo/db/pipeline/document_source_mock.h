@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <deque>
-#include <initializer_list>
-#include <utility>
-#include <vector>
-
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/operation_context.h"
@@ -51,13 +42,23 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <cstddef>
+#include <deque>
+#include <initializer_list>
+#include <utility>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * A mock DocumentSource which is useful for testing. In addition to re-spooling documents like
  * DocumentSourceQueue, it tracks some state about which methods have been called.
  */
-class DocumentSourceMock : public DocumentSource {
+class DocumentSourceMock : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$mock"_sd;
 

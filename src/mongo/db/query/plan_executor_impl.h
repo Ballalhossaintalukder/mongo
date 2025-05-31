@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include "mongo/db/query/plan_insert_listener.h"
-#include <boost/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <deque>
-#include <memory>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -50,8 +43,10 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/query/canonical_query.h"
+#include "mongo/db/query/oplog_wait_config.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/plan_explainer.h"
+#include "mongo/db/query/plan_insert_listener.h"
 #include "mongo/db/query/plan_yield_policy.h"
 #include "mongo/db/query/query_planner.h"
 #include "mongo/db/query/query_solution.h"
@@ -65,6 +60,13 @@
 #include "mongo/s/shard_cannot_refresh_due_to_locks_held_exception.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <deque>
+#include <memory>
+#include <vector>
+
+#include <boost/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -178,8 +180,8 @@ public:
     BatchedDeleteStats getBatchedDeleteStats() override;
     void markAsKilled(Status killStatus) final;
     void dispose(OperationContext* opCtx) final;
-    void forceSpill() final {
-        _root->forceSpill();
+    void forceSpill(PlanYieldPolicy* yieldPolicy) final {
+        _root->forceSpill(yieldPolicy);
     }
     void stashResult(const BSONObj& obj) final;
 
@@ -211,11 +213,6 @@ public:
     MultiPlanStage* getMultiPlanStage() const;
 
     PlanStage* getRootStage() const;
-
-    void enableSaveRecoveryUnitAcrossCommandsIfSupported() override {}
-    bool isSaveRecoveryUnitAcrossCommandsEnabled() const override {
-        return false;
-    }
 
     void setReturnOwnedData(bool returnOwnedData) final {
         _mustReturnOwnedBson = returnOwnedData;
@@ -253,15 +250,22 @@ private:
     bool _handleEOFAndExit(PlanStage::StageState code,
                            std::unique_ptr<insert_listener::Notifier>& notifier);
 
-    MONGO_COMPILER_ALWAYS_INLINE void _checkIfMustYield(std::function<void()> whileYieldingFn) {
+    // Function which waits for oplog visiblity. It assumes that it is invoked following snapshot
+    // abandonment, but before yielding any resources.
+    void _waitForAllEarlierOplogWritesToBeVisible();
+
+    MONGO_COMPILER_ALWAYS_INLINE void _checkIfMustYield(
+        const std::function<void()>& whileYieldingFn) {
         // These are the conditions which can cause us to yield:
         //   1) The yield policy's timer elapsed, or
         //   2) some stage requested a yield, or
         //   3) we need to yield and retry due to a WriteConflictException.
         // In all cases, the actual yielding happens here.
         if (_yieldPolicy->shouldYieldOrInterrupt(_opCtx)) {
-            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(
-                _opCtx, whileYieldingFn, RestoreContext::RestoreType::kYield));
+            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(_opCtx,
+                                                           whileYieldingFn,
+                                                           RestoreContext::RestoreType::kYield,
+                                                           _afterSnapshotAbandonFn));
         }
     }
 
@@ -319,7 +323,15 @@ private:
     // otherwise. We cache it to avoid the need to traverse the execution tree in runtime when the
     // executor is requested to return the oplog tracking info. Since this info is provided by
     // either of these stages, the executor will simply delegate the request to the cached stage.
-    const CollectionScan* _collScanStage{nullptr};
+    CollectionScan* _collScanStage{nullptr};
+
+    // Used to coordinate waiting for oplog visiblity. Note that this is owned by the collection
+    // scan (if one exists). Initialized only if this executor is doing a collection scan over the
+    // oplog, nullptr otherwise.
+    OplogWaitConfig* _oplogWaitConfig{nullptr};
+
+    // Function used to wait for oplog visibility in between snapshot abandonment and
+    std::function<void()> _afterSnapshotAbandonFn{nullptr};
 };
 
 }  // namespace mongo

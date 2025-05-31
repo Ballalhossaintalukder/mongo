@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include "mongo/db/sorter/sorter.h"
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -48,6 +42,13 @@
 #include "mongo/db/pipeline/percentile_algo.h"
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
+#include "mongo/db/sorter/sorter.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 /**
@@ -61,7 +62,7 @@ public:
 
     static constexpr auto kName = "$percentile"_sd;
     const char* getOpName() const override {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**
@@ -154,7 +155,7 @@ class AccumulatorMedian : public AccumulatorPercentile {
 public:
     static constexpr auto kName = "$median"_sd;
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**

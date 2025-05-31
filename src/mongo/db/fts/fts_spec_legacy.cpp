@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <map>
-#include <string>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -50,6 +43,13 @@
 #include "mongo/db/fts/tokenizer.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <map>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 
@@ -124,7 +124,7 @@ void FTSSpec::_scoreStringV1(const Tools& tools,
         // if term is identical to the raw form of the
         // field (untokenized) give it a small boost.
         double adjustment = 1;
-        if (raw.size() == term.length() && raw.equalCaseInsensitive(term))
+        if (str::equalCaseInsensitive(raw, term))
             adjustment += 0.1;
 
         double& score = (*docScores)[term];

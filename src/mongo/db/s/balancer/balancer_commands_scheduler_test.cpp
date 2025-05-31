@@ -31,13 +31,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -67,6 +60,13 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -111,7 +111,7 @@ public:
         shardSvrRequest.setDbName(DatabaseName::kAdmin);
         shardSvrRequest.setMoveRangeRequestBase(base);
         shardSvrRequest.setFromShard(from);
-        shardSvrRequest.setEpoch(OID::gen());
+        shardSvrRequest.setCollectionTimestamp(Timestamp(10));
         shardSvrRequest.setMaxChunkSizeBytes(1024 * 1024);
 
         return shardSvrRequest;
@@ -178,6 +178,7 @@ TEST_F(BalancerCommandsSchedulerTest, SuccessfulMoveRangeCommand) {
         }});
     _scheduler.start(operationContext());
     ShardsvrMoveRange shardsvrRequest(kNss);
+    shardsvrRequest.setCollectionTimestamp(Timestamp(10));
     shardsvrRequest.setDbName(DatabaseName::kAdmin);
     shardsvrRequest.setFromShard(kShardId0);
     shardsvrRequest.setMaxChunkSizeBytes(1024);

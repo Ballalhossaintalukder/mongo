@@ -27,18 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <functional>
-#include <initializer_list>
-#include <memory>
-#include <set>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -71,6 +59,18 @@
 #include "mongo/util/net/sockaddr.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <functional>
+#include <initializer_list>
+#include <memory>
+#include <set>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -139,8 +139,6 @@ const std::unique_ptr<UserRequest> kTenant1UserTestRequest =
 const UserName kTenant2UserTest("userTenant2"_sd, "test"_sd, kTenantId2);
 const std::unique_ptr<UserRequest> kTenant2UserTestRequest =
     std::make_unique<UserRequestGeneral>(kTenant2UserTest, boost::none);
-
-const transport::TransportLayerMock transportLayer;
 
 TEST_F(AuthorizationSessionTest, MultiAuthSameUserAllowed) {
     ASSERT_OK(createUser(kUser1Test, {}));
@@ -373,6 +371,7 @@ TEST_F(AuthorizationSessionTest, SystemCollectionsAccessControl) {
 }
 
 void AuthorizationSessionTest::testInvalidateUser() {
+    transport::TransportLayerMock transportLayer;
     const std::shared_ptr<transport::Session> session =
         transport::MockSession::create(&transportLayer);
     auto& sslPeerInfo = SSLPeerInfo::forSession(session);

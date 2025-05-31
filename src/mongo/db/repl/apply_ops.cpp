@@ -29,15 +29,6 @@
 
 #include "mongo/db/repl/apply_ops.h"
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +41,7 @@
 #include "mongo/db/db_raii.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/repl/apply_ops_command_info.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/repl/replication_coordinator.h"
@@ -62,6 +54,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -91,7 +92,7 @@ Status _applyOps(OperationContext* opCtx,
     // Apply each op in the given 'applyOps' command object.
     for (const auto& opObj : ops) {
         // Ignore 'n' operations.
-        const char* opType = opObj.getStringField("op").rawData();
+        const char* opType = opObj.getStringField("op").data();
         if (*opType == 'n')
             continue;
 
@@ -99,7 +100,6 @@ Status _applyOps(OperationContext* opCtx,
         const NamespaceString nss(NamespaceStringUtil::deserialize(
             dbName.tenantId(), opObj["ns"].String(), SerializationContext::stateDefault()));
 
-        // Need to check this here, or OldClientContext may fail an invariant.
         if (*opType != 'c' && !nss.isValid())
             return {ErrorCodes::InvalidNamespace, "invalid ns: " + nss.toStringForErrorMsg()};
 
@@ -179,8 +179,13 @@ Status _applyOps(OperationContext* opCtx,
                                          "non-existent namespace "
                                       << nss.toStringForErrorMsg() << ": " << mongo::redact(opObj));
                     }
-
-                    OldClientContext ctx(opCtx, nss);
+                    AutoStatsTracker statsTracker(
+                        opCtx,
+                        nss,
+                        Top::LockType::WriteLocked,
+                        AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                        DatabaseProfileSettings::get(opCtx->getServiceContext())
+                            .getDatabaseProfileLevel(nss.dbName()));
 
                     // We return the status rather than merely aborting so failure of CRUD
                     // ops doesn't stop the applyOps from trying to process the rest of the

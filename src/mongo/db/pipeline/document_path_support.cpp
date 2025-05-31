@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <set>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/pipeline/document_path_support.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -40,10 +35,14 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/field_ref.h"
-#include "mongo/db/pipeline/document_path_support.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace document_path_support {
@@ -66,7 +65,7 @@ void invokeCallbackOnTrailingValue(const Value& value, std::function<void(const 
     }
 }
 
-void visitAllValuesAtPathHelper(Document doc,
+void visitAllValuesAtPathHelper(const Document& doc,
                                 const FieldPath& path,
                                 size_t fieldPathIndex,
                                 std::function<void(const Value&)> callback) {
@@ -143,20 +142,6 @@ StatusWith<Value> extractElementAlongNonArrayPath(const Document& doc, const Fie
     }
 
     return curValue;
-}
-
-void documentToBsonWithPaths(const Document& input,
-                             const OrderedPathSet& paths,
-                             BSONObjBuilder* builder) {
-    for (auto&& path : paths) {
-        // getNestedField does not handle dotted paths correctly, so instead of retrieving the
-        // entire path, we just extract the first element of the path.
-        const auto prefix = FieldPath::extractFirstFieldFromDottedPath(path);
-        if (!builder->hasField(prefix)) {
-            // Avoid adding the same prefix twice.
-            input.getField(prefix).addToBsonObj(builder, prefix);
-        }
-    }
 }
 
 }  // namespace document_path_support

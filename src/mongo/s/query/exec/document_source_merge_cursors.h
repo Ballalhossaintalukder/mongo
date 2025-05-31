@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -56,9 +47,20 @@
 #include "mongo/executor/task_executor.h"
 #include "mongo/s/query/exec/async_results_merger_params_gen.h"
 #include "mongo/s/query/exec/blocking_results_merger.h"
+#include "mongo/s/query/exec/next_high_watermark_determining_strategy.h"
 #include "mongo/s/query/exec/router_stage_merge.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/duration.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -72,7 +74,7 @@ namespace mongo {
  * Then this stage is forwarded to the merging shard, and it should not kill the cursors when it
  * goes out of scope on mongos.
  */
-class DocumentSourceMergeCursors : public DocumentSource {
+class DocumentSourceMergeCursors : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$mergeCursors"_sd;
 
@@ -95,7 +97,7 @@ public:
     std::unique_ptr<RouterStageMerge> convertToRouterStage();
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -194,6 +196,18 @@ public:
         _stats.dataBearingNodeMetrics = {};
         return metrics;
     }
+
+    /**
+     * Set the initial high watermark to return when no cursors are tracked.
+     * */
+    void setInitialHighWaterMark(const BSONObj& highWaterMark);
+
+    /**
+     * Set the strategy to determine the next high water mark.
+     * Assumes that the 'AsyncResultsMerger' is in tailable, awaitData mode.
+     */
+    void setNextHighWaterMarkDeterminingStrategy(
+        NextHighWaterMarkDeterminingStrategyPtr nextHighWaterMarkDeterminer);
 
 protected:
     GetNextResult doGetNext() final;

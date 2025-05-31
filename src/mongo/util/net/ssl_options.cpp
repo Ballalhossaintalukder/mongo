@@ -27,12 +27,8 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/util/net/ssl_options.h"
-
-#include <absl/strings/str_split.h>
-#include <boost/filesystem/operations.hpp>
 
 #include "mongo/base/status.h"
 #include "mongo/config.h"
@@ -40,6 +36,9 @@
 #include "mongo/util/ctype.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/options_parser/startup_options.h"
+
+#include <absl/strings/str_split.h>
+#include <boost/filesystem/operations.hpp>
 
 #if MONGO_CONFIG_SSL_PROVIDER == MONGO_CONFIG_SSL_PROVIDER_OPENSSL
 #include <openssl/ssl.h>

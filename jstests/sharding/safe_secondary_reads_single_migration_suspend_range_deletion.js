@@ -23,8 +23,6 @@
  * - behavior: Must be one of "unshardedOnly", "targetsPrimaryUsesConnectionVersioning" or
  * "versioned". Determines what system profiler checks are performed.
  * @tags: [
- *    # TODO (SERVER-97257): Re-enable this test or add an explanation why it is incompatible.
- *    embedded_router_incompatible,
  *    requires_scripting,
  * ]
  */
@@ -71,10 +69,8 @@ let testCases = {
     _configsvrCommitChunksMerge: {skip: "primary only"},
     _configsvrCommitChunkMigration: {skip: "primary only"},
     _configsvrCommitChunkSplit: {skip: "primary only"},
-    _configsvrCommitIndex: {skip: "primary only"},
     _configsvrCommitMergeAllChunksOnShard: {skip: "primary only"},
     _configsvrConfigureCollectionBalancing: {skip: "primary only"},
-    _configsvrDropIndexCatalogEntry: {skip: "primary only"},
     _configsvrMoveRange: {skip: "primary only"},
     _configsvrRemoveChunks: {skip: "primary only"},
     _configsvrRemoveShardFromZone: {skip: "primary only"},
@@ -285,6 +281,7 @@ let testCases = {
     getQueryableEncryptionCountInfo: {skip: "primary only"},
     getShardMap: {skip: "does not return user data"},
     getShardVersion: {skip: "primary only"},
+    getTrafficRecordingStatus: {skip: "does not return user data"},
     godinsert: {skip: "for testing only"},
     grantPrivilegesToRole: {skip: "primary only"},
     grantRolesToRole: {skip: "primary only"},
@@ -484,9 +481,11 @@ let testCases = {
     split: {skip: "primary only"},
     splitChunk: {skip: "primary only"},
     splitVector: {skip: "primary only"},
-    startRecordingTraffic: {skip: "does not return user data"},
+    startRecordingTraffic: {skip: "Renamed to startTrafficRecording"},
+    stopRecordingTraffic: {skip: "Renamed to stopTrafficRecording"},
+    startTrafficRecording: {skip: "does not return user data"},
     startSession: {skip: "does not return user data"},
-    stopRecordingTraffic: {skip: "does not return user data"},
+    stopTrafficRecording: {skip: "does not return user data"},
     sysprofile: {skip: "internal command"},
     testDeprecation: {skip: "does not return user data"},
     testDeprecationInVersion2: {skip: "does not return user data"},

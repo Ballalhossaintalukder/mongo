@@ -29,14 +29,9 @@
 
 #include "mongo/db/pipeline/document_source_list_sampled_queries.h"
 
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/sharded_agg_helpers_targeting_policy.h"
 #include "mongo/db/query/allowed_contexts.h"
@@ -46,6 +41,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -90,6 +91,7 @@ DocumentSource::GetNextResult DocumentSourceListSampledQueries::doGetNext() {
         }
         try {
             _pipeline = Pipeline::makePipeline(stages, foreignExpCtx);
+            _execPipeline = exec::agg::buildPipeline((_pipeline->getSources()));
         } catch (ExceptionFor<ErrorCodes::NamespaceNotFound>& ex) {
             LOGV2(7807800,
                   "Failed to create aggregation pipeline to list sampled queries",
@@ -98,7 +100,7 @@ DocumentSource::GetNextResult DocumentSourceListSampledQueries::doGetNext() {
         }
     }
 
-    if (auto doc = _pipeline->getNext()) {
+    if (auto doc = _execPipeline->getNext()) {
         auto queryDoc = SampledQueryDocument::parse(
             IDLParserContext(DocumentSourceListSampledQueries::kStageName), doc->toBson());
         DocumentSourceListSampledQueriesResponse response;

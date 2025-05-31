@@ -29,15 +29,14 @@
 
 #pragma once
 
+#include "mongo/db/client.h"
+#include "mongo/transport/client_transport_observer.h"
 #include "mongo/transport/session_manager.h"
+#include "mongo/util/net/cidr.h"
 
 #include <string>
 #include <variant>
 #include <vector>
-
-#include "mongo/db/client.h"
-#include "mongo/transport/client_transport_observer.h"
-#include "mongo/util/net/cidr.h"
 
 namespace mongo {
 class ServiceContext;
@@ -104,10 +103,10 @@ protected:
 };
 
 /**
- * Returns true if a session with remote/local addresses should be exempted from maxConns.
+ * Returns true if a session with remote/local addresses is part of the exemption list.
  */
-bool shouldOverrideMaxConns(const std::shared_ptr<Session>& session,
-                            const std::vector<std::variant<CIDR, std::string>>& exemptions);
+bool isExemptedByCIDRList(const std::shared_ptr<Session>& session,
+                          const std::vector<std::variant<CIDR, std::string>>& exemptions);
 
 }  // namespace transport
 }  // namespace mongo

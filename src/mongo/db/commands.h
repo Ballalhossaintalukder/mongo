@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <functional>
-#include <memory>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
@@ -73,6 +62,7 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/platform/source_location.h"
 #include "mongo/rpc/get_status_from_command_result.h"
+#include "mongo/rpc/get_status_from_command_result_write_util.h"
 #include "mongo/rpc/message.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/rpc/reply_builder_interface.h"
@@ -85,6 +75,18 @@
 #include "mongo/util/static_immortal.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -1652,7 +1654,7 @@ class CommandConstructionPlan {
 public:
     struct Entry {
         std::function<std::unique_ptr<Command>()> construct;
-        CheckableFeatureFlagRef featureFlag = kDoesNotRequireFeatureFlag;
+        FeatureFlag* featureFlag = nullptr;
         bool testOnly = false;
         boost::optional<ClusterRole> roles;
         const std::type_info* typeInfo = nullptr;
@@ -1766,8 +1768,8 @@ public:
      * A command object will be created only if the featureFlag is enabled,
      * regardless of the current FCV.
      */
-    EntryBuilder requiresFeatureFlag(CheckableFeatureFlagRef featureFlag) && {
-        _entry->featureFlag = featureFlag;
+    EntryBuilder requiresFeatureFlag(FeatureFlag& featureFlag) && {
+        _entry->featureFlag = &featureFlag;
         return std::move(*this);
     }
 

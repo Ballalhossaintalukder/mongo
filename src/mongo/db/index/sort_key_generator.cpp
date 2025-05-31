@@ -35,10 +35,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonmisc.h"
@@ -51,6 +47,10 @@
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/shared_buffer_fragment.h"
+
+#include <algorithm>
+#include <utility>
+#include <variant>
 
 namespace mongo {
 namespace {
@@ -365,7 +365,7 @@ bool SortKeyGenerator::fastFillOutSortKeyPartsHelper(const BSONObj& bson,
         const SortKeyGenerator::SortKeyTreeNode* childNode = nullptr;
         for (auto& child : tree.children) {
             auto fieldNameSd = elt.fieldNameStringData();
-            if (tree.bloomFilter.maybeContains(fieldNameSd.rawData(), fieldNameSd.size())) {
+            if (tree.bloomFilter.maybeContains(fieldNameSd.data(), fieldNameSd.size())) {
                 // Could use a hash table, but sort patterns are small so brute force search is good
                 // enough.
                 if (child->name == fieldNameSd) {

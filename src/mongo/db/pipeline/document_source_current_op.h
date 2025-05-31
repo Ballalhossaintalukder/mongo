@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -61,9 +51,20 @@
 #include "mongo/db/tenant_id.h"
 #include "mongo/stdx/unordered_set.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceCurrentOp final : public DocumentSource {
+class DocumentSourceCurrentOp final : public DocumentSource, public exec::agg::Stage {
 public:
     using TruncationMode = MongoProcessInterface::CurrentOpTruncateMode;
     using ConnMode = MongoProcessInterface::CurrentOpConnectionsMode;
@@ -202,6 +203,7 @@ private:
                             boost::optional<CursorMode> idleCursors,
                             boost::optional<bool> targetAllNodes)
         : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
           _includeIdleConnections(includeIdleConnections),
           _includeIdleSessions(includeIdleSessions),
           _includeOpsFromAllUsers(includeOpsFromAllUsers),

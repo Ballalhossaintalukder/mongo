@@ -29,14 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_group.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/inlined_vector.h>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <fmt/format.h>
-#include <utility>
-
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
@@ -54,6 +46,15 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/util/assert_util.h"
 
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
 constexpr StringData DocumentSourceGroup::kStageName;
@@ -65,7 +66,7 @@ REGISTER_DOCUMENT_SOURCE(group,
 ALLOCATE_DOCUMENT_SOURCE_ID(group, DocumentSourceGroup::id)
 
 const char* DocumentSourceGroup::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 boost::intrusive_ptr<DocumentSourceGroup> DocumentSourceGroup::create(

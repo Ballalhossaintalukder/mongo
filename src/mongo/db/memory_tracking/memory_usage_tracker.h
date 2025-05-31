@@ -29,19 +29,20 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <absl/strings/string_view.h>
-#include <algorithm>
-#include <boost/noncopyable.hpp>
-#include <cstddef>
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <absl/strings/string_view.h>
+#include <boost/noncopyable.hpp>
 
 namespace mongo {
 
@@ -224,7 +225,7 @@ public:
 
 private:
     static absl::string_view _key(StringData s) {
-        return {s.rawData(), s.size()};
+        return {s.data(), s.size()};
     }
 
     bool _allowDiskUse;

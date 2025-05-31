@@ -36,12 +36,6 @@
 #include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <compare>
-#include <cstdint>
-#include <iterator>
-#include <tuple>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -55,6 +49,12 @@
 #include "mongo/s/shard_targeting_helpers.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <compare>
+#include <cstdint>
+#include <iterator>
+#include <tuple>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -99,7 +99,7 @@ void checkChunksAreContiguous(const ChunkInfo& left, const ChunkInfo& right) {
                                 << right.getRange().toString());
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083535);
 }
 
 using ChunkVector = ChunkMap::ChunkVector;
@@ -1106,6 +1106,11 @@ ShardEndpoint::ShardEndpoint(const ShardId& shardName,
         invariant(shardName == ShardId::kConfigServerId);
 }
 
+bool ShardEndpoint::operator==(const ShardEndpoint& other) const {
+    return shardName == other.shardName && databaseVersion == other.databaseVersion &&
+        shardVersion == other.shardVersion;
+}
+
 bool EndpointComp::operator()(const ShardEndpoint* endpointA,
                               const ShardEndpoint* endpointB) const {
     const int shardNameDiff = endpointA->shardName.compare(endpointB->shardName);
@@ -1143,7 +1148,7 @@ bool EndpointComp::operator()(const ShardEndpoint* endpointA,
         return !endpointA->databaseVersion && endpointB->databaseVersion;
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083536);
 }
 
 Chunk getChunkForMaxBound(const ChunkManager& cm, const BSONObj& max) {

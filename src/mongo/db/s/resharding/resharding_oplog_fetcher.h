@@ -28,11 +28,6 @@
  */
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/base/status_with.h"
 #include "mongo/client/dbclient_base.h"
 #include "mongo/db/cancelable_operation_context.h"
@@ -54,6 +49,12 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -129,8 +130,8 @@ public:
      * Notifies the oplog fetcher that the critical section has started. Currently, this makes the
      * fetcher start doing the following to reduce the likelihood of not finishing oplog fetching
      * within the critical section timeout:
-     * - Start fetch oplog entries from the primary node instead of the "nearest" node which could
-     *   be a lagged secondary.
+     * - Start fetching oplog entries from the primary node instead of the "nearest" node which
+     *   could be a lagged secondary.
      * - Sleep for reshardingOplogFetcherSleepMillisDuringCriticalSection instead of
      *   reshardingOplogFetcherSleepMillisBeforeCriticalSection after exhausting the oplog entries
      *   returned by the previous cursor.

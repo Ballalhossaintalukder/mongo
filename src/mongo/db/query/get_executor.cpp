@@ -29,8 +29,9 @@
 
 #include "mongo/db/query/get_executor.h"
 
-#include "mongo/db/query/ce/sampling_estimator.h"
-#include "mongo/db/query/ce/sampling_estimator_impl.h"
+#include "mongo/db/query/ce/sampling/sampling_estimator.h"
+#include "mongo/db/query/ce/sampling/sampling_estimator_impl.h"
+
 #include <absl/container/flat_hash_set.h>
 #include <absl/container/node_hash_map.h>
 #include <boost/container/flat_set.hpp>
@@ -43,12 +44,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <cstdint>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
@@ -130,6 +125,12 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -452,7 +453,7 @@ public:
 
         std::vector<std::unique_ptr<QuerySolution>> solutions;
         QueryPlanner::CostBasedRankerResult cbrResult;
-        auto rankerMode = _cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode();
+        auto rankerMode = _plannerParams->planRankerMode;
         if (rankerMode != QueryPlanRankerModeEnum::kMultiPlanning) {
             using namespace cost_based_ranker;
             std::unique_ptr<ce::SamplingEstimator> samplingEstimator{nullptr};
@@ -1296,6 +1297,8 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorFind
                 .collections = collections,
                 .plannerOptions = options,
                 .traversalPreference = traversalPreference,
+                .planRankerMode =
+                    canonicalQuery->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
             });
     };
 
@@ -1363,10 +1366,29 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorFind
             return false;
         }
 
+        auto&& collectionsInfo = [&]() -> std::map<NamespaceString, CollectionInfo> {
+            if (pipelineHasLookup(pipeline)) {
+                // If the pipeline has a lookup stage, we check if the foreign collection has an
+                // index that can be used in both classic and sbe. We do not push to sbe if the
+                // classic engine might use an index for the foreign collection but sbe cannot.
+                // In such a case, executing the lookup in classic might provide better
+                // performance.
+                auto plannerParams = makeQueryPlannerParams(plannerOptions);
+                // Find all indexes.
+                plannerParams->fillOutSecondaryCollectionsPlannerParams(
+                    opCtx, *canonicalQuery, collections, false /*checkPipelineExistence*/);
+
+                return std::move(plannerParams->secondaryCollectionsInfo);
+            } else {
+                return {};
+            }
+        }();
+
         // Add the stages that are candidates for SBE lowering from the 'pipeline' into the
         // 'canonicalQuery'. This must be done _before_ checking shouldUseRegularSbe() or
         // creating the planner.
-        attachPipelineStages(collections, pipeline, needsMerge, canonicalQuery.get());
+        attachPipelineStages(
+            collections, pipeline, needsMerge, canonicalQuery.get(), collectionsInfo);
 
         const bool sbeFull = feature_flags::gFeatureFlagSbeFull.isEnabled();
         return sbeFull || shouldUseRegularSbe(opCtx, *canonicalQuery, mainColl, sbeFull);
@@ -1390,7 +1412,6 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorFind
         // pipeline and by mutating the canonical query with search specific metadata.
         finalizePipelineStages(pipeline, canonicalQuery.get());
     }
-
 
     auto makePlanner = [&](std::unique_ptr<QueryPlannerParams> plannerParams)
         -> std::unique_ptr<PlannerInterface> {
@@ -1718,6 +1739,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorDele
             .opCtx = opCtx,
             .canonicalQuery = *cq,
             .collections = collections,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         });
     ClassicPrepareExecutionHelper helper{
         opCtx, collections, std::move(ws), cq.get(), policy, std::move(plannerParams)};
@@ -1892,6 +1914,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorUpda
             .opCtx = opCtx,
             .canonicalQuery = *cq,
             .collections = collections,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         })};
 
     ScopedDebugInfo queryPlannerParams(
@@ -1999,6 +2022,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorCoun
             .canonicalQuery = *cq,
             .collections = collections,
             .plannerOptions = plannerOptions,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         });
     ClassicPrepareExecutionHelper helper{
         opCtx, collections, std::move(ws), cq.get(), yieldPolicy, std::move(plannerParams)};

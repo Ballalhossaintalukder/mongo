@@ -52,7 +52,7 @@ REGISTER_DOCUMENT_SOURCE_WITH_FEATURE_FLAG(vectorSearch,
                                            LiteParsedSearchStage::parse,
                                            DocumentSourceVectorSearch::createFromBson,
                                            AllowedWithApiStrict::kNeverInVersion1,
-                                           feature_flags::gFeatureFlagVectorSearchPublicPreview);
+                                           &feature_flags::gFeatureFlagVectorSearchPublicPreview);
 ALLOCATE_DOCUMENT_SOURCE_ID(vectorSearch, DocumentSourceVectorSearch::id)
 
 DocumentSourceVectorSearch::DocumentSourceVectorSearch(
@@ -61,6 +61,7 @@ DocumentSourceVectorSearch::DocumentSourceVectorSearch(
     BSONObj originalSpec,
     boost::optional<SearchQueryViewSpec> view)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _taskExecutor(taskExecutor),
       _originalSpec(originalSpec.getOwned()),
       _view(view) {
@@ -123,10 +124,8 @@ Value DocumentSourceVectorSearch::serialize(const SerializationOptions& opts) co
         // If the request is on a view, include the view information when mongos is serializing the
         // query to the shards, but do not include in explain output for this stage as the view
         // information will be present in $_internalSearchIdLookup and thus would be redundant.
-        if (!opts.verbosity && pExpCtx->getInRouter()) {
-            if (_view) {
-                spec["view"] = Value(_view->toBSON());
-            }
+        if (_view) {
+            spec["view"] = Value(_view->toBSON());
         }
         return Value(Document{{kStageName, spec.freezeToValue()}});
     }

@@ -36,10 +36,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <memory>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -62,6 +58,10 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
 
 namespace mongo {
 
@@ -135,6 +135,10 @@ Value DocumentSourceGroupBase::serialize(const SerializationOptions& opts) const
             opts.serializeLiteral(static_cast<long long>(stats.spillingStats.getSpilledBytes()));
         out["spilledRecords"] =
             opts.serializeLiteral(static_cast<long long>(stats.spillingStats.getSpilledRecords()));
+        if (feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled()) {
+            out["maxUsedMemBytes"] =
+                opts.serializeLiteral(static_cast<long long>(stats.maxUsedMemoryBytes));
+        }
     }
 
     return out.freezeToValue();
@@ -260,6 +264,7 @@ DocumentSourceGroupBase::DocumentSourceGroupBase(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     boost::optional<int64_t> maxMemoryUsageBytes)
     : DocumentSource(stageName, expCtx),
+      exec::agg::Stage(stageName, expCtx),
       _groupProcessor(expCtx,
                       maxMemoryUsageBytes ? *maxMemoryUsageBytes
                                           : internalDocumentSourceGroupMaxMemoryBytes.load()),
@@ -643,7 +648,7 @@ DocumentSourceGroupBase::pipelineDependentDistributedPlanLogic(
     }
 
     // TODO SERVER-97135: Refactor so we can remove the following check.
-    auto mergeStage = ctx.pipelineSuffix.getSources().empty()
+    auto mergeStage = ctx.pipelineSuffix.empty()
         ? nullptr
         : dynamic_cast<DocumentSourceMerge*>(ctx.pipelineSuffix.getSources().back().get());
     if (mergeStage) {

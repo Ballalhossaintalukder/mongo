@@ -28,20 +28,10 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/query/plan_executor_impl.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/exec/cached_plan.h"
 #include "mongo/db/exec/collection_scan.h"
@@ -53,7 +43,6 @@
 #include "mongo/db/exec/working_set.h"
 #include "mongo/db/query/find_command.h"
 #include "mongo/db/query/find_common.h"
-#include "mongo/db/query/plan_executor_impl.h"
 #include "mongo/db/query/plan_explainer_factory.h"
 #include "mongo/db/query/plan_explainer_impl.h"
 #include "mongo/db/query/plan_insert_listener.h"
@@ -62,6 +51,7 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/s/shard_filtering_util.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/compiler.h"
@@ -69,6 +59,17 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -153,9 +154,26 @@ PlanExecutorImpl::PlanExecutorImpl(OperationContext* opCtx,
 
     // If this PlanExecutor is executing a COLLSCAN, keep a pointer directly to the COLLSCAN
     // stage. This is used for change streams in order to keep the the latest oplog timestamp
-    // and post batch resume token up to date as the oplog scan progresses.
+    // and post batch resume token up to date as the oplog scan progresses. Similarly, this is
+    // used for oplog scans to coordinate waiting for oplog visiblity.
     if (auto collectionScan = getStageByType(_root.get(), STAGE_COLLSCAN)) {
         _collScanStage = static_cast<CollectionScan*>(collectionScan);
+
+        if (_nss.isOplog()) {
+            _oplogWaitConfig = _collScanStage->getOplogWaitConfig();
+            tassert(9478713,
+                    "Should have '_oplogWaitConfig' if we are scanning the oplog",
+                    _oplogWaitConfig);
+
+            // Allow waiting for oplog visiblity if our yield policy supports auto yielding.
+            if (_yieldPolicy->canAutoYield() &&
+                _collScanStage->params().shouldWaitForOplogVisibility) {
+                _oplogWaitConfig->enableWaitingForOplogVisibility();
+                _afterSnapshotAbandonFn = [&]() {
+                    _waitForAllEarlierOplogWritesToBeVisible();
+                };
+            }
+        }
     }
 }
 
@@ -289,6 +307,41 @@ void doYield(OperationContext* opCtx) {
 }
 }  // namespace
 
+/**
+ * This function waits for all oplog entries before the read to become visible. This must be done
+ * before initializing a cursor to perform an oplog scan as that is when we establish the endpoint
+ * for the cursor. Note that this function can only be called for forward, non-tailable scans.
+ */
+void PlanExecutorImpl::_waitForAllEarlierOplogWritesToBeVisible() {
+    tassert(9478702, "This function should not be called outside of oplog scans", nss().isOplog());
+    tassert(9478703, "This function should not be called outside of oplog scans", _collScanStage);
+    const auto& params = _collScanStage->params();
+    if (!(params.direction == CollectionScanParams::FORWARD &&
+          params.shouldWaitForOplogVisibility)) {
+        return;
+    }
+
+    if (_collScanStage->initializedCursor()) {
+        return;
+    }
+
+    tassert(9478704, "This function should not be called on tailable cursors", !params.tailable);
+
+    // If we do not have an oplog, we do not wait.
+    LocalOplogInfo* oplogInfo = LocalOplogInfo::get(_opCtx);
+    if (!oplogInfo) {
+        return;
+    }
+
+    RecordStore* oplogRecordStore = oplogInfo->getRecordStore();
+    if (!oplogRecordStore) {
+        return;
+    }
+
+    auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
+    storageEngine->waitForAllEarlierOplogWritesToBeVisible(_opCtx, oplogRecordStore);
+}
+
 PlanExecutor::ExecState PlanExecutorImpl::getNext(BSONObj* objOut, RecordId* dlOut) {
     const auto state = getNextDocument(&_docOutput, dlOut);
     if (objOut && state == ExecState::ADVANCED) {
@@ -350,8 +403,10 @@ PlanExecutor::ExecState PlanExecutorImpl::_getNextImpl(Snapshotted<Document>* ob
         };
 
         if (_yieldPolicy->shouldYieldOrInterrupt(_opCtx)) {
-            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(
-                _opCtx, whileYieldingFn, RestoreContext::RestoreType::kYield));
+            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(_opCtx,
+                                                           whileYieldingFn,
+                                                           RestoreContext::RestoreType::kYield,
+                                                           _afterSnapshotAbandonFn));
         }
 
         WorkingSetID id = WorkingSet::INVALID_ID;
@@ -462,9 +517,9 @@ void PlanExecutorImpl::_handleNeedYield(size_t& writeConflictsInARow,
             NamespaceStringOrUUID(_nss),
             Status(ErrorCodes::TemporarilyUnavailable, "temporarily unavailable"),
             writeConflictsInARow);
-
-    } else {
-        // We're yielding because of a WriteConflictException.
+    } else if (!_oplogWaitConfig || !_oplogWaitConfig->waitedForOplogVisiblity()) {
+        // If we didn't wait for oplog visiblity, then we must be yielding because of a
+        // WriteConflictException.
         if (!_yieldPolicy->canAutoYield() ||
             MONGO_unlikely(skipWriteConflictRetries.shouldFail())) {
             throwWriteConflictException(

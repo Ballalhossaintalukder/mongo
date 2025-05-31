@@ -38,20 +38,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <cmath>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <ratio>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -111,6 +97,20 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/version.h"
+
+#include <algorithm>
+#include <cmath>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <ratio>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -415,7 +415,6 @@ void enqueueChunkMigrations(OperationContext* opCtx,
         shardSvrRequest.setMaxChunkSizeBytes(maxChunkSizeBytes);
         shardSvrRequest.setFromShard(migrateInfo.from);
         shardSvrRequest.setCollectionTimestamp(migrateInfo.version.getTimestamp());
-        shardSvrRequest.setEpoch(migrateInfo.version.epoch());
         shardSvrRequest.setForceJumbo(migrateInfo.forceJumbo);
         const auto [secondaryThrottle, wc] =
             getSecondaryThrottleAndWriteConcern(balancerConfig->getSecondaryThrottle());
@@ -697,7 +696,7 @@ void Balancer::onShutdown() {
 void Balancer::onBecomeArbiter() {
     // The Balancer is only active on config servers, and arbiters are not permitted in config
     // server replica sets.
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083512);
 }
 
 void Balancer::initiate(OperationContext* opCtx) {
@@ -778,7 +777,6 @@ Status Balancer::moveRange(OperationContext* opCtx,
     shardSvrRequest.setMaxChunkSizeBytes(maxChunkSize);
     shardSvrRequest.setFromShard(fromShardId);
     shardSvrRequest.setCollectionTimestamp(coll.getTimestamp());
-    shardSvrRequest.setEpoch(coll.getEpoch());
     const auto [secondaryThrottle, wc] =
         getSecondaryThrottleAndWriteConcern(request.getSecondaryThrottle());
     shardSvrRequest.setSecondaryThrottle(secondaryThrottle);

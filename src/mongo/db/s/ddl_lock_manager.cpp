@@ -30,16 +30,6 @@
 
 #include "mongo/db/s/ddl_lock_manager.h"
 
-#include <cstdlib>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <fmt/ranges.h>
-
 #include "mongo/db/cancelable_operation_context.h"
 #include "mongo/db/client.h"
 #include "mongo/db/concurrency/resource_catalog.h"
@@ -58,6 +48,16 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <cstdlib>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -112,7 +112,7 @@ void DDLLockManager::_lock(OperationContext* opCtx,
                 deadline, opCtx->getTimeoutError(), [_recoverable = this->_recoverable, &opCtx]() {
                     _recoverable->waitForRecovery(opCtx);
                 });
-        } catch (const ExceptionForCat<ErrorCategory::ExceededTimeLimitError>&) {
+        } catch (const ExceptionFor<ErrorCategory::ExceededTimeLimitError>&) {
             uasserted(ErrorCodes::LockTimeout,
                       fmt::format(
                           "Failed to acquire DDL lock for namespace '{}' in mode {} after {} with "
@@ -254,7 +254,7 @@ void DDLLockManager::ScopedDatabaseDDLLock::_lock(OperationContext* opCtx,
                         timeout);
 
         // Check under the DDL dbLock if this is the primary shard for the database
-        const auto scopedDss = DatabaseShardingState::acquireShared(opCtx, db);
+        const auto scopedDss = DatabaseShardingState::acquire(opCtx, db);
         scopedDss->assertIsPrimaryShardForDb(opCtx);
     } catch (...) {
         _dbLock.reset();
@@ -312,7 +312,7 @@ void DDLLockManager::ScopedCollectionDDLLock::_lock(OperationContext* opCtx,
 
         // Check under the DDL db lock if this is the primary shard for the database
         {
-            const auto scopedDss = DatabaseShardingState::acquireShared(opCtx, ns.dbName());
+            const auto scopedDss = DatabaseShardingState::acquire(opCtx, ns.dbName());
             scopedDss->assertIsPrimaryShardForDb(opCtx);
         }
 

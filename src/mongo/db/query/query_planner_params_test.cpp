@@ -31,13 +31,6 @@
  * This file contains tests for mongo/db/query/get_executor.h
  */
 
-#include <absl/container/node_hash_map.h>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj_comparator_interface.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -58,6 +51,13 @@
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/unittest/unittest.h"
+
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -99,9 +99,11 @@ protected:
                                        stdx::unordered_set<std::string> indexNames,
                                        stdx::unordered_set<std::string> expectedFilteredNames) {
         // Create collection.
-        auto collection = std::make_unique<CollectionMock>(nss);
-        // TODO(SERVER-103405): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
-        auto collectionPtr = CollectionPtr::CollectionPtr_UNSAFE(collection.get());
+        std::shared_ptr<Collection> collection = std::make_shared<CollectionMock>(nss);
+        auto catalog = CollectionCatalog::get(_opCtx.get());
+        catalog->onCreateCollection(_opCtx.get(), collection);
+        auto collectionPtr = CollectionPtr(catalog->establishConsistentCollection(
+            _opCtx.get(), nss, boost::none /* readTimestamp */));
 
         // Retrieve query settings decoration.
         auto& querySettings = *QuerySettingsDecoration::get(collectionPtr->getSharedDecorations());

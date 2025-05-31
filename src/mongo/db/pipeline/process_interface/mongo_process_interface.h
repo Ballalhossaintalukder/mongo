@@ -29,21 +29,6 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <deque>
-#include <list>
-#include <memory>
-#include <set>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -81,8 +66,8 @@
 #include "mongo/db/storage/backup_cursor_state.h"
 #include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/record_store.h"
+#include "mongo/db/storage/spill_table.h"
 #include "mongo/db/storage/storage_engine.h"
-#include "mongo/db/storage/temporary_record_store.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/executor/task_executor.h"
@@ -90,6 +75,22 @@
 #include "mongo/s/database_version.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <deque>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -673,48 +674,44 @@ public:
     std::shared_ptr<executor::TaskExecutor> taskExecutor;
 
     /**
-     * Create a temporary record store.
+     * Creates a spill table.
      */
-    virtual std::unique_ptr<TemporaryRecordStore> createTemporaryRecordStore(
+    virtual std::unique_ptr<SpillTable> createSpillTable(
         const boost::intrusive_ptr<ExpressionContext>& expCtx, KeyFormat keyFormat) const = 0;
 
     /**
-     * Write the records in 'records' to the record store. Record store must already exist. Asserts
-     * that the writes succeeded.
+     * Writes the records in 'records' to the spill table. Asserts that the writes succeeded.
      */
-    virtual void writeRecordsToRecordStore(const boost::intrusive_ptr<ExpressionContext>& expCtx,
-                                           RecordStore* rs,
-                                           std::vector<Record>* records,
-                                           const std::vector<Timestamp>& ts) const = 0;
+    virtual void writeRecordsToSpillTable(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                          SpillTable& spillTable,
+                                          std::vector<Record>* records) const = 0;
 
     /**
-     * Search for the RecordId 'rID' in 'rs'. RecordStore must already exist and be populated.
-     * Asserts that a document was found.
+     * Searches for the RecordId 'rID' in 'spillTable'. Asserts that a document was found.
      */
-    virtual Document readRecordFromRecordStore(
-        const boost::intrusive_ptr<ExpressionContext>& expCtx,
-        const RecordStore* rs,
-        RecordId rID) const = 0;
+    virtual Document readRecordFromSpillTable(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                              const SpillTable& spillTable,
+                                              RecordId rID) const = 0;
 
     /**
-     * Checks if the RecordId 'rID' is present in 'rs'.
+     * Checks if the RecordId 'rID' is present in 'spillTable'.
      */
-    virtual bool checkRecordInRecordStore(const boost::intrusive_ptr<ExpressionContext>& expCtx,
-                                          const RecordStore* rs,
-                                          RecordId rID) const = 0;
+    virtual bool checkRecordInSpillTable(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                         const SpillTable& spillTable,
+                                         RecordId rID) const = 0;
 
     /**
-     * Deletes the record with RecordId `rID` from `rs`. RecordStore must already exist.
+     * Deletes the record with RecordId `rID` from `spillTable`.
      */
-    virtual void deleteRecordFromRecordStore(const boost::intrusive_ptr<ExpressionContext>& expCtx,
-                                             RecordStore* rs,
-                                             RecordId rID) const = 0;
+    virtual void deleteRecordFromSpillTable(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                            SpillTable& spillTable,
+                                            RecordId rID) const = 0;
 
     /**
-     * Deletes all Records from `rs`. RecordStore must already exist.
+     * Deletes all records from `spillTable`.
      */
-    virtual void truncateRecordStore(const boost::intrusive_ptr<ExpressionContext>& expCtx,
-                                     RecordStore* rs) const = 0;
+    virtual void truncateSpillTable(const boost::intrusive_ptr<ExpressionContext>& expCtx,
+                                    SpillTable& spillTable) const = 0;
 };
 
 }  // namespace mongo

@@ -28,19 +28,6 @@
  */
 
 
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -56,7 +43,6 @@
 #include "mongo/db/auth/privilege.h"
 #include "mongo/db/auth/validated_tenancy_scope_factory.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/query_cmd/run_aggregate.h"
@@ -117,6 +103,19 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/future.h"
 #include "mongo/util/serialization_context.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -186,9 +185,7 @@ std::unique_ptr<CanonicalQuery> parseDistinctCmd(
                 collOrViewAcquisition.getCollectionType());
         });
 
-        if (parsedDistinct->distinctCommandRequest->getIncludeQueryStatsMetrics() &&
-            feature_flags::gFeatureFlagQueryStatsDataBearingNodes.isEnabled(
-                serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
+        if (parsedDistinct->distinctCommandRequest->getIncludeQueryStatsMetrics()) {
             CurOp::get(opCtx)->debug().queryStatsInfo.metricsRequested = true;
         }
     }
@@ -404,9 +401,8 @@ public:
             return auth::checkAuthForFind(authSession, nsOrUUID.nss(), hasTerm);
         }
 
-        const auto resolvedNss =
-            CollectionCatalog::get(opCtx)->resolveNamespaceStringFromDBNameAndUUID(
-                opCtx, nsOrUUID.dbName(), nsOrUUID.uuid());
+        const auto resolvedNss = shard_role_nocheck::resolveNssWithoutAcquisition(
+            opCtx, nsOrUUID.dbName(), nsOrUUID.uuid());
         return auth::checkAuthForFind(authSession, resolvedNss, hasTerm);
     }
 

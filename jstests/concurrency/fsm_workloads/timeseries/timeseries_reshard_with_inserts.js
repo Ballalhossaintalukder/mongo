@@ -14,6 +14,8 @@
  *   tsan_incompatible,
  *   # This test relies on default timeseries parameters for countDocuments.
  *   does_not_support_config_fuzzer,
+ *   # TODO SERVER-104916 review the following tag
+ *   does_not_support_viewless_timeseries_yet,
  * ]
  */
 import {ChunkHelper} from "jstests/concurrency/fsm_workload_helpers/chunks.js";
@@ -83,7 +85,10 @@ export const $config = (function() {
                     [timeField]: new Date(),
                 });
             }
-            TimeseriesTest.assertInsertWorked(db[collName].insert(docs));
+
+            retryOnRetryableError(() => {
+                TimeseriesTest.assertInsertWorked(db[collName].insert(docs));
+            }, 100 /* numRetries */, undefined /* sleepMs */, [ErrorCodes.NoProgressMade]);
 
             print(`Finished Inserting documents.`);
         },

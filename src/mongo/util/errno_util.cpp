@@ -27,10 +27,11 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
+#include "mongo/util/errno_util.h"
+
 #include <system_error>
 
-#include "mongo/util/errno_util.h"
+#include <fmt/format.h>
 
 #ifdef _WIN32
 #include <errhandlingapi.h>
@@ -80,7 +81,7 @@ std::string errorMessage(std::error_code ec) {
 #if defined(_WIN32)
     vague = (r == "unknown error"_sd);
 #elif defined(_LIBCPP_VERSION)
-    vague = StringData{r}.startsWith("unspecified"_sd);
+    vague = StringData{r}.starts_with("unspecified"_sd);
 #endif
     if (vague)
         return fmt::format("Unknown error {}", ec.value());

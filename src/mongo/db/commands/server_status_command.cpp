@@ -28,12 +28,6 @@
  */
 
 
-#include <ctime>
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -71,6 +65,12 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/version.h"
+
+#include <ctime>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -139,7 +139,7 @@ public:
         auto uptime = clock->now() - _started;
         result.append("uptimeMillis", durationCount<Milliseconds>(uptime));
         result.append("uptimeEstimate", durationCount<Seconds>(uptime));
-        result.appendDate("localTime", jsTime());
+        result.appendDate("localTime", Date_t::now());
 
         timeBuilder.appendNumber("after basic",
                                  durationCount<Milliseconds>(clock->now() - runStart));

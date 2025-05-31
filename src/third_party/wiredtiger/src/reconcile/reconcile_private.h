@@ -31,10 +31,10 @@
  *     Due to a difference in transaction id based visibility and timestamp visibility the timestamp
  *     comparison is inclusive whereas the transaction id comparison isn't.
  */
-#define WTI_REC_TW_START_VISIBLE_ALL(r, tw)                    \
-    (WT_TXNID_LT((tw)->start_txn, (r)->rec_start_oldest_id) && \
-      ((tw)->durable_start_ts == WT_TS_NONE ||                 \
-        ((r)->rec_start_pinned_ts != WT_TS_NONE &&             \
+#define WTI_REC_TW_START_VISIBLE_ALL(r, tw)          \
+    (((tw)->start_txn < (r)->rec_start_oldest_id) && \
+      ((tw)->durable_start_ts == WT_TS_NONE ||       \
+        ((r)->rec_start_pinned_ts != WT_TS_NONE &&   \
           (tw)->durable_start_ts <= (r)->rec_start_pinned_ts)))
 
 /*
@@ -166,12 +166,6 @@ struct __wti_reconcile {
     WT_REF *ref; /* Page being reconciled */
     WT_PAGE *page;
     uint32_t flags; /* Caller's configuration */
-
-    /*
-     * Track start/stop checkpoint generations to decide if history store table records are correct.
-     */
-    uint64_t orig_btree_checkpoint_gen;
-    uint64_t orig_txn_checkpoint_gen;
 
     /* Track the oldest running transaction. */
     uint64_t last_running;

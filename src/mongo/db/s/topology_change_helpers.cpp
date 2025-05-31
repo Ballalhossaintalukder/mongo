@@ -839,8 +839,7 @@ void setUserWriteBlockingState(
                                    executor);
 
     const auto makeShardsvrSetUserWriteBlockModeCommand =
-        [block, &osiGenerator](OperationContext* opCtx,
-                               ShardsvrSetUserWriteBlockModePhaseEnum phase) -> BSONObj {
+        [opCtx, block, &osiGenerator](ShardsvrSetUserWriteBlockModePhaseEnum phase) -> BSONObj {
         ShardsvrSetUserWriteBlockMode shardsvrSetUserWriteBlockModeCmd;
         shardsvrSetUserWriteBlockModeCmd.setDbName(DatabaseName::kAdmin);
         SetUserWriteBlockModeRequest setUserWriteBlockModeRequest(block /* global */);
@@ -858,7 +857,7 @@ void setUserWriteBlockingState(
 
     if (level & UserWriteBlockingLevel::DDLOperations) {
         const auto cmd = makeShardsvrSetUserWriteBlockModeCommand(
-            opCtx, ShardsvrSetUserWriteBlockModePhaseEnum::kPrepare);
+            ShardsvrSetUserWriteBlockModePhaseEnum::kPrepare);
 
         const auto cmdResponse =
             runCommandForAddShard(opCtx, targeter, DatabaseName::kAdmin, cmd, executor);
@@ -867,7 +866,7 @@ void setUserWriteBlockingState(
 
     if (level & UserWriteBlockingLevel::Writes) {
         const auto cmd = makeShardsvrSetUserWriteBlockModeCommand(
-            opCtx, ShardsvrSetUserWriteBlockModePhaseEnum::kComplete);
+            ShardsvrSetUserWriteBlockModePhaseEnum::kComplete);
 
         const auto cmdResponse =
             runCommandForAddShard(opCtx, targeter, DatabaseName::kAdmin, cmd, executor);
@@ -1084,7 +1083,7 @@ std::string getRemoveShardMessage(const ShardDrainingStateEnum& status) {
         case ShardDrainingStateEnum::kCompleted:
             return "removeshard completed successfully";
         default:
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083529);
     }
 }
 
@@ -1789,7 +1788,7 @@ void propagateClusterUserWriteBlockToReplicaSet(OperationContext* opCtx,
         opCtx,
         targeter,
         topology_change_helpers::UserWriteBlockingLevel(level),
-        true,
+        true, /* block writes */
         boost::none,
         executor);
 }

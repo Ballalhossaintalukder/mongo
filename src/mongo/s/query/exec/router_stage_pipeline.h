@@ -29,13 +29,10 @@
 
 #pragma once
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <memory>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/document_source.h"
@@ -45,6 +42,11 @@
 #include "mongo/s/query/exec/router_exec_stage.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <memory>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -94,6 +96,7 @@ private:
     BSONObj _validateAndConvertToBSON(const Document& event);
 
     std::unique_ptr<Pipeline, PipelineDeleter> _mergePipeline;
+    std::unique_ptr<exec::agg::Pipeline> _mergeExecPipeline;
 
     // May be null if this pipeline runs exclusively on mongos without contacting the shards at all.
     boost::intrusive_ptr<DocumentSourceMergeCursors> _mergeCursorsStage;

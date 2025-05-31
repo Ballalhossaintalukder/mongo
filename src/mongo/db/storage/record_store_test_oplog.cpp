@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -39,6 +34,7 @@
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
+#include "mongo/db/global_settings.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/record_id_helpers.h"
@@ -51,6 +47,12 @@
 #include "mongo/db/transaction_resources.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -86,7 +88,7 @@ RecordId _oplogOrderInsertOplog(OperationContext* opCtx,
     return res.getValue();
 }
 
-TEST(RecordStoreTestHarness, SeekOplog) {
+TEST(RecordStoreTest, SeekOplog) {
     std::unique_ptr<RecordStoreHarnessHelper> harnessHelper = newRecordStoreHarnessHelper();
     std::unique_ptr<RecordStore> rs(harnessHelper->newOplogRecordStore());
     auto engine = harnessHelper->getEngine();
@@ -195,10 +197,7 @@ TEST(RecordStoreTestHarness, SeekOplog) {
 
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        rs->capped()->truncateAfter(opCtx.get(),
-                                    RecordId(2, 2),
-                                    false /* inclusive */,
-                                    nullptr /* aboutToDelete callback */);  // no-op
+        rs->capped()->truncateAfter(opCtx.get(), RecordId(2, 2), false /* inclusive */);
     }
 
     {
@@ -209,7 +208,7 @@ TEST(RecordStoreTestHarness, SeekOplog) {
     }
 }
 
-TEST(RecordStoreTestHarness, OplogInsertOutOfOrder) {
+TEST(RecordStoreTest, OplogInsertOutOfOrder) {
     std::unique_ptr<RecordStoreHarnessHelper> harnessHelper = newRecordStoreHarnessHelper();
     std::unique_ptr<RecordStore> rs(harnessHelper->newOplogRecordStore());
     auto engine = harnessHelper->getEngine();
@@ -263,10 +262,21 @@ std::string stringifyForDebug(OperationContext* opCtx,
     return output;
 }
 
-TEST(RecordStoreTestHarness, OplogOrder) {
+TEST(RecordStoreTest, OplogOrder) {
+    {
+        // Set replset settings before creation of underlying WiredTigerKvEngine
+        repl::ReplSettings replSettings;
+        replSettings.setReplSetString("realReplicaSet");
+        setGlobalReplSettings(replSettings);
+    }
     std::unique_ptr<RecordStoreHarnessHelper> harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newOplogRecordStore());
     auto engine = harnessHelper->getEngine();
+    {
+        // Settings are remembered by the engine, reset now to avoid contaminating other tests
+        repl::ReplSettings replSettings;
+        setGlobalReplSettings(replSettings);
+    }
 
     RecordId id1, id2, id3;
 
@@ -428,8 +438,7 @@ TEST(RecordStoreTestHarness, OplogOrder) {
     {
         auto client2 = harnessHelper->serviceContext()->getService()->makeClient("c2");
         auto opCtx = harnessHelper->newOperationContext(client2.get());
-        rs->capped()->truncateAfter(
-            opCtx.get(), id1, false /* inclusive */, nullptr /* aboutToDelete callback */);
+        rs->capped()->truncateAfter(opCtx.get(), id1, false /* inclusive */);
     }
 
     {
@@ -518,7 +527,7 @@ TEST(RecordStoreTestHarness, OplogOrder) {
     }
 }
 
-TEST(RecordStoreTestHarness, OplogVisibilityStandalone) {
+TEST(RecordStoreTest, OplogVisibilityStandalone) {
     std::unique_ptr<RecordStoreHarnessHelper> harnessHelper(
         newRecordStoreHarnessHelper(RecordStoreHarnessHelper::Options::Standalone));
     std::unique_ptr<RecordStore> rs(harnessHelper->newOplogRecordStore());

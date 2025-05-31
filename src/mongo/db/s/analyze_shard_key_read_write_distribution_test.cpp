@@ -29,16 +29,6 @@
 
 #include "mongo/db/s/analyze_shard_key_read_write_distribution.h"
 
-#include <cstddef>
-#include <initializer_list>
-#include <memory>
-#include <string>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -70,6 +60,16 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <initializer_list>
+#include <memory>
+#include <string>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -267,7 +267,7 @@ protected:
         std::vector<std::variant<BulkWriteInsertOp, BulkWriteUpdateOp, BulkWriteDeleteOp>> ops;
         for (const auto& updateOp : updateOps) {
             BulkWriteUpdateOp op;
-            op.setUpdate(0);
+            op.setNsInfoIdx(0);
             op.setFilter(updateOp.getQ());
             op.setMulti(updateOp.getMulti());
             op.setConstants(updateOp.getC());
@@ -310,7 +310,7 @@ protected:
         std::vector<std::variant<BulkWriteInsertOp, BulkWriteUpdateOp, BulkWriteDeleteOp>> ops;
         for (const auto& deleteOp : deleteOps) {
             BulkWriteDeleteOp op;
-            op.setDeleteCommand(0);
+            op.setNsInfoIdx(0);
             op.setFilter(deleteOp.getQ());
             op.setMulti(deleteOp.getMulti());
             op.setHint(deleteOp.getHint());

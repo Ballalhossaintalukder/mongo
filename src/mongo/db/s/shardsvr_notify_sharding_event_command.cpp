@@ -26,9 +26,6 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -40,12 +37,15 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/change_stream_oplog_notification.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/rpc/op_msg.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
 
 namespace mongo {
 
@@ -68,6 +68,10 @@ public:
 
     AllowedOnSecondary secondaryAllowed(ServiceContext*) const override {
         return AllowedOnSecondary::kNever;
+    }
+
+    bool supportsRetryableWrite() const final {
+        return true;
     }
 
     bool adminOnly() const override {
@@ -102,7 +106,14 @@ public:
                 return;
             }
 
-            MONGO_UNREACHABLE;
+            if (request().getEventType() == notify_sharding_event::kNamespacePlacementChanged) {
+                const auto event = NamespacePlacementChanged::parse(
+                    IDLParserContext("_shardsvrNotifyShardingEvent"), request().getDetails());
+                notifyChangeStreamsOnNamespacePlacementChanged(opCtx, event);
+                return;
+            }
+
+            MONGO_UNREACHABLE_TASSERT(10083526);
         }
 
     private:

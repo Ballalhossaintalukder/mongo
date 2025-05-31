@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <list>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_sort.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -47,7 +37,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/document_source_limit.h"
-#include "mongo/db/pipeline/document_source_sort.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
@@ -61,6 +50,18 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+#include <list>
+#include <tuple>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -137,6 +138,7 @@ DocumentSourceSort::DocumentSourceSort(const boost::intrusive_ptr<ExpressionCont
                                        const SortPattern& sortOrder,
                                        DocumentSourceSort::SortStageOptions options)
     : DocumentSource(kStageName, pExpCtx),
+      exec::agg::Stage(kStageName, pExpCtx),
       _sortExecutor({sortOrder,
                      options.limit,
                      options.maxMemoryUsageBytes.value_or(
@@ -168,7 +170,7 @@ REGISTER_DOCUMENT_SOURCE_CONDITIONALLY(_internalBoundedSort,
                                        ::mongo::getTestCommandsEnabled()
                                            ? AllowedWithClientType::kAny
                                            : AllowedWithClientType::kInternal,
-                                       kDoesNotRequireFeatureFlag,
+                                       nullptr,  // featureFlag
                                        true);
 
 DocumentSource::GetNextResult::ReturnStatus DocumentSourceSort::timeSorterPeek() {
@@ -578,7 +580,7 @@ boost::intrusive_ptr<DocumentSourceSort> DocumentSourceSort::parseBoundedSort(
     SortPattern pat{key.embeddedObject(), expCtx};
 
     {
-        auto timePart = pat.back();
+        const auto& timePart = pat.back();
         uassert(6369901,
                 "$_internalBoundedSort doesn't support an expression in the time field (the last "
                 "component of sortKey)",
@@ -707,7 +709,8 @@ std::pair<Value, Document> DocumentSourceSort::extractSortKey(Document&& doc) co
 }
 
 std::pair<Date_t, Document> DocumentSourceSort::extractTime(Document&& doc) const {
-    auto time = doc.getField(_sortExecutor->sortPattern().back().fieldPath->fullPath());
+    const auto& fullPath = _sortExecutor->sortPattern().back().fieldPath->fullPath();
+    auto time = doc.getField(StringData{fullPath});
     uassert(6369909, "$_internalBoundedSort only handles Date values", time.getType() == Date);
     auto date = time.getDate();
 

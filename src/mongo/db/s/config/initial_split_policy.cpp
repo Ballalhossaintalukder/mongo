@@ -29,21 +29,6 @@
 
 #include "mongo/db/s/config/initial_split_policy.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/node_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <limits>
-#include <numeric>
-#include <random>
-#include <set>
-#include <string>
-#include <type_traits>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -56,6 +41,7 @@
 #include "mongo/client/read_preference.h"
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/field_ref.h"
@@ -79,6 +65,22 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <limits>
+#include <numeric>
+#include <random>
+#include <set>
+#include <string>
+#include <type_traits>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -907,15 +909,22 @@ SamplingBasedSplitPolicy::PipelineDocumentSource::PipelineDocumentSource(
     SampleDocumentPipeline pipeline, int skip)
     : _pipeline(std::move(pipeline)), _skip(skip) {}
 
+exec::agg::Pipeline& SamplingBasedSplitPolicy::PipelineDocumentSource::_getExecPipeline() {
+    if (!_execPipeline) {
+        _execPipeline = exec::agg::buildPipeline(_pipeline->getSources());
+    }
+    return *_execPipeline;
+}
+
 boost::optional<BSONObj> SamplingBasedSplitPolicy::PipelineDocumentSource::getNext() {
-    auto val = _pipeline->getNext();
+    auto val = _getExecPipeline().getNext();
 
     if (!val) {
         return boost::none;
     }
 
     for (int skippedSamples = 0; skippedSamples < _skip; skippedSamples++) {
-        auto newVal = _pipeline->getNext();
+        auto newVal = _getExecPipeline().getNext();
 
         if (!newVal) {
             // If there are not enough samples, just select the last sample.

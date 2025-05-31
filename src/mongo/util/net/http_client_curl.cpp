@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <arpa/inet.h>
-#include <cstddef>
-#include <curl/curl.h>
-#include <curl/easy.h>
-#include <memory>
-#include <string>
-
 #include "mongo/base/data_builder.h"
 #include "mongo/base/data_range.h"
 #include "mongo/base/data_range_cursor.h"
@@ -63,6 +56,14 @@
 #include "mongo/util/strong_weak_finish_line.h"
 #include "mongo/util/system_clock_source.h"
 #include "mongo/util/timer.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+
+#include <arpa/inet.h>
+#include <curl/curl.h>
+#include <curl/easy.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -170,7 +171,7 @@ size_t ReadMemoryCallback(char* buffer, size_t size, size_t nitems, void* instre
         size_t readSize =
             std::min(size * nitems, static_cast<unsigned long>(bufReader->remaining()));
         auto buf = bufReader->readBytes(readSize);
-        memcpy(buffer, buf.rawData(), readSize);
+        memcpy(buffer, buf.data(), readSize);
         ret = readSize;
     }
 
@@ -635,7 +636,7 @@ HostAndPort exactHostAndPortFromUrl(StringData url) {
 
     auto hp = HostAndPort(url);
     if (!hp.hasPort()) {
-        if (url.startsWith("http://"_sd)) {
+        if (url.starts_with("http://"_sd)) {
             return HostAndPort(hp.host(), 80);
         }
 

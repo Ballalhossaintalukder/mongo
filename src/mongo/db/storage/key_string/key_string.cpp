@@ -29,16 +29,6 @@
 
 #include "mongo/db/storage/key_string/key_string.h"
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <cfloat>
-#include <cmath>
-#include <cstdlib>
-#include <fmt/format.h>
-#include <limits>
-#include <memory>
-#include <type_traits>
-
 #include "mongo/base/data_cursor.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
@@ -54,6 +44,17 @@
 #include "mongo/util/decimal_counter.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/shared_buffer.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <memory>
+#include <type_traits>
+
+#include <boost/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -373,14 +374,14 @@ StringData readCStringWithNuls(BufReader* reader, std::string* scratch) {
     if (!reader->remaining() || reader->peek<unsigned char>() != 0xFF)
         return initial;  // Don't alloc or copy for simple case with no NUL bytes.
 
-    scratch->append(initial.rawData(), initial.size());
+    scratch->append(initial.data(), initial.size());
     while (reader->remaining() && reader->peek<unsigned char>() == 0xFF) {
         // Each time we enter this loop it means we hit a NUL byte encoded as "\x00\xFF".
         *scratch += '\0';
         reader->skip(1);
 
         const StringData nextPart = readCString(reader);
-        scratch->append(nextPart.rawData(), nextPart.size());
+        scratch->append(nextPart.data(), nextPart.size());
     }
 
     return *scratch;
@@ -845,9 +846,9 @@ template <class BufferT>
 void BuilderBase<BufferT>::_appendRegex(const BSONRegEx& val, bool invert) {
     _append(CType::kRegEx, invert);
     // note: NULL is not allowed in pattern or flags
-    _appendBytes(val.pattern.rawData(), val.pattern.size(), invert);
+    _appendBytes(val.pattern.data(), val.pattern.size(), invert);
     _append(int8_t(0), invert);
-    _appendBytes(val.flags.rawData(), val.flags.size(), invert);
+    _appendBytes(val.flags.data(), val.flags.size(), invert);
     _append(int8_t(0), invert);
 }
 
@@ -855,7 +856,7 @@ template <class BufferT>
 void BuilderBase<BufferT>::_appendDBRef(const BSONDBRef& val, bool invert) {
     _append(CType::kDBRef, invert);
     _append(endian::nativeToBig(int32_t(val.ns.size())), invert);
-    _appendBytes(val.ns.rawData(), val.ns.size(), invert);
+    _appendBytes(val.ns.data(), val.ns.size(), invert);
     _appendBytes(val.oid.view().view(), OID::kOIDSize, invert);
 }
 
@@ -1151,7 +1152,7 @@ void BuilderBase<BufferT>::_appendBsonValue(const BSONElement& elem,
                                             const StringData* name,
                                             const StringTransformFn& f) {
     if (name) {
-        _appendBytes(name->rawData(), name->size() + 1, invert);  // + 1 for NUL
+        _appendBytes(name->data(), name->size() + 1, invert);  // + 1 for NUL
     }
 
     switch (elem.type()) {
@@ -1239,9 +1240,9 @@ void BuilderBase<BufferT>::_appendBsonValue(const BSONElement& elem,
 template <class BufferT>
 void BuilderBase<BufferT>::_appendStringLike(StringData str, bool invert) {
     while (true) {
-        size_t firstNul = strnlen(str.rawData(), str.size());
+        size_t firstNul = strnlen(str.data(), str.size());
         // No NULs in string.
-        _appendBytes(str.rawData(), firstNul, invert);
+        _appendBytes(str.data(), firstNul, invert);
         if (firstNul == str.size() || firstNul == std::string::npos) {
             _append(int8_t(0), invert);
             break;

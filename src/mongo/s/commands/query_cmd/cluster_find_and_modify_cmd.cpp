@@ -29,17 +29,6 @@
 
 #include "mongo/s/commands/query_cmd/cluster_find_and_modify_cmd.h"
 
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonelement.h"
@@ -110,6 +99,17 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/timer.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -518,7 +518,7 @@ CollectionRoutingInfo getCollectionRoutingInfo(OperationContext* opCtx,
                                                const NamespaceString& maybeTsNss) {
     // Apparently, we should return the CollectionRoutingInfo for the original namespace if we're
     // not writing to a timeseries collection.
-    auto cri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, maybeTsNss));
+    auto cri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, maybeTsNss));
 
     // Note: We try to get CollectionRoutingInfo for the timeseries buckets collection only when the
     // timeseries deletes or updates feature flag is enabled.
@@ -540,7 +540,8 @@ CollectionRoutingInfo getCollectionRoutingInfo(OperationContext* opCtx,
     // do this to figure out whether we need to use the two phase write protocol or not on
     // timeseries buckets collections.
     auto bucketCollNss = maybeTsNss.makeTimeseriesBucketsNamespace();
-    auto bucketCollCri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, bucketCollNss));
+    auto bucketCollCri =
+        uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, bucketCollNss));
     if (!bucketCollCri.hasRoutingTable() ||
         !bucketCollCri.getChunkManager().getTimeseriesFields()) {
         return cri;

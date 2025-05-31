@@ -33,8 +33,6 @@
 #include <boost/move/utility_core.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <cmath>
-#include <ostream>
 
 #include "mongo/base/compare_numbers.h"
 #include "mongo/base/data_cursor.h"
@@ -52,6 +50,8 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/str.h"
+
+#include <cmath>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -196,7 +196,7 @@ BSONObj BSONElement::_jsonStringGenerator(const Generator& g,
             break;
         case RegEx: {
             StringData pattern(regex());
-            g.writeRegex(buffer, pattern, StringData(pattern.rawData() + pattern.size() + 1));
+            g.writeRegex(buffer, pattern, StringData(pattern.data() + pattern.size() + 1));
         } break;
         case CodeWScope: {
             BSONObj scope = codeWScopeObject();
@@ -591,10 +591,8 @@ StatusWith<int> BSONElement::parseIntegerElementToNonNegativeInt() const {
 BSONObj BSONElement::embeddedObjectUserCheck() const {
     if (MONGO_likely(isABSONObj()))
         return BSONObj(value(), BSONObj::LargeSizeTrait{});
-    std::stringstream ss;
-    ss << "invalid parameter: expected an object (" << fieldName() << ")";
-    uasserted(10065, ss.str());
-    return BSONObj();  // never reachable
+    uasserted(10065,
+              str::stream() << "invalid parameter: expected an object (" << fieldName() << ")");
 }
 
 BSONObj BSONElement::embeddedObject() const {

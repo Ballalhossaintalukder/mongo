@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <bitset>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -59,9 +48,21 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/string_map.h"
 
+#include <bitset>
+#include <memory>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceMatch : public DocumentSource {
+class DocumentSourceMatch : public DocumentSource, public exec::agg::Stage {
 public:
     DocumentSourceMatch(std::unique_ptr<MatchExpression> expr,
                         const boost::intrusive_ptr<ExpressionContext>& expCtx);
@@ -290,7 +291,7 @@ public:
 
     virtual Value doSerialize(const SerializationOptions& opts) const {
         return DocumentSourceMatch::serialize(opts);
-    };
+    }
 
 protected:
     DocumentSourceInternalChangeStreamMatch(const BSONObj& query,

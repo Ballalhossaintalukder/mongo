@@ -29,21 +29,12 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <functional>
-#include <list>
-#include <memory>
-#include <set>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
+#include "mongo/db/exec/agg/stage.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -65,6 +56,18 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
+
+#include <functional>
+#include <list>
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 class BSONObj;
@@ -404,11 +407,6 @@ public:
     void addFinalSource(boost::intrusive_ptr<DocumentSource> source);
 
     /**
-     * Returns the next result from the pipeline, or boost::none if there are no more results.
-     */
-    boost::optional<Document> getNext();
-
-    /**
      * Write the pipeline's operators to a std::vector<Value>, providing the level of detail
      * specified by 'verbosity'.
      */
@@ -473,6 +471,14 @@ public:
 
     SourceContainer& getSources() {
         return _sources;
+    }
+
+    MONGO_COMPILER_ALWAYS_INLINE SourceContainer::size_type size() const {
+        return _sources.size();
+    }
+
+    MONGO_COMPILER_ALWAYS_INLINE bool empty() const {
+        return _sources.empty();
     }
 
     /**
@@ -556,12 +562,6 @@ public:
         return CursorType_serializer(pipelineType);
     }
 
-    /**
-     * Method to accumulate the plan summary stats from all stages of the pipeline into the given
-     * `planSummaryStats` object.
-     */
-    void accumulatePipelinePlanSummaryStats(PlanSummaryStats& planSummaryStats);
-
 private:
     friend class PipelineDeleter;
 
@@ -595,6 +595,7 @@ private:
     void checkValidOperationContext() const;
 
     SourceContainer _sources;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
 
     SplitState _splitState = SplitState::kUnsplit;
     boost::intrusive_ptr<ExpressionContext> pCtx;

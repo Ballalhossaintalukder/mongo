@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/explain.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -50,7 +40,6 @@
 #include "mongo/db/pipeline/plan_executor_pipeline.h"
 #include "mongo/db/query/canonical_query.h"
 #include "mongo/db/query/collation/collator_interface.h"
-#include "mongo/db/query/explain.h"
 #include "mongo/db/query/explain_common.h"
 #include "mongo/db/query/multiple_collection_accessor.h"
 #include "mongo/db/query/plan_cache/plan_cache.h"
@@ -64,12 +53,23 @@
 #include "mongo/db/query/query_feature_flags_gen.h"
 #include "mongo/db/query/query_settings.h"
 #include "mongo/db/query/query_settings_decoration.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -249,18 +249,6 @@ void generateSinglePlanExecutionInfo(const PlanExplainer::PlanStatsDetails& deta
     out->append("executionStages", stats);
 }
 
-void generateOperationMetrics(PlanExecutor* exec, BSONObjBuilder* out) {
-    if (ResourceConsumption::isMetricsProfilingEnabled()) {
-        auto& metricsCollector = ResourceConsumption::MetricsCollector::get(exec->getOpCtx());
-        if (metricsCollector.hasCollectedMetrics()) {
-            BSONObjBuilder metricsBuilder(out->subobjStart("operationMetrics"));
-            auto& metrics = metricsCollector.getMetrics();
-            metrics.toBsonNonZeroFields(&metricsBuilder);
-            metricsBuilder.doneFast();
-        }
-    }
-}
-
 /**
  * Adds the "executionStats" field to out. Assumes that the PlanExecutor has already been executed
  * to the point of reaching EOF. Also assumes that verbosity >= kExecStats.
@@ -326,7 +314,6 @@ void generateExecutionInfo(PlanExecutor* exec,
         }
         allPlansBob.doneFast();
     }
-    generateOperationMetrics(exec, &execBob);
     execBob.doneFast();
 }
 
@@ -423,6 +410,7 @@ void Explain::explainPipeline(PlanExecutor* exec,
     *out << "stages" << Value(pipelineExec->writeExplainOps(verbosity));
 
     explain_common::generateQueryShapeHash(exec->getOpCtx(), out);
+    explain_common::generateMaxUsedMemBytes(exec->getOpCtx(), out);
     explain_common::generateServerInfo(out);
 
     auto* cq = exec->getCanonicalQuery();

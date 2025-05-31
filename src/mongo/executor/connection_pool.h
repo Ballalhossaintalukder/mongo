@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <queue>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -66,6 +53,20 @@
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -109,6 +110,11 @@ public:
     static constexpr Milliseconds kDefaultRefreshRequirement = Minutes(1);
     static constexpr Milliseconds kDefaultRefreshTimeout = Seconds(20);
     static constexpr Milliseconds kHostRetryTimeout = Seconds(1);
+
+    /**
+     * Default value for limiting the size of a connection requests queue.
+     */
+    static constexpr size_t kDefaultConnectionRequestsMaxQueueDepth = 0;
 
     static const Status kConnectionStateUnknown;
 
@@ -181,6 +187,12 @@ public:
 
         std::function<std::shared_ptr<ControllerInterface>(void)> controllerFactory =
             &ConnectionPool::makeLimitController;
+
+        /**
+         * This parameter represents the limit on the size of connection requests queue. If this
+         * parameter is 0 then no checks and no rejections will be performed.
+         */
+        size_t connectionRequestsMaxQueueDepth = kDefaultConnectionRequestsMaxQueueDepth;
     };
 
     /**
@@ -340,6 +352,9 @@ private:
     PoolId _nextPoolId = 0;
     stdx::unordered_map<HostAndPort, std::shared_ptr<SpecificPool>> _pools;
     bool _isShutDown = false;
+
+    // Preserves the total created connection count for SpecificPools that were destroyed.
+    stdx::unordered_map<HostAndPort, size_t> _cachedCreatedConnections;
 
     EgressConnectionCloserManager* _manager;
 
@@ -553,6 +568,8 @@ public:
     virtual Milliseconds hostTimeout() const = 0;
     virtual Milliseconds pendingTimeout() const = 0;
     virtual Milliseconds toRefreshTimeout() const = 0;
+
+    virtual size_t connectionRequestsMaxQueueDepth() const = 0;
 
     /**
      * Get the name for this controller

@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -56,6 +51,11 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/safe_num.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -2207,7 +2207,7 @@ TEST(TypeSupport, EncodingEquivalenceBoolean) {
 TEST(TypeSupport, EncodingEquivalenceDate) {
     mongo::BSONObjBuilder builder;
     const char name[] = "thing";
-    const mongo::Date_t value1 = mongo::jsTime();
+    const mongo::Date_t value1 = mongo::Date_t::now();
     builder.append(name, value1);
     mongo::BSONObj source = builder.done();
     const mongo::BSONElement thing = source.firstElement();
@@ -2525,7 +2525,7 @@ TEST(TypeSupport, EncodingEquivalenceInt) {
 TEST(TypeSupport, EncodingEquivalenceTimestamp) {
     mongo::BSONObjBuilder builder;
     const char name[] = "thing";
-    const mongo::Timestamp value1 = mongo::Timestamp(mongo::jsTime());
+    const mongo::Timestamp value1 = mongo::Timestamp(mongo::Date_t::now());
     builder.append(name, value1);
     mongo::BSONObj source = builder.done();
     const mongo::BSONElement thing = source.firstElement();

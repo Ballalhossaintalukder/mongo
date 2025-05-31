@@ -29,15 +29,11 @@
 
 
 #include <array>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/tuple/tuple.hpp>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <exception>
-#include <fmt/format.h>
 #include <forward_list>
 #include <fstream>  // IWYU pragma: keep
 #include <initializer_list>
@@ -62,6 +58,10 @@
 #include <boost/log/attributes/attribute_value_set.hpp>
 #include <boost/log/core/core.hpp>
 #include <boost/log/core/record_view.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/tuple/tuple.hpp>
+#include <fmt/format.h>
 // IWYU pragma: no_include "boost/log/detail/attachable_sstream_buf.hpp"
 // IWYU pragma: no_include "boost/log/detail/locking_ptr.hpp"
 #include <boost/log/keywords/file_name.hpp>
@@ -79,12 +79,6 @@
 #include <boost/parameter/keyword.hpp>
 // IWYU pragma: no_include "boost/property_tree/detail/exception_implementation.hpp"
 // IWYU pragma: no_include "boost/property_tree/detail/ptree_implementation.hpp"
-#include <boost/property_tree/ptree_fwd.hpp>
-#include <boost/smart_ptr/make_shared_object.hpp>
-#include <boost/smart_ptr/shared_ptr.hpp>
-#include <boost/thread/exceptions.hpp>
-#include <fmt/format.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -141,6 +135,12 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <boost/property_tree/ptree_fwd.hpp>
+#include <boost/smart_ptr/make_shared_object.hpp>
+#include <boost/smart_ptr/shared_ptr.hpp>
+#include <boost/thread/exceptions.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -467,7 +467,7 @@ TEST_F(LogV2Test, MismatchAttrInLogging) {
     auto lines = makeLineCapture(PlainFormatter());
     if (!kDebugBuild) {
         LOGV2(4638203, "mismatch {name}", "not_name"_attr = 1);
-        ASSERT(StringData(lines->back()).startsWith("Exception during log"_sd));
+        ASSERT(StringData(lines->back()).starts_with("Exception during log"_sd));
     }
 }
 
@@ -475,7 +475,7 @@ TEST_F(LogV2Test, MissingAttrInLogging) {
     auto lines = makeLineCapture(PlainFormatter());
     if (!kDebugBuild) {
         LOGV2(6636803, "Log missing {attr}");
-        ASSERT(StringData(lines->back()).startsWith("Exception during log"_sd));
+        ASSERT(StringData(lines->back()).starts_with("Exception during log"_sd));
     }
 }
 
@@ -2060,7 +2060,7 @@ TEST_F(LogV2Test, StringTruncation) {
         std::string context = "Failed test: " + note;
 
         ASSERT_LTE(str.size(), maxLength) << context;
-        ASSERT(str.endsWith(suffix))
+        ASSERT(str.ends_with(suffix))
             << context << " - string " << str << " does not end with " << suffix;
 
         auto trunc = obj[constants::kTruncatedFieldName]["name"];

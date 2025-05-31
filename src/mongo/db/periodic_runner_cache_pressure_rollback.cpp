@@ -26,12 +26,11 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include <string>
+#include "mongo/db/periodic_runner_cache_pressure_rollback.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/client.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/periodic_runner_cache_pressure_rollback.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/session/kill_sessions_local.h"
 #include "mongo/db/session/session_catalog.h"
@@ -50,6 +49,8 @@
 #include "mongo/util/periodic_runner.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/time_support.h"
+
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -180,9 +181,9 @@ void PeriodicThreadToRollbackUnderCachePressure::_init(ServiceContext* serviceCo
                     bytesTarget -= bytesClearedEstimate;
                     killsTarget -= numKills;
                 }
-            } catch (ExceptionForCat<ErrorCategory::CancellationError>& ex) {
+            } catch (ExceptionFor<ErrorCategory::CancellationError>& ex) {
                 LOGV2_DEBUG(10036701, 2, "Periodic job canceled", "reason"_attr = ex.reason());
-            } catch (ExceptionForCat<ErrorCategory::Interruption>& ex) {
+            } catch (ExceptionFor<ErrorCategory::Interruption>& ex) {
                 LOGV2_DEBUG(10036702, 2, "Periodic job interrupted", "reason"_attr = ex.reason());
             }
         },

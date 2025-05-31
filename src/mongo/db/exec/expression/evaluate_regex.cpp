@@ -27,12 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/algorithm/string/case_conv.hpp>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/expression/evaluate.h"
 #include "mongo/util/pcre.h"
 #include "mongo/util/pcre_util.h"
+
+#include <boost/algorithm/string/case_conv.hpp>
 
 namespace mongo {
 
@@ -239,7 +239,7 @@ Value nextMatch(RegexExecutionState* regexState, const std::string& opName) {
     captures.reserve(m.captureCount());
 
     for (size_t i = 1; i < m.captureCount() + 1; ++i) {
-        if (StringData cap = m[i]; !cap.rawData()) {
+        if (StringData cap = m[i]; !cap.data()) {
             // Use BSONNULL placeholder for unmatched capture groups.
             captures.push_back(Value(BSONNULL));
         } else {

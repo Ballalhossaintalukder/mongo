@@ -27,9 +27,10 @@
  *    it in the license file.
  */
 
+#include "mongo/db/commands/query_cmd/run_aggregate.h"
+
 #include "mongo/bson/json.h"
 #include "mongo/db/commands/db_command_test_fixture.h"
-#include "mongo/db/commands/query_cmd/run_aggregate.h"
 #include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/pipeline/document_source_mock.h"
 #include "mongo/db/query/client_cursor/cursor_manager.h"
@@ -78,12 +79,14 @@ public:
             new DocumentSourceTrackingMock{results, pExpCtx}};
     }
 
+    static const Id& id;
+
     Id getId() const override {
         return id;
     }
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     GetNextResult doGetNext() override {
@@ -110,8 +113,6 @@ public:
     }
 
 private:
-    static const Id& id;
-
     /**
      * When constructing this stage, create the memory tracker with a factory method so that it
      * reports memory usage up to the operation-scoped memory tracker.
@@ -170,7 +171,8 @@ TEST_F(RunAggregateTest, TransferOperationMemoryUsageTracker) {
             // the end of this block. We need a new block here so the cursor isn't considered as
             // being in use when we call getMore() below.
             CursorManager* cursorManager = CursorManager::get(opCtx->getServiceContext());
-            ClientCursorPin pin = unittest::assertGet(cursorManager->pinCursor(opCtx, cursorId));
+            ClientCursorPin pin =
+                unittest::assertGet(cursorManager->pinCursor(opCtx, cursorId, "getMore"));
             OperationMemoryUsageTracker* tracker =
                 OperationMemoryUsageTracker::getFromClientCursor_forTest(pin.getCursor());
             ASSERT(tracker);
@@ -212,8 +214,8 @@ TEST_F(RunAggregateTest, MemoryTrackerWithinSubpipelineIsProperlyDestroyedOnKill
     for (size_t i = 0; i < 10; ++i) {
         docsBuilder.append(fromjson(fmt::format("{{id: {}, val: {}}}", i, i)));
     }
-    auto insertCmdObj =
-        BSON("insert" << "coll" << "documents" << docsBuilder.arr() << "ordered" << true);
+    auto insertCmdObj = BSON("insert" << "coll"
+                                      << "documents" << docsBuilder.arr() << "ordered" << true);
     BSONObj res = runCommand(insertCmdObj.getOwned());
     ASSERT_EQ(res["ok"].Number(), 1.0);
     ASSERT_EQ(res["n"].Int(), 10);

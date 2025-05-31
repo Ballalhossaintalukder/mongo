@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <set>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/commands/notify_sharding_event_gen.h"
 #include "mongo/db/database_name.h"
@@ -40,6 +36,11 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/util/uuid.h"
+
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -77,6 +78,13 @@ void notifyChangeStreamsOnChunkMigrated(OperationContext* opCtx,
                                         const ShardId& recipient,
                                         bool noMoreCollectionChunksOnDonor,
                                         bool firstCollectionChunkOnRecipient);
+
+/**
+ * Writes a no-op oplog entry concerning the commit of a generic placement-changing operation
+ * concerning the namespace and the cluster time reported in the notification.
+ */
+void notifyChangeStreamsOnNamespacePlacementChanged(OperationContext* opCtx,
+                                                    const NamespacePlacementChanged& notification);
 
 /**
  * Writes a no-op oplog entry on the end of multi shard transaction.

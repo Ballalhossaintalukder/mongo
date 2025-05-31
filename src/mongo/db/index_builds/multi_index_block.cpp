@@ -28,20 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/container/flat_set.hpp>
-#include <boost/container/small_vector.hpp>
-#include <boost/container/vector.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <exception>
-#include <mutex>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/index_builds/multi_index_block.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -58,7 +45,6 @@
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/index/multikey_paths.h"
-#include "mongo/db/index_builds/multi_index_block.h"
 #include "mongo/db/index_builds/multi_index_block_gen.h"
 #include "mongo/db/multi_key_path_tracker.h"
 #include "mongo/db/namespace_string.h"
@@ -97,6 +83,21 @@
 #include "mongo/util/str.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <mutex>
+#include <string>
+#include <utility>
+
+#include <boost/container/flat_set.hpp>
+#include <boost/container/small_vector.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -901,6 +902,7 @@ Status MultiIndexBlock::dumpInsertsFromBulk(
             const IndexCatalogEntry* entry = _indexes[i].block->getEntry(opCtx, collection);
             Status status = _indexes[i].bulk->commit(
                 opCtx,
+                *shard_role_details::getRecoveryUnit(opCtx),
                 collection,
                 entry,
                 dupsAllowed,
@@ -943,9 +945,9 @@ Status MultiIndexBlock::drainBackgroundWrites(
     invariant(!_buildIsCleanedUp);
     invariant(!shard_role_details::getLocker(opCtx)->inAWriteUnitOfWork());
 
-    // Background writes are drained three times (once without blocking writes and twice blocking
-    // writes), so we may either be coming from the bulk load phase or be already in the drain
-    // writes phase.
+    // Background writes are drained three times (twice in MODE_IX without blocking writes and once
+    // in MODE_X with blocking writes), so we may either be coming from the bulk load phase or be
+    // already in the drain writes phase.
     invariant(_phase == IndexBuildPhaseEnum::kBulkLoad ||
                   _phase == IndexBuildPhaseEnum::kDrainWrites,
               IndexBuildPhase_serializer(_phase).toString());

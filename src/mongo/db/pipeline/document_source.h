@@ -29,23 +29,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <functional>
-#include <iterator>
-#include <list>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/string_data.h"
@@ -55,7 +38,6 @@
 #include "mongo/db/exec/agg/stage.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/exec/plan_stats.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/matcher/expression_algo.h"
 #include "mongo/db/namespace_string.h"
@@ -68,9 +50,26 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <functional>
+#include <iterator>
+#include <list>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -103,7 +102,7 @@ namespace mongo {
                                            fullParser,                              \
                                            allowedWithApiStrict,                    \
                                            AllowedWithClientType::kAny,             \
-                                           kDoesNotRequireFeatureFlag,              \
+                                           nullptr, /* featureFlag */               \
                                            true)
 
 /**
@@ -130,7 +129,7 @@ namespace mongo {
                                            fullParser,                            \
                                            AllowedWithApiStrict::kInternal,       \
                                            AllowedWithClientType::kInternal,      \
-                                           kDoesNotRequireFeatureFlag,            \
+                                           nullptr, /* featureFlag*/              \
                                            condition)
 
 /**
@@ -151,12 +150,12 @@ namespace mongo {
                               ("BeginDocumentSourceRegistration"),                                \
                               ("EndDocumentSourceRegistration"))                                  \
     (InitializerContext*) {                                                                       \
-        if (!__VA_ARGS__ ||                                                                       \
-            !CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {              \
-                return fcvGatedFlag.isEnabledUseLatestFCVWhenUninitialized(                       \
-                    kNoVersionContext,                                                            \
-                    serverGlobalParams.featureCompatibility.acquireFCVSnapshot());                \
-            })) {                                                                                 \
+        /* Require 'featureFlag' to be a constexpr. */                                            \
+        constexpr FeatureFlag* constFeatureFlag{featureFlag};                                     \
+        /* This non-constexpr variable works around a bug in GCC when 'featureFlag' is null. */   \
+        FeatureFlag* featureFlagValue{constFeatureFlag};                                          \
+        bool evaluatedCondition{__VA_ARGS__};                                                     \
+        if (!evaluatedCondition || (featureFlagValue && !featureFlagValue->canBeEnabled())) {     \
             DocumentSource::registerParser("$" #key, DocumentSource::parseDisabled, featureFlag); \
             LiteParsedDocumentSource::registerParser("$" #key,                                    \
                                                      LiteParsedDocumentSource::parseDisabled,     \
@@ -178,7 +177,7 @@ namespace mongo {
                                            fullParser,                             \
                                            AllowedWithApiStrict::kNeverInVersion1, \
                                            AllowedWithClientType::kAny,            \
-                                           kDoesNotRequireFeatureFlag,             \
+                                           nullptr, /* featureFlag */              \
                                            ::mongo::getTestCommandsEnabled())
 
 /**
@@ -198,7 +197,8 @@ namespace mongo {
     }                                                                 \
     const DocumentSource::Id& constName = _dsid_##name;
 
-class DocumentSource : public exec::agg::Stage {
+// TODO SPM-4106: Remove virtual keyword once the refactoring is done.
+class DocumentSource : public virtual RefCountable {
 public:
     // In general a parser returns a list of DocumentSources, to accommodate "multi-stage aliases"
     // like $bucket.
@@ -229,7 +229,7 @@ public:
 
     struct ParserRegistration {
         DocumentSource::Parser parser;
-        CheckableFeatureFlagRef featureFlag;
+        FeatureFlag* featureFlag;
     };
 
     /**
@@ -344,6 +344,10 @@ public:
         MONGO_UNIMPLEMENTED_TASSERT(7183905);
     };
 
+    /**
+     * Get the stage's name.
+     */
+    virtual const char* getSourceName() const = 0;
 
     /**
      * Returns the DocumentSource::Id value of a given stage object.
@@ -398,9 +402,7 @@ public:
      * DO NOT call this method directly. Instead, use the REGISTER_DOCUMENT_SOURCE macro defined in
      * this file.
      */
-    static void registerParser(std::string name,
-                               Parser parser,
-                               CheckableFeatureFlagRef featureFlag);
+    static void registerParser(std::string name, Parser parser, FeatureFlag* featureFlag);
     /**
      * Convenience wrapper for the common case, when DocumentSource::Parser returns a list of one
      * DocumentSource.
@@ -410,7 +412,7 @@ public:
      */
     static void registerParser(std::string name,
                                SimpleParser simpleParser,
-                               CheckableFeatureFlagRef featureFlag);
+                               FeatureFlag* featureFlag);
 
     /**
      * Allocate and return a new, unique DocumentSource::Id value.
@@ -625,6 +627,14 @@ public:
     }
 
     /**
+     * Returns the expression context from the stage's context.
+     * TODO SPM-4106: Consider renaming to getContext() once the refactoring is done.
+     */
+    const boost::intrusive_ptr<ExpressionContext>& getExpCtx() const {
+        return _expCtx;
+    }
+
+    /**
      * Get the dependencies this operation needs to do its job. If overridden, subclasses must add
      * all paths needed to apply their transformation to 'deps->fields', and call
      * 'deps->setNeedsMetadata()' to indicate what metadata (e.g. text score), if any, is required.
@@ -746,6 +756,8 @@ private:
      * being added to the array for this stage (DocumentSource).
      */
     virtual Value serialize(const SerializationOptions& opts = SerializationOptions{}) const = 0;
+
+    boost::intrusive_ptr<ExpressionContext> _expCtx;
 };
 
 }  // namespace mongo

@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_add_post_image.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -43,7 +37,6 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/field_ref_set.h"
-#include "mongo/db/pipeline/document_source_change_stream_add_post_image.h"
 #include "mongo/db/pipeline/document_source_change_stream_add_pre_image.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
 #include "mongo/db/pipeline/resume_token.h"
@@ -53,17 +46,27 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 constexpr StringData DocumentSourceChangeStreamAddPostImage::kStageName;
 constexpr StringData DocumentSourceChangeStreamAddPostImage::kFullDocumentFieldName;
 
-namespace {
 REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamAddPostImage,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamAddPostImage::createFromBson,
                                   true);
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamAddPostImage,
+                            DocumentSourceChangeStreamAddPostImage::id)
 
+namespace {
 constexpr auto makePostImageNotFoundErrorMsg =
     &DocumentSourceChangeStreamAddPreImage::makePreImageNotFoundErrorMsg;
 

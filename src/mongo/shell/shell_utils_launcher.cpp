@@ -34,7 +34,6 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <fmt/format.h>
 #include <fstream>  // IWYU pragma: keep
 #include <iostream>
 #include <iterator>
@@ -45,6 +44,8 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <fmt/format.h>
 
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
 #include <boost/filesystem/directory.hpp>
@@ -357,26 +358,26 @@ void copyDir(const boost::filesystem::path& from, const boost::filesystem::path&
     boost::filesystem::directory_iterator i(from);
     while (i != end) {
         boost::filesystem::path p = *i;
-        if (p.leaf() == "metrics.interim" || p.leaf() == "metrics.interim.temp") {
+        if (p.filename() == "metrics.interim" || p.filename() == "metrics.interim.temp") {
             // Ignore any errors for metrics.interim* files as these may disappear during copy
             boost::system::error_code ec;
-            boost::filesystem::copy_file(p, to / p.leaf(), ec);
+            boost::filesystem::copy_file(p, to / p.filename(), ec);
             if (ec) {
                 LOGV2_INFO(22814,
                            "Skipping copying of file from '{from}' to "
                            "'{to}' due to: {error}",
                            "Skipping copying of file due to error"
                            "from"_attr = p.generic_string(),
-                           "to"_attr = (to / p.leaf()).generic_string(),
+                           "to"_attr = (to / p.filename()).generic_string(),
                            "error"_attr = ec.message());
             }
-        } else if (p.leaf() != "mongod.lock" && p.leaf() != "WiredTiger.lock") {
+        } else if (p.filename() != "mongod.lock" && p.filename() != "WiredTiger.lock") {
             if (boost::filesystem::is_directory(p)) {
-                boost::filesystem::path newDir = to / p.leaf();
+                boost::filesystem::path newDir = to / p.filename();
                 boost::filesystem::create_directory(newDir);
                 copyDir(p, newDir);
             } else {
-                boost::filesystem::copy_file(p, to / p.leaf());
+                boost::filesystem::copy_file(p, to / p.filename());
             }
         }
         ++i;

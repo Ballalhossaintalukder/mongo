@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/storage/record_store_base.h"
+
 #include "mongo/db/operation_context.h"
 
 namespace mongo {
@@ -174,12 +175,10 @@ void RecordStoreBase::Capped::notifyWaitersIfNeeded() {
     }
 }
 
-void RecordStoreBase::Capped::truncateAfter(OperationContext* opCtx,
-                                            const RecordId& id,
-                                            bool inclusive,
-                                            const AboutToDeleteRecordCallback& aboutToDelete) {
+RecordStoreBase::Capped::TruncateAfterResult RecordStoreBase::Capped::truncateAfter(
+    OperationContext* opCtx, const RecordId& id, bool inclusive) {
     validateWriteAllowed(opCtx);
-    return _truncateAfter(opCtx, id, inclusive, aboutToDelete);
+    return _truncateAfter(opCtx, id, inclusive);
 }
 
 }  // namespace mongo

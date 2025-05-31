@@ -29,17 +29,6 @@
 
 #include "mongo/db/repl/oplog.h"
 
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <array>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <cstdint>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -93,6 +82,7 @@
 #include "mongo/db/op_observer/op_observer.h"
 #include "mongo/db/op_observer/op_observer_util.h"
 #include "mongo/db/pipeline/change_stream_preimage_gen.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/query/find_command.h"
 #include "mongo/db/query/write_ops/delete.h"
 #include "mongo/db/query/write_ops/delete_request_gen.h"
@@ -143,6 +133,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -208,6 +209,9 @@ StringData getInvalidatingReason(const OplogApplication::Mode mode, const bool i
     return ""_sd;
 }
 
+}  // namespace
+
+namespace internal {
 Status insertDocumentsForOplog(OperationContext* opCtx,
                                const CollectionPtr& oplogCollection,
                                std::vector<Record>* records,
@@ -218,17 +222,36 @@ Status insertDocumentsForOplog(OperationContext* opCtx,
     if (!status.isOK())
         return status;
 
-    OpDebug* const nullOpDebug = nullptr;
-    collection_internal::cappedDeleteUntilBelowConfiguredMaximum(
-        opCtx, oplogCollection, records->begin()->id, nullOpDebug);
+    if (auto truncateMarkers = LocalOplogInfo::get(opCtx)->getTruncateMarkers()) {
+        // records[nRecords - 1] is the record in the oplog with the highest recordId.
+        auto nRecords = records->size();
+        int64_t totalLength = 0;
+        for (size_t i = 0; i < nRecords; i++) {
+            auto& record = (*records)[i];
+            totalLength += record.data.size();
+        }
+        auto wall = [&] {
+            BSONObj obj = (*records)[nRecords - 1].data.toBson();
+            BSONElement ele = obj[repl::DurableOplogEntry::kWallClockTimeFieldName];
+            if (!ele) {
+                // This shouldn't happen in normal cases, but this is needed because some tests do
+                // not add wall clock times. Note that, with this addition, it's possible that the
+                // oplog may grow larger than expected if --oplogMinRetentionHours is set.
+                return Date_t::now();
+            } else {
+                return ele.Date();
+            }
+        }();
+        truncateMarkers->updateCurrentMarkerAfterInsertOnCommit(
+            opCtx, totalLength, (*records)[nRecords - 1].id, wall, nRecords);
+    }
 
     // We do not need to notify capped waiters, as we have not yet updated oplog visibility, so
     // these inserts will not be visible.  When visibility updates, it will notify capped
     // waiters.
     return Status::OK();
 }
-
-}  // namespace
+}  // namespace internal
 
 ApplyImportCollectionFn applyImportCollection = applyImportCollectionDefault;
 
@@ -410,7 +433,7 @@ void logOplogRecords(OperationContext* opCtx,
         uasserted(ErrorCodes::NotWritablePrimary, ss);
     }
 
-    Status result = insertDocumentsForOplog(opCtx, oplogCollection, records, timestamps);
+    Status result = internal::insertDocumentsForOplog(opCtx, oplogCollection, records, timestamps);
     if (!result.isOK()) {
         LOGV2_FATAL(17322, "Write to oplog failed", "error"_attr = result.toString());
     }
@@ -618,7 +641,12 @@ void createOplog(OperationContext* opCtx,
 
     const ReplSettings& replSettings = ReplicationCoordinator::get(opCtx)->getSettings();
 
-    OldClientContext ctx(opCtx, oplogCollectionName);
+    AutoStatsTracker statsTracker(opCtx,
+                                  oplogCollectionName,
+                                  Top::LockType::WriteLocked,
+                                  AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                                  DatabaseProfileSettings::get(service).getDatabaseProfileLevel(
+                                      oplogCollectionName.dbName()));
     const Collection* collection =
         CollectionCatalog::get(opCtx)->lookupCollectionByNamespace(opCtx, oplogCollectionName);
 
@@ -655,9 +683,14 @@ void createOplog(OperationContext* opCtx,
     options.cappedSize = sz;
     options.autoIndexId = CollectionOptions::NO;
 
+    Database* db = nullptr;
     writeConflictRetry(opCtx, "createCollection", oplogCollectionName, [&] {
         WriteUnitOfWork uow(opCtx);
-        invariant(ctx.db()->createCollection(opCtx, oplogCollectionName, options));
+        if (!db) {
+            auto databaseHolder = DatabaseHolder::get(opCtx);
+            db = databaseHolder->openDb(opCtx, oplogCollectionName.dbName(), nullptr);
+        }
+        invariant(db->createCollection(opCtx, oplogCollectionName, options));
         acquireOplogCollectionForLogging(opCtx);
         if (!isReplSet) {
             service->getOpObserver()->onOpMessage(opCtx, BSONObj());
@@ -1019,6 +1052,17 @@ const StringMap<ApplyOpMetadata> kOpsMap = {
           if (!opCtx->writesAreReplicated()) {
               opTime = entry.getOpTime();
           }
+
+          // renameCollectionForApplyOps assumes that the operation is being applied exclusively,
+          // with no concurrent writers. This holds because this function is only called either from
+          // - The applyOps command, which acquires the global lock in MODE_X, or
+          // - Oplog application, which processes DDLs like rename individually, in their own batch.
+          tassert(
+              10374401,
+              "expected either an exclusive global lock, or to be applying the rename exclusively",
+              mode != repl::OplogApplication::Mode::kApplyOpsCmd ||
+                  shard_role_details::getLocker(opCtx)->isW());
+
           return renameCollectionForApplyOps(
               opCtx, entry.getUuid(), entry.getTid(), entry.getObject(), opTime);
       },
@@ -1078,12 +1122,6 @@ const StringMap<ApplyOpMetadata> kOpsMap = {
           -> Status {
          return applyAbortTransaction(opCtx, op, mode);
      }}},
-    {"modifyCollectionShardingIndexCatalog",
-     {[](OperationContext* opCtx, const ApplierOperation& op, OplogApplication::Mode mode)
-          -> Status {
-         // TODO (SERVER-103771): Remove `modifyCollectionShardingIndexCatalog` oplog c entry.
-         return Status::OK();
-     }}},
     {"createDatabaseMetadata",
      {[](OperationContext* opCtx, const ApplierOperation& op, OplogApplication::Mode mode)
           -> Status {
@@ -1094,6 +1132,19 @@ const StringMap<ApplyOpMetadata> kOpsMap = {
      {[](OperationContext* opCtx, const ApplierOperation& op, OplogApplication::Mode mode)
           -> Status {
          opCtx->getServiceContext()->getOpObserver()->onDropDatabaseMetadata(opCtx, *op);
+         return Status::OK();
+     }}},
+    {"beginPromotionToShardedCluster",
+     {[](OperationContext* opCtx, const ApplierOperation& op, OplogApplication::Mode mode)
+          -> Status {
+         opCtx->getServiceContext()->getOpObserver()->onBeginPromotionToShardedCluster(opCtx, *op);
+         return Status::OK();
+     }}},
+    {"completePromotionToShardedCluster",
+     {[](OperationContext* opCtx, const ApplierOperation& op, OplogApplication::Mode mode)
+          -> Status {
+         opCtx->getServiceContext()->getOpObserver()->onCompletePromotionToShardedCluster(opCtx,
+                                                                                          *op);
          return Status::OK();
      }}},
 };
@@ -2294,14 +2345,14 @@ void clearLocalOplogPtr(ServiceContext* service) {
 void acquireOplogCollectionForLogging(OperationContext* opCtx) {
     AutoGetCollection oplog(opCtx, NamespaceString::kRsOplogNamespace, MODE_IX);
     if (oplog) {
-        LocalOplogInfo::get(opCtx)->setRecordStore(oplog->getRecordStore());
+        LocalOplogInfo::get(opCtx)->setRecordStore(opCtx, oplog->getRecordStore());
     }
 }
 
 void establishOplogRecordStoreForLogging(OperationContext* opCtx, RecordStore* rs) {
     invariant(shard_role_details::getLocker(opCtx)->isW());
     invariant(rs);
-    LocalOplogInfo::get(opCtx)->setRecordStore(rs);
+    LocalOplogInfo::get(opCtx)->setRecordStore(opCtx, rs);
 }
 
 void signalOplogWaiters() {

@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <string>
-
-#include <absl/container/node_hash_map.h>
+#include "mongo/db/query/multiple_collection_accessor.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -49,12 +43,11 @@
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/query/client_cursor/cursor_manager.h"
 #include "mongo/db/query/internal_plans.h"
-#include "mongo/db/query/multiple_collection_accessor.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/collection_metadata.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
-#include "mongo/db/s/database_sharding_state.h"
+#include "mongo/db/s/database_sharding_runtime.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/server_options.h"
@@ -75,6 +68,14 @@
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 
 namespace mongo {
@@ -108,9 +109,6 @@ class MultipleCollectionAccessorTest : public ShardServerTestFixture {
 protected:
     void setUp() override;
 
-    void installDatabaseMetadata(OperationContext* opCtx,
-                                 const DatabaseName& dbName,
-                                 const DatabaseVersion& dbVersion);
     void installUnshardedCollectionMetadata(OperationContext* opCtx, const NamespaceString& nss);
     void installShardedCollectionMetadata(OperationContext* opCtx,
                                           const NamespaceString& nss,
@@ -146,9 +144,6 @@ void MultipleCollectionAccessorTest::setUp() {
     ShardServerTestFixture::setUp();
     serverGlobalParams.clusterRole = {ClusterRole::ShardServer, ClusterRole::RouterServer};
 
-    // Setup test collections and metadata
-    installDatabaseMetadata(operationContext(), dbNameTestDb, dbVersionTestDb);
-
     // Create all the required collections
     for (const auto& nss : {mainNss, secondaryNss1, secondaryNss2}) {
         createTestCollection(operationContext(), nss);
@@ -168,15 +163,6 @@ void MultipleCollectionAccessorTest::setUp() {
     createTestView(operationContext(), secondaryView1, secondaryNss1, {});
     createTestView(operationContext(), secondaryView2, secondaryNss2, {});
 }
-
-void MultipleCollectionAccessorTest::installDatabaseMetadata(OperationContext* opCtx,
-                                                             const DatabaseName& dbName,
-                                                             const DatabaseVersion& dbVersion) {
-    AutoGetDb autoDb(opCtx, dbName, MODE_X, {}, {});
-    auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(opCtx, dbName);
-    scopedDss->setDbInfo_DEPRECATED(opCtx, {dbName, kMyShardName, dbVersion});
-}
-
 
 void MultipleCollectionAccessorTest::installShardedCollectionMetadata(
     OperationContext* opCtx,

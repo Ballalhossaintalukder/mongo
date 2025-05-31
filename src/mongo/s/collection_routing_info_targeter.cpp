@@ -29,16 +29,6 @@
 
 #include "mongo/s/collection_routing_info_targeter.h"
 
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -81,6 +71,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -254,7 +254,9 @@ CollectionRoutingInfo CollectionRoutingInfoTargeter::_init(OperationContext* opC
                     waitForDatabaseToBeDropped.pauseWhileSet(opCtx);
                 }
 
-                return uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, nss));
+                // TODO SERVER-104490 Remove this once RoutingContext is integrated with the
+                // RoutingContext.
+                return uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, nss));
             } catch (const ExceptionFor<ErrorCodes::NamespaceNotFound>&) {
                 LOGV2_INFO(8314601,
                            "Failed initialization of routing info because the database has been "
@@ -768,7 +770,6 @@ StatusWith<ShardEndpoint> CollectionRoutingInfoTargeter::_targetShardKey(
     } catch (const DBException& ex) {
         return ex.toStatus();
     }
-    MONGO_UNREACHABLE;
 }
 
 std::vector<ShardEndpoint> CollectionRoutingInfoTargeter::targetAllShards(

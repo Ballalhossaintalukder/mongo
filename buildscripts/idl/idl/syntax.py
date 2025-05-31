@@ -359,6 +359,7 @@ class Global(common.SourceLocation):
         """Construct a Global."""
         self.cpp_namespace = None  # type: str
         self.cpp_includes = []  # type: List[str]
+        self.mod_visibility = None  # type: str
         self.configs = None  # type: ConfigGlobal
 
         super(Global, self).__init__(file_name, line, column)
@@ -535,22 +536,6 @@ class ChainedStruct(common.SourceLocation):
         super(ChainedStruct, self).__init__(file_name, line, column)
 
 
-class ChainedType(common.SourceLocation):
-    """
-    Stores all type information about an IDL chained type.
-
-    The fields name, and cpp_name are required.
-    """
-
-    def __init__(self, file_name, line, column):
-        # type: (str, int, int) -> None
-        """Construct a Type."""
-        self.name = None  # type: str
-        self.cpp_name = None  # type: str
-
-        super(ChainedType, self).__init__(file_name, line, column)
-
-
 class Struct(common.SourceLocation):
     """
     IDL struct information.
@@ -567,7 +552,6 @@ class Struct(common.SourceLocation):
         self.immutable = False  # type: bool
         self.inline_chained_structs = True  # type: bool
         self.generate_comparison_operators = False  # type: bool
-        self.chained_types = None  # type: List[ChainedType]
         self.chained_structs = None  # type: List[ChainedStruct]
         self.fields = None  # type: List[Field]
         self.allow_global_collection_name = False  # type: bool
@@ -580,6 +564,7 @@ class Struct(common.SourceLocation):
 
         # Command only property
         self.cpp_name = None  # type: str
+        self.mod_visibility = None  # type: str
 
         # Internal property that is not represented as syntax. An imported struct is read from an
         # imported file, and no code is generated for it.
@@ -753,6 +738,7 @@ class Enum(common.SourceLocation):
         self.description = None  # type: str
         self.type = None  # type: str
         self.values = None  # type: List[EnumValue]
+        self.mod_visibility = None  # type: str
 
         # Internal property that is not represented as syntax. An imported enum is read from an
         # imported file, and no code is generated for it.

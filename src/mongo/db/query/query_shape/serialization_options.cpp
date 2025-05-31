@@ -29,15 +29,6 @@
 
 #include "serialization_options.h"
 
-#include "mongo/db/query/query_shape/serialization_options.h"
-
-#include <absl/container/node_hash_map.h>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes_util.h"
@@ -45,10 +36,18 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
+#include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
+
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -78,23 +77,23 @@ static constexpr StringData kTimestampTypeString = "?timestamp"_sd;
 static constexpr StringData kMaxKeyTypeString = "?maxKey"_sd;
 
 static const StringMap<StringData> kArrayTypeStringConstants{
-    {kUndefinedTypeString.rawData(), "?array<?undefined>"_sd},
-    {kStringTypeString.rawData(), "?array<?string>"_sd},
-    {kNumberTypeString.rawData(), "?array<?number>"_sd},
-    {kMinKeyTypeString.rawData(), "?array<?minKey>"_sd},
-    {kObjectTypeString.rawData(), "?array<?object>"_sd},
-    {kArrayTypeString.rawData(), "?array<?array>"_sd},
-    {kBinDataTypeString.rawData(), "?array<?binData>"_sd},
-    {kObjectIdTypeString.rawData(), "?array<?objectId>"_sd},
-    {kBoolTypeString.rawData(), "?array<?bool>"_sd},
-    {kDateTypeString.rawData(), "?array<?date>"_sd},
-    {kNullTypeString.rawData(), "?array<?null>"_sd},
-    {kRegexTypeString.rawData(), "?array<?regex>"_sd},
-    {kDbPointerTypeString.rawData(), "?array<?dbPointer>"_sd},
-    {kJavascriptTypeString.rawData(), "?array<?javascript>"_sd},
-    {kJavascriptWithScopeTypeString.rawData(), "?array<?javascriptWithScope>"_sd},
-    {kTimestampTypeString.rawData(), "?array<?timestamp>"_sd},
-    {kMaxKeyTypeString.rawData(), "?array<?maxKey>"_sd},
+    {kUndefinedTypeString.data(), "?array<?undefined>"_sd},
+    {kStringTypeString.data(), "?array<?string>"_sd},
+    {kNumberTypeString.data(), "?array<?number>"_sd},
+    {kMinKeyTypeString.data(), "?array<?minKey>"_sd},
+    {kObjectTypeString.data(), "?array<?object>"_sd},
+    {kArrayTypeString.data(), "?array<?array>"_sd},
+    {kBinDataTypeString.data(), "?array<?binData>"_sd},
+    {kObjectIdTypeString.data(), "?array<?objectId>"_sd},
+    {kBoolTypeString.data(), "?array<?bool>"_sd},
+    {kDateTypeString.data(), "?array<?date>"_sd},
+    {kNullTypeString.data(), "?array<?null>"_sd},
+    {kRegexTypeString.data(), "?array<?regex>"_sd},
+    {kDbPointerTypeString.data(), "?array<?dbPointer>"_sd},
+    {kJavascriptTypeString.data(), "?array<?javascript>"_sd},
+    {kJavascriptWithScopeTypeString.data(), "?array<?javascriptWithScope>"_sd},
+    {kTimestampTypeString.data(), "?array<?timestamp>"_sd},
+    {kMaxKeyTypeString.data(), "?array<?maxKey>"_sd},
 };
 
 static constexpr auto kRepresentativeString = "?"_sd;

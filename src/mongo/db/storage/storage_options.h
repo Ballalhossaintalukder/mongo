@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <string>
-
 #include "mongo/platform/atomic_proxy.h"
 #include "mongo/platform/atomic_word.h"
+
+#include <string>
 
 /*
  * This file defines the storage for options that come from the command line related to data file
@@ -46,6 +46,9 @@ namespace mongo {
 struct StorageGlobalParams {
     StorageGlobalParams();
     void reset();
+
+    // Returns the directory path used by the spill storage engine to store spilled data.
+    std::string getSpillDbPath() const;
 
     // Default data directory for mongod when running in non-config server mode.
     static const char* kDefaultDbPath;

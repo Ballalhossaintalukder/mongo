@@ -29,15 +29,6 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 
-#include <cstring>
-#include <string>
-#include <utility>
-#include <wiredtiger.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -48,6 +39,7 @@
 #include "mongo/db/global_settings.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/record_id.h"
+#include "mongo/db/repl/repl_set_member_in_standalone_mode.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
@@ -73,6 +65,16 @@
 #include "mongo/util/clock_source_mock.h"
 #include "mongo/util/str.h"
 
+#include <cstring>
+#include <string>
+#include <utility>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 namespace {
 
@@ -81,12 +83,6 @@ public:
     WiredTigerRecoveryUnitHarnessHelper() : _dbpath("wt_test") {
         WiredTigerKVEngineBase::WiredTigerConfig wtConfig = getWiredTigerConfigFromStartupOptions();
         wtConfig.cacheSizeMB = 1;
-        _engine = std::make_unique<WiredTigerKVEngine>(std::string{kWiredTigerEngineName},
-                                                       _dbpath.path(),
-                                                       &_cs,
-                                                       std::move(wtConfig),
-                                                       false,
-                                                       false);
 
         // Use a replica set so that writes to replicated collections are not journaled and thus
         // retain their timestamps.
@@ -96,6 +92,18 @@ public:
         repl::ReplicationCoordinator::set(getGlobalServiceContext(),
                                           std::make_unique<repl::ReplicationCoordinatorMock>(
                                               getGlobalServiceContext(), replSettings));
+
+        _engine = std::make_unique<WiredTigerKVEngine>(
+            std::string{kWiredTigerEngineName},
+            _dbpath.path(),
+            &_cs,
+            std::move(wtConfig),
+            false,
+            false,
+            getGlobalReplSettings().isReplSet(),
+            repl::ReplSettings::shouldRecoverFromOplogAsStandalone(),
+            getReplSetMemberInStandaloneMode(getGlobalServiceContext()));
+
         _engine->notifyStorageStartupRecoveryComplete();
     }
 
@@ -109,8 +117,8 @@ public:
                                                    const std::string& ns) final {
         std::string ident = ns;
         NamespaceString nss = NamespaceString::createNamespaceString_forTest(ns);
-        const auto res = _engine->createRecordStore(nss, ident);
-        return _engine->getRecordStore(opCtx, nss, ident, CollectionOptions());
+        const auto res = _engine->createRecordStore(nss, ident, RecordStore::Options{});
+        return _engine->getRecordStore(opCtx, nss, ident, RecordStore::Options{}, UUID::gen());
     }
 
     WiredTigerKVEngine* getEngine() {

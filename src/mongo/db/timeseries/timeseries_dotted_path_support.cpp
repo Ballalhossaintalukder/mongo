@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstddef>
-#include <limits>
-#include <ostream>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/timeseries/timeseries_dotted_path_support.h"
 
 #include "mongo/bson/bson_depth.h"
 #include "mongo/bson/bsonelement.h"
@@ -45,9 +36,19 @@
 #include "mongo/bson/column/bsoncolumn.h"
 #include "mongo/db/timeseries/bucket_compression.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
-#include "mongo/db/timeseries/timeseries_dotted_path_support.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/ctype.h"
+
+#include <cstddef>
+#include <limits>
+#include <ostream>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace timeseries {
@@ -536,7 +537,7 @@ boost::optional<BSONColumn> extractAllElementsAlongBucketPath(const BSONObj& obj
 
 bool haveArrayAlongBucketDataPath(const BSONObj& bucketObj, StringData path) {
     // Shortcut: if we aren't checking a `data.` path, then we don't care.
-    if (!path.startsWith(timeseries::kDataFieldNamePrefix)) {
+    if (!path.starts_with(timeseries::kDataFieldNamePrefix)) {
         return false;
     }
 

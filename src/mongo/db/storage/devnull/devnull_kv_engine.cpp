@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/storage/devnull/devnull_kv_engine.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -41,7 +35,6 @@
 #include "mongo/bson/ordering.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/storage/damage_vector.h"
-#include "mongo/db/storage/devnull/devnull_kv_engine.h"
 #include "mongo/db/storage/devnull/ephemeral_catalog_record_store.h"
 #include "mongo/db/storage/duplicate_key_error_info.h"
 #include "mongo/db/storage/key_string/key_string.h"
@@ -55,6 +48,14 @@
 #include "mongo/db/validate/validate_results.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -83,11 +84,8 @@ public:
     class Capped;
     class Oplog;
 
-    DevNullRecordStore(boost::optional<UUID> uuid,
-                       StringData identName,
-                       const CollectionOptions& options,
-                       KeyFormat keyFormat)
-        : RecordStoreBase(uuid, identName), _options(options), _keyFormat(keyFormat) {
+    DevNullRecordStore(boost::optional<UUID> uuid, StringData ident, KeyFormat keyFormat)
+        : RecordStoreBase(uuid, ident), _keyFormat(keyFormat) {
         _numInserts = 0;
         _dummy = BSON("_id" << 1);
     }
@@ -105,7 +103,9 @@ public:
     }
 
     virtual bool isCapped() const {
-        return _options.capped;
+        // Record stores for capped collections should inherit from 'DevNullRecordStore::Capped',
+        // which overrides this to true.
+        return false;
     }
 
     KeyFormat keyFormat() const override {
@@ -226,7 +226,6 @@ private:
         return Status::OK();
     }
 
-    CollectionOptions _options;
     KeyFormat _keyFormat;
     long long _numInserts;
     BSONObj _dummy;
@@ -234,28 +233,30 @@ private:
 
 class DevNullRecordStore::Capped : public DevNullRecordStore, public RecordStoreBase::Capped {
 public:
-    Capped(boost::optional<UUID> uuid,
-           StringData identName,
-           const CollectionOptions& options,
-           KeyFormat keyFormat)
-        : DevNullRecordStore(uuid, identName, options, keyFormat) {}
+    Capped(boost::optional<UUID> uuid, StringData ident, KeyFormat keyFormat)
+        : DevNullRecordStore(uuid, ident, keyFormat) {}
+
+    bool isCapped() const final {
+        return true;
+    }
 
     RecordStore::Capped* capped() override {
         return this;
     }
 
 private:
-    void _truncateAfter(OperationContext*,
-                        const RecordId&,
-                        bool inclusive,
-                        const AboutToDeleteRecordCallback&) override {}
+    TruncateAfterResult _truncateAfter(OperationContext*,
+                                       const RecordId&,
+                                       bool inclusive) override {
+        return {};
+    }
 };
 
 class DevNullRecordStore::Oplog final : public DevNullRecordStore::Capped,
                                         public RecordStore::Oplog {
 public:
-    Oplog(UUID uuid, StringData identName, const CollectionOptions& options)
-        : DevNullRecordStore::Capped(uuid, identName, options, KeyFormat::Long) {}
+    Oplog(UUID uuid, StringData ident, int64_t maxSize)
+        : DevNullRecordStore::Capped(uuid, ident, KeyFormat::Long), _maxSize(maxSize) {}
 
     RecordStore::Capped* capped() override {
         return this;
@@ -265,16 +266,13 @@ public:
         return this;
     }
 
-    bool selfManagedTruncation() const override {
-        return false;
-    }
-
     Status updateSize(long long size) override {
+        _maxSize = size;
         return Status::OK();
     }
 
-    const OplogData* getOplogData() const override {
-        return nullptr;
+    int64_t getMaxSize() const override {
+        return _maxSize;
     }
 
     std::unique_ptr<SeekableRecordCursor> getRawCursor(OperationContext* opCtx,
@@ -290,9 +288,8 @@ public:
         return Status::OK();
     }
 
-    std::shared_ptr<CollectionTruncateMarkers> getCollectionTruncateMarkers() override {
-        return nullptr;
-    }
+private:
+    int64_t _maxSize;
 };
 
 class DevNullSortedDataBuilderInterface : public SortedDataBuilderInterface {
@@ -302,7 +299,7 @@ class DevNullSortedDataBuilderInterface : public SortedDataBuilderInterface {
 public:
     DevNullSortedDataBuilderInterface() {}
 
-    void addKey(const key_string::View& keyString) override {}
+    void addKey(RecoveryUnit& ru, const key_string::View& keyString) override {}
 };
 
 class DevNullSortedDataInterface : public SortedDataInterface {
@@ -315,12 +312,14 @@ public:
 
     ~DevNullSortedDataInterface() override {}
 
-    std::unique_ptr<SortedDataBuilderInterface> makeBulkBuilder(OperationContext* opCtx) override {
+    std::unique_ptr<SortedDataBuilderInterface> makeBulkBuilder(OperationContext* opCtx,
+                                                                RecoveryUnit& ru) override {
         return {};
     }
 
     std::variant<Status, DuplicateKey> insert(
         OperationContext* opCtx,
+        RecoveryUnit& ru,
         const key_string::View& keyString,
         bool dupsAllowed,
         IncludeDuplicateRecordId includeDuplicateRecordId) override {
@@ -328,51 +327,58 @@ public:
     }
 
     void unindex(OperationContext* opCtx,
+                 RecoveryUnit& ru,
                  const key_string::View& keyString,
                  bool dupsAllowed) override {}
 
     boost::optional<DuplicateKey> dupKeyCheck(OperationContext* opCtx,
+                                              RecoveryUnit& ru,
                                               const key_string::View& keyString) override {
         return boost::none;
     }
 
     boost::optional<RecordId> findLoc(OperationContext* opCtx,
+                                      RecoveryUnit& ru,
                                       std::span<const char> keyString) const override {
         return boost::none;
     }
 
     IndexValidateResults validate(
         OperationContext* opCtx,
+        RecoveryUnit& ru,
         const CollectionValidation::ValidationOptions& options) const override {
         return IndexValidateResults{};
     }
 
     bool appendCustomStats(OperationContext* opCtx,
+                           RecoveryUnit& ru,
                            BSONObjBuilder* output,
                            double scale) const override {
         return false;
     }
 
-    long long getSpaceUsedBytes(OperationContext* opCtx) const override {
+    long long getSpaceUsedBytes(OperationContext* opCtx, RecoveryUnit& ru) const override {
         return 0;
     }
 
-    long long getFreeStorageBytes(OperationContext* opCtx) const override {
+    long long getFreeStorageBytes(OperationContext* opCtx, RecoveryUnit& ru) const override {
         return 0;
     }
 
-    bool isEmpty(OperationContext* opCtx) override {
+    bool isEmpty(OperationContext* opCtx, RecoveryUnit& ru) override {
         return true;
     }
 
-    int64_t numEntries(OperationContext* opCtx) const override {
+    int64_t numEntries(OperationContext* opCtx, RecoveryUnit& ru) const override {
         return 0;
     }
 
     void printIndexEntryMetadata(OperationContext* opCtx,
+                                 RecoveryUnit& ru,
                                  const key_string::View& keyString) const override {}
 
     std::unique_ptr<SortedDataInterface::Cursor> newCursor(OperationContext* opCtx,
+                                                           RecoveryUnit& ru,
                                                            bool isForward) const override {
         return {};
     }
@@ -398,16 +404,16 @@ std::unique_ptr<RecoveryUnit> DevNullKVEngine::newRecoveryUnit() {
 std::unique_ptr<RecordStore> DevNullKVEngine::getRecordStore(OperationContext* opCtx,
                                                              const NamespaceString& nss,
                                                              StringData ident,
-                                                             const CollectionOptions& options) {
+                                                             const RecordStore::Options& options,
+                                                             boost::optional<UUID> uuid) {
     if (ident == "_mdb_catalog") {
-        return std::make_unique<EphemeralForTestRecordStore>(options.uuid, ident, &_catalogInfo);
-    } else if (nss == NamespaceString::kRsOplogNamespace) {
-        return std::make_unique<DevNullRecordStore::Oplog>(*options.uuid, ident, options);
-    } else if (options.capped) {
-        return std::make_unique<DevNullRecordStore::Capped>(
-            options.uuid, ident, options, KeyFormat::Long);
+        return std::make_unique<EphemeralForTestRecordStore>(uuid, ident, &_catalogInfo);
+    } else if (options.isOplog) {
+        return std::make_unique<DevNullRecordStore::Oplog>(*uuid, ident, options.oplogMaxSize);
+    } else if (options.isCapped) {
+        return std::make_unique<DevNullRecordStore::Capped>(uuid, ident, options.keyFormat);
     }
-    return std::make_unique<DevNullRecordStore>(options.uuid, ident, options, KeyFormat::Long);
+    return std::make_unique<DevNullRecordStore>(uuid, ident, options.keyFormat);
 }
 
 std::unique_ptr<RecordStore> DevNullKVEngine::getTemporaryRecordStore(OperationContext* opCtx,
@@ -419,12 +425,12 @@ std::unique_ptr<RecordStore> DevNullKVEngine::getTemporaryRecordStore(OperationC
 std::unique_ptr<RecordStore> DevNullKVEngine::makeTemporaryRecordStore(OperationContext* opCtx,
                                                                        StringData ident,
                                                                        KeyFormat keyFormat) {
-    return std::make_unique<DevNullRecordStore>(
-        boost::none /* uuid */, ident, CollectionOptions(), keyFormat);
+    return std::make_unique<DevNullRecordStore>(boost::none /* uuid */, ident, keyFormat);
 }
 
 std::unique_ptr<SortedDataInterface> DevNullKVEngine::getSortedDataInterface(
     OperationContext* opCtx,
+    RecoveryUnit& ru,
     const NamespaceString& nss,
     const UUID& uuid,
     StringData ident,

@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <string>
-
-#include <absl/container/node_hash_map.h>
+#include "mongo/db/shard_role.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -61,14 +54,13 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/collection_metadata.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
-#include "mongo/db/s/database_sharding_state.h"
+#include "mongo/db/s/database_sharding_state_mock.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/s/sharding_runtime_d_params_gen.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
-#include "mongo/db/shard_role.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/tenant_id.h"
@@ -87,6 +79,15 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/future.h"
+
+#include <algorithm>
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -121,9 +122,6 @@ class ShardRoleTest : public ShardServerTestFixture {
 protected:
     void setUp() override;
 
-    void installDatabaseMetadata(OperationContext* opCtx,
-                                 const DatabaseName& dbName,
-                                 const DatabaseVersion& dbVersion);
     void installUnshardedCollectionMetadata(OperationContext* opCtx, const NamespaceString& nss);
     void installShardedCollectionMetadata(OperationContext* opCtx,
                                           const NamespaceString& nss,
@@ -182,9 +180,6 @@ void ShardRoleTest::setUp() {
     ShardServerTestFixture::setUp();
     serverGlobalParams.clusterRole = {ClusterRole::ShardServer, ClusterRole::RouterServer};
 
-    // Setup test collections and metadata
-    installDatabaseMetadata(operationContext(), dbNameTestDb, dbVersionTestDb);
-
     // Create nssUnshardedCollection1
     createTestCollection(operationContext(), nssUnshardedCollection1);
     installUnshardedCollectionMetadata(operationContext(), nssUnshardedCollection1);
@@ -205,14 +200,6 @@ void ShardRoleTest::setUp() {
     // Setup nssView
     createTestView(operationContext(), nssView, nssUnshardedCollection1, viewPipeline);
     installUnshardedCollectionMetadata(operationContext(), nssView);
-}
-
-void ShardRoleTest::installDatabaseMetadata(OperationContext* opCtx,
-                                            const DatabaseName& dbName,
-                                            const DatabaseVersion& dbVersion) {
-    AutoGetDb autoDb(opCtx, dbName, MODE_X, {}, {});
-    auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(opCtx, dbName);
-    scopedDss->setDbInfo_DEPRECATED(opCtx, {dbName, kMyShardName, dbVersion});
 }
 
 void ShardRoleTest::installUnshardedCollectionMetadata(OperationContext* opCtx,
@@ -429,8 +416,13 @@ TEST_F(ShardRoleTest, AcquireUnshardedCollWithCorrectPlacementVersion) {
 
 TEST_F(ShardRoleTest, AcquireUnshardedCollWithIncorrectPlacementVersionThrows) {
     const auto incorrectDbVersion = DatabaseVersion(UUID::gen(), Timestamp(50, 0));
-
     PlacementConcern placementConcern{incorrectDbVersion, ShardVersion::UNSHARDED()};
+
+    {
+        auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+        scopedDss->expectFailureDbVersionCheckWithMismatchingVersion(dbVersionTestDb,
+                                                                     incorrectDbVersion);
+    }
 
     auto validateException = [&](const DBException& ex) {
         const auto exInfo = ex.extraInfo<StaleDbRoutingVersion>();
@@ -463,15 +455,15 @@ TEST_F(ShardRoleTest, AcquireUnshardedCollWithIncorrectPlacementVersionThrows) {
                                                }}),
         ExceptionFor<ErrorCodes::StaleDbVersion>,
         validateException);
+
+    auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 TEST_F(ShardRoleTest, AcquireUnshardedCollWhenShardDoesNotKnowThePlacementVersionThrows) {
     {
-        // Clear the database metadata
-        AutoGetDb autoDb(operationContext(), dbNameTestDb, MODE_X, {}, {});
-        auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(
-            operationContext(), dbNameTestDb);
-        scopedDss->clearDbInfo_DEPRECATED(operationContext());
+        auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+        scopedDss->expectFailureDbVersionCheckWithUnknownMetadata(dbVersionTestDb);
     }
 
     auto validateException = [&](const DBException& ex) {
@@ -500,17 +492,15 @@ TEST_F(ShardRoleTest, AcquireUnshardedCollWhenShardDoesNotKnowThePlacementVersio
                                                  AcquisitionPrerequisites::kRead}}),
         ExceptionFor<ErrorCodes::StaleDbVersion>,
         validateException);
+
+    auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 TEST_F(ShardRoleTest, AcquireUnshardedCollWhenCriticalSectionIsActiveThrows) {
-    const BSONObj criticalSectionReason = BSON("reason" << 1);
     {
-        // Enter critical section.
-        AutoGetDb autoDb(operationContext(), dbNameTestDb, MODE_X, {}, {});
-        auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(
-            operationContext(), dbNameTestDb);
-        scopedDss->enterCriticalSectionCatchUpPhase(operationContext(), criticalSectionReason);
-        scopedDss->enterCriticalSectionCommitPhase(operationContext(), criticalSectionReason);
+        auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+        scopedDss->expectFailureDbVersionCheckWithCriticalSection(dbVersionTestDb, BSONObj());
     }
 
     {
@@ -542,14 +532,10 @@ TEST_F(ShardRoleTest, AcquireUnshardedCollWhenCriticalSectionIsActiveThrows) {
             validateException);
     }
 
-    {
-        // Exit critical section.
-        AutoGetDb autoDb(operationContext(), dbNameTestDb, MODE_X, {}, {});
-        const BSONObj criticalSectionReason = BSON("reason" << 1);
-        auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(
-            operationContext(), dbNameTestDb);
-        scopedDss->exitCriticalSection(operationContext(), criticalSectionReason);
-    }
+
+    // Exit critical section.
+    auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 TEST_F(ShardRoleTest, AcquireUnshardedCollWithoutSpecifyingPlacementVersion) {
@@ -848,6 +834,13 @@ TEST_F(ShardRoleTest, AcquireCollectionNonExistentNamespace) {
 
 TEST_F(ShardRoleTest, AcquireInexistentCollectionWithWrongPlacementThrowsBecauseWrongPlacement) {
     const auto incorrectDbVersion = dbVersionTestDb.makeUpdated();
+
+    {
+        auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+        scopedDss->expectFailureDbVersionCheckWithMismatchingVersion(dbVersionTestDb,
+                                                                     incorrectDbVersion);
+    }
+
     const NamespaceString inexistentNss =
         NamespaceString::createNamespaceString_forTest(dbNameTestDb, "inexistent");
 
@@ -876,6 +869,9 @@ TEST_F(ShardRoleTest, AcquireInexistentCollectionWithWrongPlacementThrowsBecause
                                                  AcquisitionPrerequisites::kRead}}),
         ExceptionFor<ErrorCodes::StaleDbVersion>,
         validateException);
+
+    auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(), dbNameTestDb);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 TEST_F(ShardRoleTest, AcquireCollectionButItIsAView) {
@@ -1746,9 +1742,14 @@ TEST_F(ShardRoleTest, RestoreForWriteInvalidatesAcquisitionIfPlacementConcernDbV
         yieldTransactionResourcesFromOperationContext(operationContext());
     shard_role_details::getRecoveryUnit(operationContext())->abandonSnapshot();
 
-    // Placement changes
     const auto newDbVersion = dbVersionTestDb.makeUpdated();
-    installDatabaseMetadata(operationContext(), nssUnshardedCollection1.dbName(), newDbVersion);
+
+    // Placement changes
+    {
+        auto scopedDss = DatabaseShardingStateMock::acquire(operationContext(),
+                                                            nssUnshardedCollection1.dbName());
+        scopedDss->expectFailureDbVersionCheckWithMismatchingVersion(newDbVersion, dbVersionTestDb);
+    }
 
     // Try to restore the resources should fail because placement concern is no longer met.
     ASSERT_THROWS_WITH_CHECK(restoreTransactionResourcesToOperationContext(
@@ -1766,6 +1767,10 @@ TEST_F(ShardRoleTest, RestoreForWriteInvalidatesAcquisitionIfPlacementConcernDbV
                      ->isDbLockedForMode(nss.dbName(), MODE_IX));
     ASSERT_FALSE(
         shard_role_details::getLocker(operationContext())->isCollectionLockedForMode(nss, MODE_IX));
+
+    auto scopedDss =
+        DatabaseShardingStateMock::acquire(operationContext(), nssUnshardedCollection1.dbName());
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 TEST_F(ShardRoleTest, RestoreWithShardVersionIgnored) {
@@ -2255,7 +2260,8 @@ TEST_F(ShardRoleTest, YieldAndRestoreCursor) {
     auto newOpCtxHolder = acr->makeOperationContext();
     auto* newOpCtx = newOpCtxHolder.get();
 
-    auto clientCursorPin = assertGet(CursorManager::get(newOpCtx)->pinCursor(newOpCtx, cursorId));
+    auto clientCursorPin =
+        assertGet(CursorManager::get(newOpCtx)->pinCursor(newOpCtx, cursorId, "getMore"));
 
     ON_BLOCK_EXIT([&] {
         ASSERT_FALSE(

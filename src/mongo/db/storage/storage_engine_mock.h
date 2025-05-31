@@ -50,8 +50,8 @@ public:
     bool isEphemeral() const override {
         return true;
     }
-    void loadDurableCatalog(OperationContext* opCtx, LastShutdownState lastShutdownState) final {}
-    void closeDurableCatalog(OperationContext* opCtx) final {}
+    void loadMDBCatalog(OperationContext* opCtx, LastShutdownState lastShutdownState) final {}
+    void closeMDBCatalog(OperationContext* opCtx) final {}
     void flushAllFiles(OperationContext* opCtx, bool callerHoldsReadLock) final {}
     Status beginBackup() final {
         return Status(ErrorCodes::CommandNotSupported,
@@ -80,6 +80,10 @@ public:
                              const NamespaceString& ns) final {
         return Status::OK();
     }
+    std::unique_ptr<SpillTable> makeSpillTable(OperationContext* opCtx, KeyFormat keyFormat) final {
+
+        return {};
+    }
     std::unique_ptr<TemporaryRecordStore> makeTemporaryRecordStore(OperationContext* opCtx,
                                                                    KeyFormat keyFormat) final {
         return {};
@@ -104,9 +108,6 @@ public:
         return false;
     }
     bool supportsReadConcernSnapshot() const final {
-        return false;
-    }
-    bool supportsOplogTruncateMarkers() const final {
         return false;
     }
     void clearDropPendingState(OperationContext* opCtx) final {}
@@ -135,10 +136,6 @@ public:
     void setOldestActiveTransactionTimestampCallback(
         OldestActiveTransactionTimestampCallback callback) final {}
 
-    StatusWith<StorageEngine::ReconcileResult> reconcileCatalogAndIdents(
-        OperationContext* opCtx, Timestamp stableTs, LastShutdownState lastShutdownState) final {
-        return ReconcileResult{};
-    }
     Timestamp getAllDurableTimestamp() const final {
         return {};
     }
@@ -195,11 +192,14 @@ public:
     const KVEngine* getEngine() const final {
         return nullptr;
     }
-    DurableCatalog* getDurableCatalog() final {
+    MDBCatalog* getMDBCatalog() final {
         return nullptr;
     }
-    const DurableCatalog* getDurableCatalog() const final {
+    const MDBCatalog* getMDBCatalog() const final {
         return nullptr;
+    }
+    std::set<std::string> getDropPendingIdents() final {
+        return {};
     }
 
     StatusWith<Timestamp> pinOldestTimestamp(RecoveryUnit&,
@@ -240,6 +240,10 @@ public:
 
     Status autoCompact(RecoveryUnit&, const AutoCompactOptions& options) final {
         return Status::OK();
+    }
+
+    bool hasOngoingLiveRestore() final {
+        return false;
     }
 };
 

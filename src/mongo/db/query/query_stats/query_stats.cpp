@@ -29,14 +29,6 @@
 
 #include "mongo/db/query/query_stats/query_stats.h"
 
-#include <absl/container/node_hash_map.h>
-#include <absl/hash/hash.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <climits>
-#include <memory>
-
 #include "mongo/base/status_with.h"
 #include "mongo/db/catalog/util/partitioned.h"
 #include "mongo/db/commands/server_status_metric.h"
@@ -58,6 +50,15 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/synchronized_value.h"
+
+#include <climits>
+#include <memory>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/hash/hash.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQueryStats
 
@@ -390,16 +391,12 @@ void registerRequest(OperationContext* opCtx,
 }
 
 bool shouldRequestRemoteMetrics(const OpDebug& opDebug) {
-    // metricsRequested should only be set to true when the feature flag is set; we don't need to
-    // re-check the feature flag in that case.
     // If the key is non-null, we expect that query stats should be collected at this level of
     // execution. If the keyHash is non-null, then we expect we should forward remote query stats
     // metrics to a higher level of execution, such as running an aggregation for a view, or there
     // are multiple cursors open in a single operation context, such as in $search.
-    return opDebug.queryStatsInfo.metricsRequested ||
-        (feature_flags::gFeatureFlagQueryStatsDataBearingNodes.isEnabled(
-             serverGlobalParams.featureCompatibility.acquireFCVSnapshot()) &&
-         (opDebug.queryStatsInfo.key != nullptr || opDebug.queryStatsInfo.keyHash != boost::none));
+    return opDebug.queryStatsInfo.metricsRequested || opDebug.queryStatsInfo.key != nullptr ||
+        opDebug.queryStatsInfo.keyHash != boost::none;
 }
 
 QueryStatsStore& getQueryStatsStore(OperationContext* opCtx) {

@@ -27,20 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <functional>
-#include <limits>
-#include <list>
-#include <memory>
-#include <ostream>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/flat_hash_set.h>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
+#include "mongo/bson/bsonobj.h"
 
 #include "mongo/base/data_type.h"
 #include "mongo/base/error_codes.h"
@@ -48,7 +35,6 @@
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonelement_comparator_interface.h"
-#include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/generator_extended_canonical_2_0_0.h"
@@ -64,6 +50,21 @@
 #include "mongo/util/shared_buffer.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <algorithm>
+#include <functional>
+#include <limits>
+#include <list>
+#include <memory>
+#include <ostream>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_set.h>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -277,7 +278,7 @@ BSONObj BSONObj::_jsonStringGenerator(const Generator& g,
                                       size_t writeLimit) const {
     if (isEmpty()) {
         const auto empty = isArray ? "[]"_sd : "{}"_sd;
-        buffer.append(empty.rawData(), empty.rawData() + empty.size());
+        buffer.append(empty.data(), empty.data() + empty.size());
         return BSONObj();
     }
     buffer.push_back(isArray ? '[' : '{');
@@ -558,7 +559,7 @@ Status BSONObj::storageValidEmbedded() const {
         StringData name = e.fieldNameStringData();
 
         // Cannot start with "$", unless dbref which must start with ($ref, $id)
-        if (name.startsWith("$")) {
+        if (name.starts_with("$")) {
             if (first &&
                 // $ref is a collection name and must be a String
                 (name == "$ref") && e.type() == String &&
@@ -574,7 +575,7 @@ Status BSONObj::storageValidEmbedded() const {
                 }
 
                 // Can't start with a "$", all other checks are done below (outside if blocks)
-                if (name.startsWith("$")) {
+                if (name.starts_with("$")) {
                     return Status(ErrorCodes::DollarPrefixedFieldName,
                                   str::stream() << name << " is not valid for storage.");
                 }

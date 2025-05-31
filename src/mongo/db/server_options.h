@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <ctime>
-#include <string>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/auth/cluster_auth_mode.h"
@@ -50,6 +40,17 @@
 #include "mongo/util/net/cidr.h"
 #include "mongo/util/version/releases.h"
 #include "mongo/util/versioned_value.h"
+
+#include <algorithm>
+#include <ctime>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -87,7 +88,7 @@ struct ServerGlobalParams {
     bool enableIPv6 = false;
     bool rest = false;  // --rest
 
-    int listenBacklog = SOMAXCONN;  // --listenBacklog
+    boost::optional<int> listenBacklog;  // --listenBacklog
 
     AtomicWord<bool> quiet{false};  // --quiet
 
@@ -120,7 +121,8 @@ struct ServerGlobalParams {
     std::string socket = "/tmp";  // UNIX domain socket directory
 
     size_t maxConns = DEFAULT_MAX_CONN;  // Maximum number of simultaneous open connections.
-    VersionedValue<std::vector<std::variant<CIDR, std::string>>> maxConnsOverride;
+    VersionedValue<std::vector<std::variant<CIDR, std::string>>> maxIncomingConnsOverride;
+    VersionedValue<std::vector<std::variant<CIDR, std::string>>> maxEstablishingConnsOverride;
     int reservedAdminThreads = 0;
 
     int unixSocketPermissions = DEFAULT_UNIX_PERMS;  // permissions for the UNIX domain socket

@@ -29,15 +29,11 @@
 
 #include "mongo/db/query/planner_analysis.h"
 
-#include <boost/move/utility_core.hpp>
-#include <s2cellid.h>
-#include <set>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/matcher/expression_geo.h"
+#include "mongo/db/query/collation/collator_interface_mock.h"
 #include "mongo/db/query/index_bounds.h"
 #include "mongo/db/query/index_bounds_builder.h"
 #include "mongo/db/query/index_entry.h"
@@ -45,6 +41,13 @@
 #include "mongo/db/query/query_planner_test_fixture.h"
 #include "mongo/db/query/query_solution.h"
 #include "mongo/unittest/unittest.h"
+
+#include <set>
+#include <vector>
+
+#include <s2cellid.h>
+
+#include <boost/move/utility_core.hpp>
 
 using namespace mongo;
 
@@ -402,5 +405,43 @@ TEST(QueryPlannerAnalysis, CannotTurnIndexScanAndFetchIntoCount) {
     QuerySolution qs;
     qs.setRoot(std::move(fetch));
     ASSERT_FALSE(QueryPlannerAnalysis::turnIxscanIntoCount(&qs));
+}
+
+TEST(QueryPlannerAnalysis, CanUseIndexForRightSideLookupInSBE) {
+    std::string foreignField = "a";
+    std::vector<IndexEntry> fullIndexList;
+    const CollatorInterface* defaultCollator = nullptr;  // simple collator
+
+    // If there are no indexes, the method should return true.
+    ASSERT_TRUE(QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+        foreignField, fullIndexList, defaultCollator));
+
+    // Add an index on a field different to the foreign field
+    fullIndexList.push_back(buildSimpleIndexEntry(BSON("b" << 1)));
+
+    // If there are no indexes on the foreign field, the method should return true.
+    ASSERT_TRUE(QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+        foreignField, fullIndexList, defaultCollator));
+
+    // Add a multikey index on the foreign field.
+    fullIndexList.push_back(buildSimpleIndexEntry(fromjson("{a: 1, b: 1}")));
+    // There is an index that SBE can use, the method should return true.
+    ASSERT_TRUE(QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+        foreignField, fullIndexList, defaultCollator));
+
+    // Change the collation of the multikey index to be incompatible to the query collation.
+    CollatorInterfaceMock collator(CollatorInterfaceMock::MockType::kReverseString);
+    fullIndexList.back().collator = &collator;
+
+    // There is an index that classic can potentially use but SBE cannot, the method should return
+    // false.
+    ASSERT_FALSE(QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+        foreignField, fullIndexList, defaultCollator));
+
+    // Create an index on the foreign field with compatible collation
+    fullIndexList.push_back(buildSimpleIndexEntry(BSON("a" << 1)));
+    // There is an index that SBE can use, the method should return true.
+    ASSERT_TRUE(QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+        foreignField, fullIndexList, defaultCollator));
 }
 }  // namespace

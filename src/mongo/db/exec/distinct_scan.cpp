@@ -30,14 +30,12 @@
 #include "mongo/db/exec/distinct_scan.h"
 
 #include "mongo/db/exec/orphan_chunk_skipper.h"
+
 #include <memory>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/exec/plan_stage.h"
 #include "mongo/db/exec/requires_index_stage.h"
@@ -50,6 +48,9 @@
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -155,15 +156,16 @@ PlanStage::StageState DistinctScan::doWork(WorkingSetID* out) {
         expCtx(),
         "DistinctScan",
         [&] {
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx());
             if (!_cursor) {
-                _cursor = indexAccessMethod()->newCursor(opCtx(), _scanDirection == 1);
+                _cursor = indexAccessMethod()->newCursor(opCtx(), ru, _scanDirection == 1);
             } else if (_needsFetch && _idRetrying != WorkingSet::INVALID_ID) {
                 // We're retrying a fetch! Don't call seek() or next().
                 return PlanStage::ADVANCED;
             }
 
             if (_needsSequentialScan) {
-                kv = _cursor->next();
+                kv = _cursor->next(ru);
                 _needsSequentialScan = false;
                 return PlanStage::ADVANCED;
             }
@@ -171,8 +173,9 @@ PlanStage::StageState DistinctScan::doWork(WorkingSetID* out) {
             key_string::Builder builder(
                 indexAccessMethod()->getSortedDataInterface()->getKeyStringVersion(),
                 indexAccessMethod()->getSortedDataInterface()->getOrdering());
-            kv = _cursor->seek(IndexEntryComparison::makeKeyStringFromSeekPointForSeek(
-                _seekPoint, _scanDirection == 1, builder));
+            kv = _cursor->seek(ru,
+                               IndexEntryComparison::makeKeyStringFromSeekPointForSeek(
+                                   _seekPoint, _scanDirection == 1, builder));
             return PlanStage::ADVANCED;
         },
         [&] {
@@ -340,8 +343,9 @@ void DistinctScan::doSaveStateRequiresIndex() {
 }
 
 void DistinctScan::doRestoreStateRequiresIndex() {
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx());
     if (_cursor) {
-        _cursor->restore();
+        _cursor->restore(ru);
     }
 
     if (_fetchCursor) {

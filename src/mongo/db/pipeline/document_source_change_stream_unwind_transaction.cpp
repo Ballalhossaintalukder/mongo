@@ -28,19 +28,9 @@
  */
 
 
-#include <algorithm>
-#include <iterator>
-#include <list>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_unwind_transaction.h"
 
 #include "mongo/base/error_codes.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
@@ -54,7 +44,6 @@
 #include "mongo/db/pipeline/change_stream_rewrite_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream.h"
 #include "mongo/db/pipeline/document_source_change_stream_gen.h"
-#include "mongo/db/pipeline/document_source_change_stream_unwind_transaction.h"
 #include "mongo/db/pipeline/document_source_match.h"
 #include "mongo/db/query/query_feature_flags_gen.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
@@ -63,8 +52,19 @@
 #include "mongo/db/transaction/transaction_history_iterator.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <array>
+#include <iterator>
+#include <list>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -72,6 +72,8 @@ REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamUnwindTransaction,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamUnwindTransaction::createFromBson,
                                   true);
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamUnwindTransaction,
+                            DocumentSourceChangeStreamUnwindTransaction::id)
 
 namespace {
 const std::set<std::string> kUnwindExcludedFields = {"clusterTime", "lsid", "txnNumber"};
@@ -543,7 +545,7 @@ void DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::_addAff
         return;
     }
 
-    static const std::vector<std::string> kCollectionField = {"create", "createIndexes"};
+    constexpr std::array<StringData, 2> kCollectionField = {"create"_sd, "createIndexes"_sd};
     const Document& object = doc["o"].getDocument();
     for (const auto& fieldName : kCollectionField) {
         const auto field = object[fieldName];

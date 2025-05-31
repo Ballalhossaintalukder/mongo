@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <cmath>
-#include <cstdint>
-#include <cstring>
-#include <limits>
-#include <memory>
-#include <sstream>
-#include <string>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_depth.h"
@@ -65,6 +55,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/bufreader.h"
 #include "mongo/util/time_support.h"
+
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <variant>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -750,7 +750,7 @@ public:
         append("oid", OID());
         append("true", true);
         append("false", false);
-        append("date", jsTime());
+        append("date", Date_t::now());
         append("null", BSONNULL);
         append("regex", BSONRegEx(".*"));
         append("regexFlags", BSONRegEx(".*", "i"));
@@ -875,7 +875,7 @@ TEST(MetaFields, ChangeStreamControlDocument) {
     // Creating a document from BSON with the flag present should set the flag correctly.
     for (auto value : {true, false}) {
         Document doc = Document::fromBsonWithMetaData(
-            BSON("foo" << "bar" << "$changeStreamControlEvent" << value));
+            BSON("foo" << "bar" << Document::metaFieldChangeStreamControlEvent << value));
 
         // Note: the presence of '$changeStreamControlEvent' is enough to set the equivalent
         // metadata bit. The value that '$changeStreamControlEvent' is set to does not matter.

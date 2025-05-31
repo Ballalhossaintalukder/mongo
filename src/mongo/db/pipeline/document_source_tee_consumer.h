@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <set>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/dependencies.h"
@@ -50,6 +41,16 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <cstddef>
+#include <set>
+#include <string>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 class Document;
@@ -61,7 +62,7 @@ class Value;
  * documents held in a TeeBuffer stage. It will simply open an iterator on the TeeBuffer stage, and
  * answer calls to getNext() by advancing said iterator.
  */
-class DocumentSourceTeeConsumer : public DocumentSource {
+class DocumentSourceTeeConsumer : public DocumentSource, public exec::agg::Stage {
 public:
     static boost::intrusive_ptr<DocumentSourceTeeConsumer> create(
         const boost::intrusive_ptr<ExpressionContext>& expCtx,

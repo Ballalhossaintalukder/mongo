@@ -28,11 +28,12 @@
  */
 
 
-#include <utility>
+#include "mongo/db/catalog/index_catalog.h"
 
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/index_catalog.h"
 #include "mongo/util/assert_util.h"
+
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -100,7 +101,7 @@ StringData toString(IndexBuildMethod method) {
             return "Foreground"_sd;
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083503);
 }
 
 // Returns normalized versions of 'indexSpecs' for the catalog.

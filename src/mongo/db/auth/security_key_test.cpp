@@ -27,8 +27,20 @@
  *    it in the license file.
  */
 
+#include "mongo/db/auth/security_key.h"
+
+#include "mongo/base/status_with.h"
+#include "mongo/base/string_data.h"
+#include "mongo/db/auth/auth_name.h"
+#include "mongo/db/auth/authorization_manager.h"
+#include "mongo/db/auth/cluster_auth_mode.h"
+#include "mongo/db/auth/role_name.h"
+#include "mongo/db/auth/security_file.h"
+#include "mongo/db/auth/user.h"
+#include "mongo/db/auth/user_name.h"
+#include "mongo/unittest/unittest.h"
+
 #include <array>
-#include <boost/filesystem/fstream.hpp>
 #include <cstddef>
 #include <initializer_list>
 #include <memory>
@@ -39,23 +51,12 @@
 
 #include <absl/container/node_hash_map.h>
 #include <boost/filesystem/file_status.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/status_with.h"
-#include "mongo/base/string_data.h"
-#include "mongo/db/auth/auth_name.h"
-#include "mongo/db/auth/authorization_manager.h"
-#include "mongo/db/auth/cluster_auth_mode.h"
-#include "mongo/db/auth/role_name.h"
-#include "mongo/db/auth/security_file.h"
-#include "mongo/db/auth/security_key.h"
-#include "mongo/db/auth/user.h"
-#include "mongo/db/auth/user_name.h"
-#include "mongo/unittest/unittest.h"
 
 namespace mongo {
 namespace {
@@ -69,7 +70,7 @@ public:
         boost::filesystem::ofstream stream(_path, std::ios_base::out | std::ios_base::trunc);
         ASSERT_TRUE(stream.good());
 
-        stream.write(contents.rawData(), contents.size());
+        stream.write(contents.data(), contents.size());
         stream.close();
         if (fixPerms) {
             const auto perms = boost::filesystem::owner_read | boost::filesystem::owner_write;

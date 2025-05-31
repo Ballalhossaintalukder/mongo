@@ -32,21 +32,13 @@
  */
 
 
-#include <boost/cstdint.hpp>
-#include <limits>
-#include <ostream>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/client/dbclient_base.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/client/authenticate.h"
 #include "mongo/client/client_api_version_parameters_gen.h"
-#include "mongo/client/dbclient_base.h"
 #include "mongo/client/dbclient_cursor.h"
 #include "mongo/client/internal_auth.h"
 #include "mongo/config.h"  // IWYU pragma: keep
@@ -80,6 +72,15 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <limits>
+#include <ostream>
+#include <utility>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -275,13 +276,13 @@ bool DBClientBase::runCommand(const DatabaseName& dbName, BSONObj cmd, BSONObj& 
     return std::get<0>(res);
 }
 
-long long DBClientBase::count(const NamespaceStringOrUUID nsOrUuid,
+long long DBClientBase::count(const NamespaceStringOrUUID& nsOrUuid,
                               const BSONObj& query,
                               int options,
                               int limit,
                               int skip,
-                              boost::optional<repl::ReadConcernArgs> readConcern) {
-    auto dbName = nsOrUuid.dbName();
+                              const boost::optional<repl::ReadConcernArgs>& readConcern) {
+    const auto& dbName = nsOrUuid.dbName();
 
     BSONObj cmd = _countCmd(nsOrUuid, query, options, limit, skip, readConcern);
     BSONObj res;
@@ -293,12 +294,12 @@ long long DBClientBase::count(const NamespaceStringOrUUID nsOrUuid,
     return res["n"].numberLong();
 }
 
-BSONObj DBClientBase::_countCmd(const NamespaceStringOrUUID nsOrUuid,
+BSONObj DBClientBase::_countCmd(const NamespaceStringOrUUID& nsOrUuid,
                                 const BSONObj& query,
                                 int options,
                                 int limit,
                                 int skip,
-                                boost::optional<repl::ReadConcernArgs> readConcern) {
+                                const boost::optional<repl::ReadConcernArgs>& readConcern) {
     BSONObjBuilder b;
     if (nsOrUuid.isUUID()) {
         const auto uuid = nsOrUuid.uuid();
@@ -782,7 +783,7 @@ std::list<BSONObj> DBClientBase::_getIndexSpecs(const NamespaceStringOrUUID& nsO
                                                 const BSONObj& cmd,
                                                 int options) {
     list<BSONObj> specs;
-    auto dbName = nsOrUuid.dbName();
+    const auto& dbName = nsOrUuid.dbName();
 
     BSONObj res;
     if (runCommand(dbName, cmd, res, options)) {

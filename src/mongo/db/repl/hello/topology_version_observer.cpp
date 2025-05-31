@@ -34,10 +34,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <mutex>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/client.h"
@@ -47,6 +43,10 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <mutex>
+#include <type_traits>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -267,7 +267,7 @@ void TopologyVersionObserver::_workerThreadBody() noexcept try {
 
         _cacheHelloResponse(opCtxHandle.get(), getTopologyVersion());
     }
-} catch (const ExceptionForCat<ErrorCategory::ShutdownError>& e) {
+} catch (const ExceptionFor<ErrorCategory::ShutdownError>& e) {
     LOGV2_DEBUG(40443, 3, "Observer thread stopped due to shutdown", "error"_attr = e.toString());
 }
 
