@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <deque>
-#include <set>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -50,6 +41,15 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/db/query/util/deferred.h"
 
+#include <deque>
+#include <set>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -60,7 +60,7 @@ namespace mongo {
  * This stage can also be useful to adapt the usual pull-based model of a pipeline to more of a
  * push-based model by pushing documents to feed through the pipeline into this queue stage.
  */
-class DocumentSourceQueue : public DocumentSource {
+class DocumentSourceQueue : public DocumentSource, public exec::agg::Stage {
 public:
     using DeferredQueue = DeferredFn<std::deque<GetNextResult>>;
 

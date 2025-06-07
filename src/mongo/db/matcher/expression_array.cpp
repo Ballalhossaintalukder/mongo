@@ -29,15 +29,15 @@
 
 #include "mongo/db/matcher/expression_array.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/matcher/expression_always_boolean.h"
 #include "mongo/db/query/util/make_data_structure.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -87,12 +87,16 @@ void ElemMatchObjectMatchExpression::appendSerializedRightHandSide(BSONObjBuilde
 }
 
 MatchExpression::ExpressionOptimizerFunc ElemMatchObjectMatchExpression::getOptimizer() const {
-    return [](std::unique_ptr<MatchExpression> expression) {
+    return [](std::unique_ptr<MatchExpression> expression) -> std::unique_ptr<MatchExpression> {
         auto& elemExpression = static_cast<ElemMatchObjectMatchExpression&>(*expression);
         // The Boolean simplifier is disabled since we don't want to simplify sub-expressions, but
         // simplify the whole expression instead.
         elemExpression._sub = MatchExpression::optimize(std::move(elemExpression._sub),
                                                         /* enableSimplification */ false);
+
+        if (elemExpression._sub->isTriviallyFalse()) {
+            return std::make_unique<AlwaysFalseMatchExpression>();
+        }
 
         return expression;
     };

@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -48,6 +43,7 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/add_shard_coordinator.h"
 #include "mongo/db/s/config/sharding_catalog_manager.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_statistics.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
@@ -55,8 +51,12 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/request_types/transition_from_dedicated_config_server_gen.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 

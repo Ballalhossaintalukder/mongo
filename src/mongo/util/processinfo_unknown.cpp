@@ -27,11 +27,10 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
-
-#include <iostream>
 
 #include "mongo/util/processinfo.h"
+
+#include <iostream>
 
 namespace mongo {
 

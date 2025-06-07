@@ -29,12 +29,13 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/shard_role.h"
+
 #include <vector>
 
-#include "mongo/bson/bsonobj.h"
-#include "mongo/db/namespace_string.h"
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -59,7 +60,7 @@ class OperationContext;
  * makes maxChunkSize equal the size of the chunk.
  */
 std::vector<BSONObj> splitVector(OperationContext* opCtx,
-                                 const NamespaceString& nss,
+                                 const CollectionAcquisition& collection,
                                  const BSONObj& keyPattern,
                                  const BSONObj& min,
                                  const BSONObj& max,

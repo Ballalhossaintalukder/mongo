@@ -33,10 +33,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <exception>
-#include <list>
-#include <memory>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
 #include "mongo/db/client.h"
@@ -45,8 +41,6 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/recovery_unit.h"
-#include "mongo/db/storage/recovery_unit_noop.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/logv2/log.h"
 #include "mongo/transport/service_entry_point.h"
@@ -57,6 +51,10 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/system_clock_source.h"
 #include "mongo/util/system_tick_source.h"
+
+#include <exception>
+#include <list>
+#include <memory>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -317,12 +315,6 @@ ServiceContext::UniqueOperationContext ServiceContext::makeOperationContext(Clie
 
     {
         ClientLock lk(client);
-
-        if (!opCtx->recoveryUnit_DO_NOT_USE()) {
-            opCtx->setRecoveryUnit_DO_NOT_USE(std::make_unique<RecoveryUnitNoop>(),
-                                              WriteUnitOfWork::RecoveryUnitState::kNotInUnitOfWork,
-                                              lk);
-        }
 
         // If we have a previous operation context, it's not worth crashing the process in
         // production. However, we do want to prevent it from doing more work and complain

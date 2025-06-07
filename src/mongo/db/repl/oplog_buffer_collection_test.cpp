@@ -28,27 +28,18 @@
  */
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
+#include "mongo/db/repl/oplog_buffer_collection.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/oplog_applier_impl_test_fixture.h"
-#include "mongo/db/repl/oplog_buffer_collection.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
@@ -62,6 +53,15 @@
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace {
 
@@ -87,8 +87,7 @@ void OplogBufferCollectionTest::setUp() {
     ServiceContextMongoDTest::setUp();
     auto service = getServiceContext();
 
-    // AutoGetCollectionForReadCommand requires a valid replication coordinator in order to check
-    // the shard version.
+    // ShardRole requires a valid replication coordinator in order to check the shard version.
     ReplicationCoordinator::set(service, std::make_unique<ReplicationCoordinatorMock>(service));
 
     auto storageInterface = std::make_unique<StorageInterfaceImpl>();
@@ -142,16 +141,26 @@ TEST_F(OplogBufferCollectionTest, GetNamespace) {
     ASSERT_EQUALS(nss, OplogBufferCollection(_storageInterface, nss).getNamespace());
 }
 
+CollectionAcquisition getCollectionForRead(OperationContext* opCtx, const NamespaceString& nss) {
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     mongo::AcquisitionPrerequisites::kRead),
+        MODE_IS);
+}
+
 void testStartupCreatesCollection(OperationContext* opCtx,
                                   StorageInterface* storageInterface,
                                   const NamespaceString& nss) {
     OplogBufferCollection oplogBuffer(storageInterface, nss);
 
     // Collection should not exist until startup() is called.
-    ASSERT_FALSE(AutoGetCollectionForReadCommand(opCtx, nss).getCollection());
+    ASSERT_FALSE(getCollectionForRead(opCtx, nss).exists());
 
     oplogBuffer.startup(opCtx);
-    ASSERT_TRUE(AutoGetCollectionForReadCommand(opCtx, nss).getCollection());
+    ASSERT_TRUE(getCollectionForRead(opCtx, nss).exists());
 }
 
 TEST_F(OplogBufferCollectionTest, StartupWithDefaultNamespaceCreatesCollection) {
@@ -178,9 +187,9 @@ TEST_F(OplogBufferCollectionTest, ShutdownDropsCollection) {
     OplogBufferCollection oplogBuffer(_storageInterface, nss);
 
     oplogBuffer.startup(_opCtx.get());
-    ASSERT_TRUE(AutoGetCollectionForReadCommand(_opCtx.get(), nss).getCollection());
+    ASSERT_TRUE(getCollectionForRead(_opCtx.get(), nss).exists());
     oplogBuffer.shutdown(_opCtx.get());
-    ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx.get(), nss).getCollection());
+    ASSERT_FALSE(getCollectionForRead(_opCtx.get(), nss).exists());
 }
 
 TEST_F(OplogBufferCollectionTest, extractEmbeddedOplogDocumentChangesIdToTimestamp) {
@@ -706,7 +715,7 @@ TEST_F(OplogBufferCollectionTest, ClearClearsCollection) {
     _assertDocumentsInCollectionEquals(_opCtx.get(), nss, {oplog[0], oplog2[0]});
 
     oplogBuffer.clear(_opCtx.get());
-    ASSERT_TRUE(AutoGetCollectionForReadCommand(_opCtx.get(), nss).getCollection());
+    ASSERT_TRUE(getCollectionForRead(_opCtx.get(), nss).exists());
     ASSERT_EQUALS(oplogBuffer.getCount(), 0UL);
     ASSERT_EQUALS(oplogBuffer.getSize(), 0UL);
     ASSERT_EQUALS(Timestamp(), oplogBuffer.getLastPoppedTimestamp_forTest());

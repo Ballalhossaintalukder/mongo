@@ -39,7 +39,7 @@ namespace mongo {
 /**
  * A class to retrieve vector search results from a mongot process.
  */
-class DocumentSourceVectorSearch : public DocumentSource {
+class DocumentSourceVectorSearch : public DocumentSource, public exec::agg::Stage {
 public:
     const BSONObj kSortSpec = BSON("$vectorSearchScore" << -1);
     static constexpr StringData kStageName = "$vectorSearch"_sd;
@@ -59,7 +59,7 @@ public:
     std::list<boost::intrusive_ptr<DocumentSource>> desugar();
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

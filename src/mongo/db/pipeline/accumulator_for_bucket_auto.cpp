@@ -29,15 +29,6 @@
 
 #include "mongo/db/pipeline/accumulator_for_bucket_auto.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <iterator>
-#include <map>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -49,6 +40,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+#include <map>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 using FirstLastSense = AccumulatorFirstLastN::Sense;
@@ -148,7 +149,7 @@ public:
     static constexpr auto kName = "$mergeObjects"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     AccumulatorMergeObjectsForBucketAuto(ExpressionContext* expCtx) : AccumulatorState(expCtx) {
@@ -236,7 +237,7 @@ public:
     static constexpr auto kName = "$push"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     AccumulatorPushForBucketAuto(ExpressionContext* expCtx,
@@ -264,7 +265,7 @@ public:
     static constexpr auto kName = "$concatArrays"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     AccumulatorConcatArraysForBucketAuto(ExpressionContext* expCtx,
@@ -419,7 +420,7 @@ void AccumulatorFirstLastNForBucketAuto<sense, single>::_processValue(const Valu
 
 template <FirstLastSense sense, bool single>
 const char* AccumulatorFirstLastNForBucketAuto<sense, single>::getOpName() const {
-    return AccumulatorFirstLastNForBucketAuto<sense, single>::getName().rawData();
+    return AccumulatorFirstLastNForBucketAuto<sense, single>::getName().data();
 }
 
 template <FirstLastSense sense, bool single>
@@ -493,7 +494,7 @@ void AccumulatorMergeObjectsForBucketAuto::processInternal(const Value& compound
     uassert(8745900,
             str::stream() << "$mergeObjects requires object inputs, but input " << input.toString()
                           << " is of type " << typeName(input.getType()),
-            (input.getType() == BSONType::Object));
+            (input.getType() == BSONType::object));
 
     FieldIterator iter = input.getDocument().fieldIterator();
     while (iter.more()) {
@@ -532,7 +533,7 @@ void AccumulatorPushConcatArraysCommonForBucketAuto::processInternal(const Value
         // If we're merging, we need to take apart the arrays we receive and put their elements into
         // the array we are collecting.  If we didn't, then we'd get an array of arrays, with one
         // array from each merge source.
-        assertMergingInputType(compoundInput, Array);
+        assertMergingInputType(compoundInput, BSONType::array);
 
         const std::vector<Value>& vec = compoundInput.getArray();
         for (auto&& val : vec) {
@@ -582,10 +583,10 @@ AccumulationStatement replaceAccumulationStatementForBucketAuto(ExpressionContex
                                                                 AccumulationStatement&& stmt) {
 
     auto accName = stmt.expr.name;
-    if (!isPositionalAccumulator(accName.rawData())) {
+    if (!isPositionalAccumulator(accName.data())) {
         return std::move(stmt);
     }
-    if (!accName.endsWith("N")) {
+    if (!accName.ends_with("N")) {
         stmt.expr.initializer = ExpressionConstant::create(expCtx, Value(1));
     }
 

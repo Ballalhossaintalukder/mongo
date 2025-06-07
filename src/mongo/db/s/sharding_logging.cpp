@@ -27,7 +27,7 @@
  *    it in the license file.
  */
 
-#include <string>
+#include "mongo/db/s/sharding_logging.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -39,7 +39,7 @@
 #include "mongo/db/client.h"
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/s/sharding_logging.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/executor/network_interface.h"
@@ -47,12 +47,13 @@
 #include "mongo/s/catalog/type_changelog.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 

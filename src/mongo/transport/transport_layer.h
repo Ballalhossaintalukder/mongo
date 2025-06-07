@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <functional>
-#include <memory>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -53,6 +47,13 @@
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #ifdef MONGO_CONFIG_SSL
 #include "mongo/util/net/ssl_manager.h"
@@ -255,7 +256,7 @@ private:
  *
  * All Session objects associated with a reactor MUST be ended before the reactor is stopped.
  */
-class Reactor : public OutOfLineExecutor {
+class Reactor : public OutOfLineExecutor, public std::enable_shared_from_this<Reactor> {
 public:
     Reactor(const Reactor&) = delete;
     Reactor& operator=(const Reactor&) = delete;
@@ -294,6 +295,10 @@ public:
      * executed in a thread calling run().
      */
     virtual std::unique_ptr<ReactorTimer> makeTimer() = 0;
+
+    // sleepFor is implemented so that the reactor is compatible with the AsyncTry exponential
+    // backoff API.
+    ExecutorFuture<void> sleepFor(Milliseconds duration, const CancellationToken& token);
 
     /**
      * Get the time according to the clock driving the event engine of the reactor.

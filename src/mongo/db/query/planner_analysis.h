@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <map>
-#include <memory>
-#include <string>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/query/canonical_query.h"
@@ -42,6 +37,12 @@
 #include "mongo/db/query/index_hint.h"
 #include "mongo/db/query/query_planner_params.h"
 #include "mongo/db/query/query_solution.h"
+
+#include <map>
+#include <memory>
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -174,6 +175,16 @@ public:
         const std::map<NamespaceString, CollectionInfo>& collectionsInfo,
         bool allowDiskUse,
         const CollatorInterface* collator);
+
+    /**
+     * Returns false if there are only indexes that classic might be able to use for the right side
+     * of the lookup but SBE will not because the collation is not compatible to the query
+     * collation. If there are no indexes at all or there is an index that SBE will be able to use
+     * if the lookup is pushed down, it returns true.
+     */
+    static bool canUseIndexForRightSideOfLookupInSBE(const std::string& foreignField,
+                                                     const std::vector<IndexEntry>& fullIndexList,
+                                                     const CollatorInterface* collator);
 
     /**
      * Checks if the foreign collection is eligible for the hash join algorithm. We conservatively

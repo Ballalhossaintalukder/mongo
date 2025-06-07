@@ -28,21 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_set.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/s/query/planner/cluster_aggregate.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -101,7 +87,6 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/query/exec/cluster_cursor_manager.h"
 #include "mongo/s/query/exec/collect_query_stats_mongos.h"
-#include "mongo/s/query/planner/cluster_aggregate.h"
 #include "mongo/s/query/planner/cluster_aggregation_planner.h"
 #include "mongo/s/transaction_router.h"
 #include "mongo/s/type_collection_common_types_gen.h"
@@ -112,6 +97,22 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -263,8 +264,10 @@ void updateHostsTargetedMetrics(OperationContext* opCtx,
             if (nss == executionNss)
                 continue;
 
+            // TODO SERVER-102925 Remove this once the RoutingContext is incorporated into sharded
+            // agg.
             const auto resolvedNsCri =
-                uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, nss));
+                uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, nss));
             if (resolvedNsCri.isSharded()) {
                 std::set<ShardId> shardIdsForNs;
                 // Note: It is fine to use 'getAllShardIds_UNSAFE_NotPointInTime' here because the
@@ -433,7 +436,7 @@ std::unique_ptr<Pipeline, PipelineDeleter> parsePipelineAndRegisterQueryStats(
         // and if none is found, will then check for the view using the expCtx. As such, it's
         // necessary to add the resolved namespace to the expCtx prior to any call to
         // Pipeline::parse().
-        search_helpers::checkAndAddResolvedNamespaceForSearch(
+        search_helpers::checkAndSetViewOnExpCtx(
             expCtx, request.getPipeline(), *resolvedView, nsStruct.requestedNss);
     }
 
@@ -532,7 +535,8 @@ Status ClusterAggregate::runAggregate(OperationContext* opCtx,
     performValidationChecks(opCtx, request, liteParsedPipeline);
 
     const auto isSharded = [](OperationContext* opCtx, const NamespaceString& nss) {
-        auto criSW = getCollectionRoutingInfoForTxnCmd(opCtx, nss);
+        // TODO SERVER-102925 Remove this once the RoutingContext is incorporated into sharded agg.
+        auto criSW = getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, nss);
 
         // If the ns is not found we assume its unsharded. It might be implicitly created as
         // unsharded if this query does writes. An existing collection could also be concurrently
@@ -558,7 +562,7 @@ Status ClusterAggregate::runAggregate(OperationContext* opCtx,
                                               : PipelineDataSource::kNormal;
 
     // If the routing table is not already taken by the higher level, fill it now.
-    if (!cri) {
+    if (!cri && !generatesOwnDataOnce) {
         // If the routing table is valid, we obtain a reference to it. If the table is not valid,
         // then either the database does not exist, or there are no shards in the cluster. In the
         // latter case, we always return an empty cursor. In the former case, if the requested
@@ -586,7 +590,7 @@ Status ClusterAggregate::runAggregate(OperationContext* opCtx,
 
         if (executionNsRoutingInfoStatus.isOK()) {
             cri = executionNsRoutingInfoStatus.getValue();
-        } else if (!((hasChangeStream || generatesOwnDataOnce) &&
+        } else if (!(hasChangeStream &&
                      executionNsRoutingInfoStatus == ErrorCodes::NamespaceNotFound)) {
             // To achieve parity with mongod-style responses, parse and validate the query
             // even though the namespace is not found.
@@ -617,6 +621,12 @@ Status ClusterAggregate::runAggregate(OperationContext* opCtx,
             return Status::OK();
         }
     }
+
+    // We should never acquire a routing table for a collectionless aggregate, as the first stage
+    // generates its own data and has the pipeline has no shards part to target.
+    tassert(10337900,
+            "Cannot acquire a routing table for collectionless aggregate",
+            !(cri && generatesOwnDataOnce));
 
     // This is used later on as well.
     const auto routingTableIsAvailable = cri && cri->hasRoutingTable();

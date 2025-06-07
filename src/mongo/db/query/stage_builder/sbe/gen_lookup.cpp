@@ -28,20 +28,6 @@
  */
 
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include <absl/container/flat_hash_set.h>
-#include <absl/container/inlined_vector.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
@@ -77,6 +63,20 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_set.h>
+#include <absl/container/inlined_vector.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -629,8 +629,8 @@ std::pair<SbSlot /* matched docs */, SbStage> buildForeignMatches(SbSlot localKe
             auto innerExpr =
                 b.makeIf(b.makeFunction("typeMatch"_sd,
                                         var,
-                                        b.makeInt32Constant(getBSONTypeMask(BSONType::Array) |
-                                                            getBSONTypeMask(BSONType::Object))),
+                                        b.makeInt32Constant(getBSONTypeMask(BSONType::array) |
+                                                            getBSONTypeMask(BSONType::object))),
                          var,
                          b.makeNothingConstant());
 
@@ -1367,8 +1367,9 @@ std::pair<SbStage, PlanStageSlots> SlotBasedStageBuilder::buildEqLookupUnwind(
         // foreign collection in DocumentSourceLookup::doOptimizeAt() to avoid ever absorbing the
         // $unwind, as that computation happens later and requires several inputs that are not
         // available at the time of doOptimizeAt().)
-        return buildOnlyUnwind(&(eqLookupUnwindNode->unwindNode),
+        return buildOnlyUnwind(eqLookupUnwindNode->unwindSpec,
                                reqs,
+                               eqLookupUnwindNode->nodeId(),
                                foreignStage,
                                localOutputs,
                                localDocSlot,

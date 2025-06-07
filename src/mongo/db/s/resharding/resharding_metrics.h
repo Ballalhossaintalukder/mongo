@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <variant>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -43,13 +36,6 @@
 #include "mongo/db/s/metrics/metrics_state_holder.h"
 #include "mongo/db/s/metrics/sharding_data_transform_cumulative_metrics.h"
 #include "mongo/db/s/metrics/sharding_data_transform_instance_metrics.h"
-#include "mongo/db/s/metrics/with_oplog_application_count_metrics.h"
-#include "mongo/db/s/metrics/with_oplog_application_count_metrics_also_updating_cumulative_metrics.h"
-#include "mongo/db/s/metrics/with_oplog_application_latency_metrics_interface_updating_cumulative_metrics.h"
-#include "mongo/db/s/metrics/with_phase_duration_management.h"
-#include "mongo/db/s/metrics/with_state_management_for_cumulative_metrics.h"
-#include "mongo/db/s/metrics/with_state_management_for_instance_metrics.h"
-#include "mongo/db/s/metrics/with_typed_cumulative_metrics_provider.h"
 #include "mongo/db/s/resharding/coordinator_document_gen.h"
 #include "mongo/db/s/resharding/recipient_document_gen.h"
 #include "mongo/db/s/resharding/resharding_cumulative_metrics.h"
@@ -64,31 +50,20 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <variant>
+
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 
-namespace resharding_metrics {
-
-enum TimedPhase { kCloning, kApplying, kCriticalSection, kBuildingIndex };
-constexpr auto kNumTimedPhase = 4;
-
-namespace detail {
-using PartialBase1 = WithTypedCumulativeMetricsProvider<ShardingDataTransformInstanceMetrics,
-                                                        ReshardingCumulativeMetrics>;
-using PartialBase2 =
-    WithStateManagementForInstanceMetrics<PartialBase1, ReshardingCumulativeMetrics::AnyState>;
-
-using PartialBaseFinal = WithPhaseDurationManagement<PartialBase2, TimedPhase, kNumTimedPhase>;
-
-using Base = WithOplogApplicationLatencyMetricsInterfaceUpdatingCumulativeMetrics<
-    WithOplogApplicationCountMetricsAlsoUpdatingCumulativeMetrics<
-        WithOplogApplicationCountMetrics<detail::PartialBaseFinal>>>;
-}  // namespace detail
-}  // namespace resharding_metrics
-
-class ReshardingMetrics : public resharding_metrics::detail::Base {
+class ReshardingMetrics : public ShardingDataTransformInstanceMetrics {
 public:
     using State = ReshardingCumulativeMetrics::AnyState;
-    using Base = resharding_metrics::detail::Base;
+    using Base = ShardingDataTransformInstanceMetrics;
     using TimedPhase = resharding_metrics::TimedPhase;
 
     struct ExternallyTrackedRecipientFields {

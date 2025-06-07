@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <set>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -53,6 +45,14 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/assert_util.h"
 
+#include <set>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -67,7 +67,7 @@ public:
 
     const char* getSourceName() const final {
         // This is used in error reporting.
-        return DocumentSourceChangeStreamCheckInvalidate::kStageName.rawData();
+        return DocumentSourceChangeStreamCheckInvalidate::kStageName.data();
     }
 
     StageConstraints constraints(Pipeline::SplitState pipeState) const final {
@@ -96,6 +96,12 @@ public:
     static boost::intrusive_ptr<DocumentSourceChangeStreamCheckInvalidate> create(
         const boost::intrusive_ptr<ExpressionContext>& expCtx,
         const DocumentSourceChangeStreamSpec& spec);
+
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
+    }
 
 private:
     /**

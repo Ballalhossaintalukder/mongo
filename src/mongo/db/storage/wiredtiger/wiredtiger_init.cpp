@@ -28,13 +28,14 @@
  */
 
 
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/optional/optional.hpp>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
+
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/optional/optional.hpp>
 
 #if defined(__linux__)
 #include <sys/statfs.h>  // IWYU pragma: keep
@@ -55,6 +56,8 @@
 #include "mongo/db/storage/storage_engine_lock_file.h"
 #include "mongo/db/storage/storage_engine_metadata.h"
 #include "mongo/db/storage/storage_options.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
+#include "mongo/db/storage/wiredtiger/spill_wiredtiger_kv_engine.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_global_options.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_index.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
@@ -83,7 +86,10 @@ public:
 
     std::unique_ptr<StorageEngine> create(OperationContext* opCtx,
                                           const StorageGlobalParams& params,
-                                          const StorageEngineLockFile* lockFile) const override {
+                                          const StorageEngineLockFile* lockFile,
+                                          bool isReplSet,
+                                          bool shouldRecoverFromOplogAsStandalone,
+                                          bool inStandaloneMode) const override {
         if (lockFile && lockFile->createdByUncleanShutdown()) {
             LOGV2_WARNING(22302, "Recovering data from the last clean checkpoint.");
 
@@ -120,7 +126,7 @@ public:
         }
 #endif
 
-        size_t cacheMB = WiredTigerUtil::getCacheSizeMB(wiredTigerGlobalOptions.cacheSizeGB);
+        size_t cacheMB = WiredTigerUtil::getMainCacheSizeMB(wiredTigerGlobalOptions.cacheSizeGB);
         const double memoryThresholdPercentage = 0.8;
         ProcessInfo p;
         if (p.supported()) {
@@ -143,10 +149,37 @@ public:
                                                  params.dbpath,
                                                  getGlobalServiceContext()->getFastClockSource(),
                                                  std::move(wtConfig),
-                                                 params.inMemory,
-                                                 params.repair);
+                                                 params.repair,
+                                                 isReplSet,
+                                                 shouldRecoverFromOplogAsStandalone,
+                                                 inStandaloneMode);
         kv->setRecordStoreExtraOptions(wiredTigerGlobalOptions.collectionConfig);
         kv->setSortedDataInterfaceExtraOptions(wiredTigerGlobalOptions.indexConfig);
+
+        std::unique_ptr<SpillWiredTigerKVEngine> spillWiredTigerKVEngine;
+        if (feature_flags::gFeatureFlagCreateSpillKVEngine.isEnabled() && !gDisableSpillKVEngine) {
+            boost::system::error_code ec;
+            boost::filesystem::remove_all(params.getSpillDbPath(), ec);
+            if (ec) {
+                LOGV2_WARNING(10380300,
+                              "Failed to clear dbpath of the internal WiredTiger instance",
+                              "error"_attr = ec.message());
+            }
+
+            WiredTigerKVEngineBase::WiredTigerConfig wtConfig =
+                getWiredTigerConfigFromStartupOptions(true /* usingSpillWiredTigerKVEngine */);
+            wtConfig.cacheSizeMB =
+                WiredTigerUtil::getSpillCacheSizeMB(spillWiredTigerGlobalOptions.cacheSizeGB);
+            wtConfig.inMemory = false;
+            wtConfig.logEnabled = false;
+            wtConfig.prefetchEnabled = false;
+            wtConfig.restoreEnabled = false;
+            spillWiredTigerKVEngine = std::make_unique<SpillWiredTigerKVEngine>(
+                getCanonicalName().toString(),
+                params.getSpillDbPath(),
+                getGlobalServiceContext()->getFastClockSource(),
+                std::move(wtConfig));
+        }
 
         // We're using the WT engine; register the ServerStatusSection for it.
         // Only do so once; even if we re-create the StorageEngine for FCBIS. The section is
@@ -163,7 +196,8 @@ public:
         options.forRepair = params.repair;
         options.forRestore = params.restore;
         options.lockFileCreatedByUncleanShutdown = lockFile && lockFile->createdByUncleanShutdown();
-        return std::make_unique<StorageEngineImpl>(opCtx, std::move(kv), options);
+        return std::make_unique<StorageEngineImpl>(
+            opCtx, std::move(kv), std::move(spillWiredTigerKVEngine), options);
     }
 
     StringData getCanonicalName() const override {

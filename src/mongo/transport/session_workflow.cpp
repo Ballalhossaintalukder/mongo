@@ -28,18 +28,7 @@
  */
 
 
-#include <array>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <memory>
-#include <ratio>
-#include <string>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/transport/session_workflow.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -57,6 +46,7 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/client_cursor/cursor_id.h"
 #include "mongo/db/query/client_cursor/kill_cursors_gen.h"
+#include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/traffic_recorder.h"
@@ -73,9 +63,10 @@
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/transport/service_executor.h"
 #include "mongo/transport/session.h"
+#include "mongo/transport/session_establishment_rate_limiter.h"
 #include "mongo/transport/session_manager.h"
-#include "mongo/transport/session_workflow.h"
 #include "mongo/transport/transport_layer_manager.h"
+#include "mongo/transport/transport_options_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
@@ -87,6 +78,19 @@
 #include "mongo/util/net/ssl_peer_info.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <array>
+#include <cstddef>
+#include <memory>
+#include <ratio>
+#include <string>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kExecutor
 
@@ -266,8 +270,8 @@ public:
     void sent(Session& session) {
         _t->notify(TimeSplitId::sentResponse);
         IngressHandshakeMetrics::get(session).onResponseSent(
-            duration_cast<Milliseconds>(*_t->getSplitInterval(IntervalId::processWork)),
-            duration_cast<Milliseconds>(*_t->getSplitInterval(IntervalId::sendResponse)));
+            *_t->getSplitInterval(IntervalId::processWork),
+            *_t->getSplitInterval(IntervalId::sendResponse));
     }
     void yieldedAfterSend() {
         _t->notify(TimeSplitId::yieldedAfterSend);
@@ -545,6 +549,8 @@ private:
     AtomicWord<bool> _isTerminated{false};
     ClientStrandPtr _clientStrand;
 
+    bool _inFirstIteration = true;
+
     std::unique_ptr<WorkItem> _work;
     std::unique_ptr<WorkItem> _nextWork; /**< created by exhaust responses */
     boost::optional<IterationFrame> _iterationFrame;
@@ -799,6 +805,20 @@ void SessionWorkflow::Impl::_scheduleIteration() try {
         }
 
         try {
+            // If this is the first iteration of the session workflow, we must call into
+            // "throttleIfNeeded" to respect connection establishment rate limits.
+            if (MONGO_unlikely(_inFirstIteration)) {
+                if (gFeatureFlagRateLimitIngressConnectionEstablishment.isEnabled() &&
+                    gIngressConnectionEstablishmentRateLimiterEnabled.load()) {
+                    uassertStatusOK(session()
+                                        ->getTransportLayer()
+                                        ->getSessionManager()
+                                        ->getSessionEstablishmentRateLimiter()
+                                        .throttleIfNeeded(client()));
+                }
+                _inFirstIteration = false;
+            }
+
             // All available service executors use dedicated threads, so it's okay to
             // run eager futures in an ordinary loop to bypass scheduler overhead. Loop
             // while we have `_nextWork` in case there have been synthetic exhaust

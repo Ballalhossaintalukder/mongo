@@ -29,22 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -63,6 +47,7 @@
 #include "mongo/db/repl/hello/hello_response.h"
 #include "mongo/db/repl/initial_sync/initial_syncer.h"
 #include "mongo/db/repl/initial_sync/initial_syncer_interface.h"
+#include "mongo/db/repl/intent_registry.h"
 #include "mongo/db/repl/last_vote.h"
 #include "mongo/db/repl/member_config.h"
 #include "mongo/db/repl/member_data.h"
@@ -112,6 +97,23 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/versioned_value.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 
@@ -1350,6 +1352,9 @@ private:
     void _handleHeartbeatResponse(const executor::TaskExecutor::RemoteCommandCallbackArgs& cbData,
                                   const std::string& replSetName);
 
+    rss::consensus::ReplicationStateTransitionGuard _killConflictingOperations(
+        rss::consensus::IntentRegistry::InterruptionType interrupt);
+
     void _trackHeartbeatHandle(WithLock,
                                const StatusWith<executor::TaskExecutor::CallbackHandle>& handle,
                                HeartbeatState hbState,
@@ -2095,6 +2100,7 @@ private:
     // from an unstable checkpoint.
     AtomicWord<bool> _isDataConsistent{false};
 
+    rss::consensus::IntentRegistry& _intentRegistry;
     /**
      * Manages tracking for whether this node is able to serve (non-stale) majority reads with
      * primary read preference.

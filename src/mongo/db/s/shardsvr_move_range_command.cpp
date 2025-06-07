@@ -28,14 +28,6 @@
  */
 
 
-#include <boost/smart_ptr.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/client/read_preference.h"
@@ -56,6 +48,7 @@
 #include "mongo/db/s/active_migrations_registry.h"
 #include "mongo/db/s/migration_source_manager.h"
 #include "mongo/db/s/sharding_ddl_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_statistics.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
@@ -68,12 +61,19 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/request_types/move_range_request_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/future.h"
 #include "mongo/util/future_impl.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 

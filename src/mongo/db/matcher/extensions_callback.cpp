@@ -27,26 +27,27 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <string>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/matcher/extensions_callback.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
-#include "mongo/db/matcher/extensions_callback.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
 StatusWith<TextMatchExpressionBase::TextParams>
 ExtensionsCallback::extractTextMatchExpressionParams(BSONElement text) {
     TextMatchExpressionBase::TextParams params;
-    if (text.type() != Object) {
+    if (text.type() != BSONType::object) {
         return {ErrorCodes::BadValue, "$text expects an object"};
     }
     BSONObj queryObj = text.Obj();
@@ -118,11 +119,11 @@ ExtensionsCallback::extractWhereMatchExpressionParams(BSONElement where) {
     WhereMatchExpressionBase::WhereParams params;
 
     switch (where.type()) {
-        case mongo::String:
-        case mongo::Code:
+        case BSONType::string:
+        case BSONType::code:
             params.code = where._asCode();
             break;
-        case mongo::CodeWScope:
+        case BSONType::codeWScope:
             uasserted(4649201, "$where no longer supports deprecated BSON type CodeWScope");
             break;
         default:

@@ -35,19 +35,6 @@
 #include <boost/smart_ptr.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstdint>
-#include <iomanip>
-#include <istream>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -108,6 +95,7 @@
 #include "mongo/db/s/sharding_config_server_parameters_gen.h"
 #include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_logging.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_util.h"
 #include "mongo/db/s/topology_change_helpers.h"
 #include "mongo/db/s/user_writes_critical_section_document_gen.h"
@@ -147,7 +135,6 @@
 #include "mongo/s/request_types/shardsvr_join_migrations_request_gen.h"
 #include "mongo/s/sharding_cluster_parameters_gen.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
@@ -165,6 +152,19 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <iomanip>
+#include <istream>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 

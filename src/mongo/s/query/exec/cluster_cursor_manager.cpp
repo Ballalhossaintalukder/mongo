@@ -28,32 +28,35 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <absl/meta/type_traits.h>
-#include <boost/cstdint.hpp>
-#include <boost/optional.hpp>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/query/exec/cluster_cursor_manager.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/cursor_in_use_info.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/query/client_cursor/generic_cursor_utils.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/session/kill_sessions_common.h"
 #include "mongo/db/session/logical_session_cache.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
-#include "mongo/s/query/exec/cluster_cursor_manager.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
+
+#include <type_traits>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <absl/meta/type_traits.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -71,9 +74,13 @@ Status cursorNotFoundStatus(CursorId cursorId) {
             str::stream() << "Cursor not found (id: " << cursorId << ")."};
 }
 
-Status cursorInUseStatus(CursorId cursorId) {
-    return {ErrorCodes::CursorInUse,
-            str::stream() << "Cursor already in use (id: " << cursorId << ")."};
+Status cursorInUseStatus(CursorId cursorId, StringData commandUsingCursor) {
+    std::string reason = str::stream() << "Cursor already in use (id: " << cursorId << ").";
+    if (!commandUsingCursor.empty()) {
+        return {CursorInUseInfo(commandUsingCursor), std::move(reason)};
+    } else {
+        return {ErrorCodes::CursorInUse, std::move(reason)};
+    }
 }
 
 }  // namespace
@@ -201,6 +208,8 @@ StatusWith<CursorId> ClusterCursorManager::registerCursor(
         [&](CursorId cursorId) -> bool { return _cursorEntryMap.count(cursorId) == 0; },
         _pseudoRandom);
 
+    cursor->setMemoryUsageTracker(OperationMemoryUsageTracker::moveFromOpCtxIfAvailable(opCtx));
+
     // Create a new CursorEntry and register it in the CursorEntryContainer's map.
     auto emplaceResult = _cursorEntryMap.emplace(cursorId,
                                                  CursorEntry(std::move(cursor),
@@ -220,7 +229,8 @@ StatusWith<ClusterCursorManager::PinnedCursor> ClusterCursorManager::checkOutCur
     CursorId cursorId,
     OperationContext* opCtx,
     AuthzCheckFn authChecker,
-    AuthCheck checkSessionAuth) {
+    AuthCheck checkSessionAuth,
+    StringData commandName) {
 
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
@@ -249,10 +259,10 @@ StatusWith<ClusterCursorManager::PinnedCursor> ClusterCursorManager::checkOutCur
     }
 
     if (entry->getOperationUsingCursor()) {
-        return cursorInUseStatus(cursorId);
+        return cursorInUseStatus(cursorId, entry->getCommandUsingCursor());
     }
 
-    auto cursorGuard = entry->releaseCursor(opCtx);
+    auto cursorGuard = entry->releaseCursor(opCtx, commandName);
 
     // We use pinning of a cursor as a proxy for active, user-initiated use of a cursor. Therefore,
     // we pass down to the logical session cache and vivify the record (updating last use).
@@ -268,11 +278,13 @@ StatusWith<ClusterCursorManager::PinnedCursor> ClusterCursorManager::checkOutCur
     CurOp::get(opCtx)->debug().planCacheShapeHash = cursorGuard->getPlanCacheShapeHash();
     CurOp::get(opCtx)->debug().queryStatsInfo.keyHash = cursorGuard->getQueryStatsKeyHash();
 
+    OperationMemoryUsageTracker::moveToOpCtxIfAvailable(opCtx,
+                                                        cursorGuard->releaseMemoryUsageTracker());
     return PinnedCursor(this, std::move(cursorGuard), entry->getNamespace(), cursorId);
 }
 
 StatusWith<ClusterCursorManager::PinnedCursor> ClusterCursorManager::checkOutCursorNoAuthCheck(
-    CursorId cursorId, OperationContext* opCtx) {
+    CursorId cursorId, OperationContext* opCtx, StringData commandName) {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
     if (_inShutdown) {
@@ -286,11 +298,13 @@ StatusWith<ClusterCursorManager::PinnedCursor> ClusterCursorManager::checkOutCur
     }
 
     if (entry->getOperationUsingCursor()) {
-        return cursorInUseStatus(cursorId);
+        return cursorInUseStatus(cursorId, entry->getCommandUsingCursor());
     }
 
-    auto cursorGuard = entry->releaseCursor(opCtx);
+    auto cursorGuard = entry->releaseCursor(opCtx, commandName);
     cursorGuard->reattachToOperationContext(opCtx);
+    OperationMemoryUsageTracker::moveToOpCtxIfAvailable(opCtx,
+                                                        cursorGuard->releaseMemoryUsageTracker());
 
     return PinnedCursor(this, std::move(cursorGuard), entry->getNamespace(), cursorId);
 }
@@ -322,6 +336,11 @@ void ClusterCursorManager::checkInCursor(std::unique_ptr<ClusterClientCursor> cu
     if (!isReleaseMemory) {
         entry->setLastActive(now);
     }
+
+    if (cursorState == CursorState::NotExhausted && !killPending) {
+        cursor->setMemoryUsageTracker(OperationMemoryUsageTracker::moveFromOpCtxIfAvailable(opCtx));
+    }
+
     entry->returnCursor(std::move(cursor));
 
     if (cursorState == CursorState::NotExhausted && !killPending) {
@@ -626,7 +645,7 @@ StatusWith<ClusterClientCursorGuard> ClusterCursorManager::_detachCursor(WithLoc
     }
 
     if (entry->getOperationUsingCursor()) {
-        return cursorInUseStatus(cursorId);
+        return cursorInUseStatus(cursorId, entry->getCommandUsingCursor());
     }
 
     // Transfer ownership away from the entry.

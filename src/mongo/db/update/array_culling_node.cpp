@@ -27,14 +27,14 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-
+#include "mongo/db/update/array_culling_node.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/update/array_culling_node.h"
 #include "mongo/db/update/storage_validation.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstddef>
 
 namespace mongo {
 
@@ -43,7 +43,7 @@ ModifierNode::ModifyResult ArrayCullingNode::updateExistingElement(
     invariant(element->ok());
     uassert(ErrorCodes::BadValue,
             "Cannot apply $pull to a non-array value",
-            element->getType() == mongo::Array);
+            element->getType() == BSONType::array);
 
     size_t numRemoved = 0;
     auto cursor = element->leftChild();

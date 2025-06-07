@@ -29,8 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_internal_shardserver_info.h"
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
@@ -39,6 +37,8 @@
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -53,7 +53,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalShardServerInfo::crea
     uassert(ErrorCodes::TypeMismatch,
             str::stream() << "$_internalShardServerInfo must take an empty object but found: "
                           << elem,
-            elem.type() == BSONType::Object && elem.Obj().isEmpty());
+            elem.type() == BSONType::object && elem.Obj().isEmpty());
 
     return new DocumentSourceInternalShardServerInfo(expCtx);
 }

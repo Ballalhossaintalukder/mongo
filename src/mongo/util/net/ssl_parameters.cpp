@@ -28,8 +28,6 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
 #include "mongo/util/net/ssl_parameters.h"
 
 #include "mongo/bson/json.h"
@@ -70,19 +68,12 @@ StatusWith<SSLParams::SSLModes> checkTLSModeTransition(T modeToString,
     }
 }
 
-std::once_flag warnForSSLMode;
-
 }  // namespace
 
 void SSLModeServerParameter::append(OperationContext*,
                                     BSONObjBuilder* builder,
                                     StringData fieldName,
                                     const boost::optional<TenantId>&) {
-    std::call_once(warnForSSLMode, [] {
-        LOGV2_WARNING(
-            23803, "Use of deprecated server parameter 'sslMode', please use 'tlsMode' instead.");
-    });
-
     builder->append(fieldName, SSLParams::sslModeFormat(sslGlobalParams.sslMode.load()));
 }
 
@@ -96,11 +87,6 @@ void TLSModeServerParameter::append(OperationContext*,
 }
 
 Status SSLModeServerParameter::setFromString(StringData strMode, const boost::optional<TenantId>&) {
-    std::call_once(warnForSSLMode, [] {
-        LOGV2_WARNING(
-            23804, "Use of deprecated server parameter 'sslMode', please use 'tlsMode' instead.");
-    });
-
     auto swNewMode = checkTLSModeTransition(
         SSLParams::sslModeFormat, SSLParams::sslModeParse, "sslMode", strMode);
     if (!swNewMode.isOK()) {
@@ -179,13 +165,13 @@ void TLSCATrustsSetParameter::append(OperationContext*,
  */
 Status TLSCATrustsSetParameter::set(const BSONElement& element,
                                     const boost::optional<TenantId>&) try {
-    if ((element.type() != Object) || !element.Obj().couldBeArray()) {
+    if ((element.type() != BSONType::object) || !element.Obj().couldBeArray()) {
         return {ErrorCodes::BadValue, "Value must be an array"};
     }
 
     SSLParams::TLSCATrusts trusts;
     for (const auto& trustElement : BSONArray(element.Obj())) {
-        if (trustElement.type() != Object) {
+        if (trustElement.type() != BSONType::object) {
             return {ErrorCodes::BadValue, "Value must be an array of trust definitions"};
         }
 
@@ -233,7 +219,7 @@ void ClusterAuthX509OverrideParameter::append(OperationContext* opCtx,
 
 Status ClusterAuthX509OverrideParameter::set(const BSONElement& element,
                                              const boost::optional<TenantId>&) try {
-    if ((element.type() != Object)) {
+    if ((element.type() != BSONType::object)) {
         return {ErrorCodes::BadValue, "Value must be an object"};
     }
 

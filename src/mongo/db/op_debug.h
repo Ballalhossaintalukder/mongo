@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <boost/optional/optional.hpp>
-#include <map>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/concurrency/flow_control_ticketholder.h"
@@ -46,10 +39,18 @@
 #include "mongo/db/query/plan_summary_stats.h"
 #include "mongo/db/query/query_stats/data_bearing_node_metrics.h"
 #include "mongo/db/query/query_stats/key.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
+#include "mongo/db/storage/storage_metrics.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/rpc/message.h"
 #include "mongo/util/duration.h"
+
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -231,7 +232,6 @@ public:
      */
     void report(OperationContext* opCtx,
                 const SingleThreadedLockStats* lockStats,
-                const ResourceConsumption::OperationMetrics* operationMetrics,
                 const SingleThreadedStorageMetrics& storageMetrics,
                 long long prepareReadConflicts,
                 logv2::DynamicAttributes* pAttrs) const;

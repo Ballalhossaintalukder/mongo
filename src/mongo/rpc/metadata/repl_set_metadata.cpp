@@ -29,10 +29,6 @@
 
 #include "mongo/rpc/metadata/repl_set_metadata.h"
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -41,6 +37,10 @@
 #include "mongo/db/repl/bson_extract_optime.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace rpc {
@@ -86,7 +86,7 @@ StatusWith<ReplSetMetadata> ReplSetMetadata::readFromMetadata(const BSONObj& met
     BSONElement replMetadataElement;
 
     Status status = bsonExtractTypedField(
-        metadataObj, rpc::kReplSetMetadataFieldName, Object, &replMetadataElement);
+        metadataObj, rpc::kReplSetMetadataFieldName, BSONType::object, &replMetadataElement);
     if (!status.isOK())
         return status;
     BSONObj replMetadataObj = replMetadataElement.Obj();
@@ -143,7 +143,7 @@ StatusWith<ReplSetMetadata> ReplSetMetadata::readFromMetadata(const BSONObj& met
 
     BSONElement wallClockTimeElement;
     status = bsonExtractTypedField(
-        replMetadataObj, kLastCommittedWallFieldName, BSONType::Date, &wallClockTimeElement);
+        replMetadataObj, kLastCommittedWallFieldName, BSONType::date, &wallClockTimeElement);
 
     if (!status.isOK()) {
         return status;

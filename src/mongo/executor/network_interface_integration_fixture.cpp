@@ -29,13 +29,7 @@
 
 
 // IWYU pragma: no_include "cxxabi.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
+#include "mongo/executor/network_interface_integration_fixture.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -44,7 +38,6 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/wire_version.h"
 #include "mongo/executor/network_interface_factory.h"
-#include "mongo/executor/network_interface_integration_fixture.h"
 #include "mongo/executor/remote_command_response.h"
 #include "mongo/executor/task_executor.h"
 #include "mongo/logv2/log.h"
@@ -57,6 +50,15 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
 
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
 
@@ -67,10 +69,12 @@ MONGO_FAIL_POINT_DEFINE(networkInterfaceFixtureHangOnCompletion);
 
 std::unique_ptr<NetworkInterface> NetworkInterfaceIntegrationFixture::_makeNet(
     std::string instanceName, transport::TransportProtocol protocol) {
+
+    auto opts = _opts ? *_opts : makeDefaultConnectionPoolOptions();
+
     switch (protocol) {
         case transport::TransportProtocol::MongoRPC:
-            return makeNetworkInterface(
-                instanceName, nullptr, nullptr, makeDefaultConnectionPoolOptions());
+            return makeNetworkInterface(instanceName, nullptr, nullptr, opts);
         case transport::TransportProtocol::GRPC:
 #ifdef MONGO_CONFIG_GRPC
             return makeNetworkInterfaceGRPC(instanceName);
@@ -125,8 +129,13 @@ void NetworkInterfaceIntegrationFixture::startNet() {
 
 void NetworkInterfaceIntegrationFixture::tearDown() {
     // Network interface will only shutdown once because of an internal shutdown guard
-    _net->shutdown();
-    _fixtureNet->shutdown();
+    if (_net) {
+        _net->shutdown();
+    }
+
+    if (_fixtureNet) {
+        _fixtureNet->shutdown();
+    }
 
     auto lk = stdx::unique_lock(_mutex);
     auto checkIdle = [&]() {

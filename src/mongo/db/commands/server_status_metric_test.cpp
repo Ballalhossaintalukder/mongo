@@ -29,8 +29,6 @@
 
 #include "mongo/db/commands/server_status_metric.h"
 
-#include <fmt/format.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/json.h"
@@ -38,13 +36,15 @@
 #include "mongo/logv2/log.h"
 #include "mongo/unittest/unittest.h"
 
+#include <fmt/format.h>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 namespace mongo {
 namespace {
 
 bool falseNodesPredicate(const BSONElement& el) {
-    return el.type() == Bool && !el.boolean();
+    return el.type() == BSONType::boolean && !el.boolean();
 }
 
 template <typename F>
@@ -102,7 +102,7 @@ protected:
         for (auto&& el : metrics) {
             StringData key = el.fieldNameStringData();
             switch (el.type()) {
-                case Object:
+                case BSONType::object:
                     for (auto&& v : extractTreeNodes(el.Obj(), pred))
                         nodes.push_back(fmt::format("{}.{}", key, v));
                     break;

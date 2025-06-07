@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <variant>
-
 #include "mongo/db/exec/express/plan_executor_express.h"
 
 #include "mongo/base/error_codes.h"
@@ -67,9 +60,18 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/shard_role.h"
 #include "mongo/db/stats/counters.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -251,7 +253,7 @@ public:
         _isDisposed = true;
     }
 
-    void forceSpill() override {
+    void forceSpill(PlanYieldPolicy* yieldPolicy) override {
         LOGV2_ERROR(9819200, "An attempt was made to force PlanExecutorExpress to spill.");
     }
 
@@ -286,12 +288,6 @@ public:
 
     const PlanExplainer& getPlanExplainer() const override {
         return _planExplainer;
-    }
-
-    void enableSaveRecoveryUnitAcrossCommandsIfSupported() override {}
-
-    bool isSaveRecoveryUnitAcrossCommandsEnabled() const override {
-        return false;
     }
 
     boost::optional<StringData> getExecutorType() const override {
@@ -832,8 +828,8 @@ boost::optional<IndexEntry> getIndexForExpressEquality(const CanonicalQuery& cq,
     auto cmpExpr = dynamic_cast<ComparisonMatchExpressionBase*>(cq.getPrimaryMatchExpression());
     tassert(10269304, "Invalid match expression", cmpExpr);
     const auto& data = cmpExpr->getData();
-    const bool collationRelevant = data.type() == BSONType::String ||
-        data.type() == BSONType::Object || data.type() == BSONType::Array;
+    const bool collationRelevant = data.type() == BSONType::string ||
+        data.type() == BSONType::object || data.type() == BSONType::array;
 
     RelevantFieldIndexMap fields;
     QueryPlannerIXSelect::getFields(cq.getPrimaryMatchExpression(), &fields);

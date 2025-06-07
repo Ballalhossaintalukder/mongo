@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <cstdint>
-#include <fmt/format.h>
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -47,13 +37,23 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/platform/atomic_word.h"
-#include "mongo/platform/basic.h"
 #include "mongo/rpc/message.h"
 #include "mongo/util/aligned.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -663,6 +663,14 @@ public:
         classicReplannedPlanIsCachedPlan.incrementRelaxed();
     }
 
+    void incrementClassicCachedPlansEvictedCounter(size_t increment) {
+        classicCachedPlansEvicted.incrementRelaxed(increment);
+    }
+
+    void incrementClassicInactiveCachedPlansReplacedCounter() {
+        classicInactiveCachedPlansReplaced.incrementRelaxed();
+    }
+
     void incrementSbeHitsCounter() {
         sbeHits.incrementRelaxed();
     }
@@ -683,6 +691,14 @@ public:
         sbeReplannedPlanIsCachedPlan.incrementRelaxed();
     }
 
+    void incrementSbeCachedPlansEvictedCounter(size_t increment) {
+        sbeCachedPlansEvicted.incrementRelaxed(increment);
+    }
+
+    void incrementSbeInactiveCachedPlansReplacedCounter() {
+        sbeInactiveCachedPlansReplaced.incrementRelaxed();
+    }
+
 private:
     static Counter64& _makeMetric(std::string name) {
         return *MetricBuilder<Counter64>("query.planCache." + std::move(name));
@@ -701,11 +717,16 @@ private:
     Counter64& classicReplanned = _makeMetric("classic.replanned");
     Counter64& classicReplannedPlanIsCachedPlan =
         _makeMetric("classic.replanned_plan_is_cached_plan");
+    Counter64& classicCachedPlansEvicted = _makeMetric("classic.cached_plans_evicted");
+    Counter64& classicInactiveCachedPlansReplaced =
+        _makeMetric("classic.inactive_cached_plans_replaced");
     Counter64& sbeHits = _makeMetric("sbe.hits");
     Counter64& sbeMisses = _makeMetric("sbe.misses");
     Counter64& sbeSkipped = _makeMetric("sbe.skipped");
     Counter64& sbeReplanned = _makeMetric("sbe.replanned");
     Counter64& sbeReplannedPlanIsCachedPlan = _makeMetric("sbe.replanned_plan_is_cached_plan");
+    Counter64& sbeCachedPlansEvicted = _makeMetric("sbe.cached_plans_evicted");
+    Counter64& sbeInactiveCachedPlansReplaced = _makeMetric("sbe.inactive_cached_plans_replaced");
 };
 extern PlanCacheCounters planCacheCounters;
 

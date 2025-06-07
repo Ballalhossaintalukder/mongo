@@ -29,16 +29,6 @@
 
 #include "mongo/db/timeseries/timeseries_update_delete_util.h"
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <fmt/format.h>
-#include <string>
-#include <type_traits>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsontypes.h"
@@ -56,6 +46,16 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/db/query/write_ops/parsed_writes_common.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
+
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo::timeseries {
 namespace {
@@ -132,7 +132,7 @@ void replaceQueryMetaFieldName(mutablebson::Element elem,
         if (requiredElem.ok()) {
             for (auto subElem = requiredElem.leftChild(); subElem.ok();
                  subElem = subElem.rightSibling()) {
-                assertQueryFieldIsMetaField(subElem.isType(BSONType::String) &&
+                assertQueryFieldIsMetaField(subElem.isType(BSONType::string) &&
                                                 subElem.getValueString() == metaField,
                                             metaField);
                 invariantStatusOK(
@@ -158,8 +158,8 @@ void replaceQueryMetaFieldName(mutablebson::Element elem,
         invariantStatusOK(elem.rename(getRenamedField(fieldName)));
     }
 
-    isTopLevelField = parentIsArray && elem.isType(BSONType::Object);
-    parentIsArray = elem.isType(BSONType::Array);
+    isTopLevelField = parentIsArray && elem.isType(BSONType::object);
+    parentIsArray = elem.isType(BSONType::array);
     for (auto child = elem.leftChild(); child.ok(); child = child.rightSibling()) {
         replaceQueryMetaFieldName(child, metaField, isTopLevelField, parentIsArray);
     }
@@ -232,7 +232,7 @@ StatusWith<write_ops::UpdateModification> translateUpdate(
             // If this is a $rename, we also need to translate the value.
             if (updatePair.getFieldName() == "$rename") {
                 auto status = checkUpdateFieldIsMetaField(
-                    fieldValuePair.isType(BSONType::String) &&
+                    fieldValuePair.isType(BSONType::string) &&
                         isFieldFirstElementOfDottedPathField(fieldValuePair.getValueString(),
                                                              *metaField),
                     *metaField);

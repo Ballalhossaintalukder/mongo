@@ -28,13 +28,14 @@
  */
 
 #include "mongo/db/exec/mock_stage.h"
+
 #include "mongo/util/assert_util.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 
 namespace mongo {
 
 MockStage::MockStage(ExpressionContext* expCtx, WorkingSet*)
-    : PlanStage(kStageType.rawData(), expCtx) {}
+    : PlanStage(kStageType.data(), expCtx) {}
 
 std::unique_ptr<PlanStageStats> MockStage::getStats() {
     _commonStats.isEOF = isEOF();

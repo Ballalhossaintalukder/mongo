@@ -33,15 +33,6 @@
 
 #include "mongo/client/dbclient_session.h"
 
-
-#include <cmath>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -85,6 +76,14 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/version.h"
 
+#include <cmath>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
 
@@ -111,7 +110,7 @@ StatusWith<bool> completeSpeculativeAuth(DBClientSession* conn,
                 str::stream() << "Unexpected hello." << auth::kSpeculativeAuthenticate << " reply"};
     }
 
-    if (specAuthElem.type() != Object) {
+    if (specAuthElem.type() != BSONType::object) {
         return {ErrorCodes::BadValue,
                 str::stream() << "hello." << auth::kSpeculativeAuthenticate
                               << " reply must be an object"};
@@ -217,7 +216,8 @@ executor::RemoteCommandResponse initWireVersion(
                               replyWireVersion.getValue().maxWireVersion);
     }
 
-    if (helloObj.hasField("saslSupportedMechs") && helloObj["saslSupportedMechs"].type() == Array) {
+    if (helloObj.hasField("saslSupportedMechs") &&
+        helloObj["saslSupportedMechs"].type() == BSONType::array) {
         auto array = helloObj["saslSupportedMechs"].Array();
         for (const auto& elem : array) {
             saslMechsForAuth->push_back(elem.checkAndGetStringData().toString());

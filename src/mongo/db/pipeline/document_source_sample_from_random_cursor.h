@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <set>
-#include <string>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
@@ -47,13 +40,20 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <set>
+#include <string>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * This class is not a registered stage, it is only used as an optimized replacement for $sample
  * when the storage engine allows us to use a random cursor.
  */
-class DocumentSourceSampleFromRandomCursor final : public DocumentSource {
+class DocumentSourceSampleFromRandomCursor final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$sampleFromRandomCursor"_sd;
     const char* getSourceName() const final;

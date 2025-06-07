@@ -27,11 +27,12 @@
  *    it in the license file.
  */
 
-#include <utility>
+#include "mongo/db/storage/disk_space_monitor.h"
 
 #include "mongo/db/operation_context.h"
-#include "mongo/db/storage/disk_space_monitor.h"
 #include "mongo/unittest/unittest.h"
+
+#include <utility>
 
 namespace mongo {
 namespace {
@@ -42,36 +43,77 @@ protected:
     DiskSpaceMonitor monitor;
 };
 
-class SimpleAction : public DiskSpaceMonitor::Action {
+class SimpleAction {
 public:
-    int64_t getThresholdBytes() override {
-        return 1024;
+    explicit SimpleAction(int& hits) : hits(hits) {}
+    int64_t registerSimpleAction(DiskSpaceMonitor& diskMonitor) {
+        std::function<int64_t()> getThresholdBytes = []() {
+            return 1024;
+        };
+        std::function<void(OperationContext*, int64_t, int64_t)> act =
+            [this](OperationContext* opCtx, int64_t availableBytes, int64_t thresholdBytes) {
+                hits += 1;
+            };
+        return diskMonitor.registerAction(getThresholdBytes, act);
     }
 
-    void act(OperationContext* opCtx, int64_t availableBytes) override {
-        hits += 1;
-    }
-
-    int hits = 0;
+    int& hits;
 };
 
 TEST_F(DiskSpaceMonitorTest, Threshold) {
     OperationContext* opCtx = nullptr;
-    auto action = std::make_unique<SimpleAction>();
-    auto actionPtr = action.get();
-    monitor.registerAction(std::move(action));
+    auto hitsCounter = 0;
+    auto action = std::make_unique<SimpleAction>(hitsCounter);
+    int64_t actionId = action->registerSimpleAction(monitor);
 
     monitor.takeAction(opCtx, 2000);
-    ASSERT_EQ(0, actionPtr->hits);
+    ASSERT_EQ(0, hitsCounter);
 
     monitor.takeAction(opCtx, 1024);
-    ASSERT_EQ(1, actionPtr->hits);
+    ASSERT_EQ(1, hitsCounter);
 
     monitor.takeAction(opCtx, 1000);
-    ASSERT_EQ(2, actionPtr->hits);
+    ASSERT_EQ(2, hitsCounter);
 
     monitor.takeAction(opCtx, 2000);
-    ASSERT_EQ(2, actionPtr->hits);
+    ASSERT_EQ(2, hitsCounter);
+
+    monitor.deregisterAction(actionId);
 }
+
+TEST_F(DiskSpaceMonitorTest, TwoActions) {
+    OperationContext* opCtx = nullptr;
+    auto hitsCounter1 = 0;
+    auto hitsCounter2 = 0;
+    auto action1 = std::make_unique<SimpleAction>(hitsCounter1);
+    auto action2 = std::make_unique<SimpleAction>(hitsCounter2);
+    int64_t action1Id = action1->registerSimpleAction(monitor);
+    int64_t action2Id = action2->registerSimpleAction(monitor);
+
+    // Check both actions don't get incremented.
+    monitor.takeAction(opCtx, 2000);
+    ASSERT_EQ(0, hitsCounter1);
+    ASSERT_EQ(0, hitsCounter2);
+
+    // Check both actions get incremented.
+    monitor.takeAction(opCtx, 1024);
+    ASSERT_EQ(1, hitsCounter1);
+    ASSERT_EQ(1, hitsCounter2);
+
+    // Deregister action1.
+    monitor.deregisterAction(action1Id);
+
+    // Check that we increment action2.
+    monitor.takeAction(opCtx, 1000);
+    ASSERT_EQ(1, hitsCounter1);
+    ASSERT_EQ(2, hitsCounter2);
+
+    // Check both actions remain unchanged.
+    monitor.takeAction(opCtx, 2000);
+    ASSERT_EQ(1, hitsCounter1);
+    ASSERT_EQ(2, hitsCounter2);
+    monitor.deregisterAction(action2Id);
+}
+
 }  // namespace
 }  // namespace mongo

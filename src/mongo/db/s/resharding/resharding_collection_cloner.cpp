@@ -28,16 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <mutex>
-#include <string>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/s/resharding/resharding_collection_cloner.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -60,7 +51,6 @@
 #include "mongo/db/repl/read_concern_level.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/resharding/document_source_resharding_ownership_match.h"
-#include "mongo/db/s/resharding/resharding_collection_cloner.h"
 #include "mongo/db/s/resharding/resharding_data_copy_util.h"
 #include "mongo/db/s/resharding/resharding_future_util.h"
 #include "mongo/db/s/resharding/resharding_metrics.h"
@@ -75,11 +65,9 @@
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/resharding/resharding_feature_flag_gen.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/s/stale_shard_version_helpers.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
@@ -92,6 +80,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/timer.h"
+
+#include <mutex>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
@@ -583,12 +582,11 @@ void ReshardingCollectionCloner::_writeOnceWithNaturalOrder(
         resharding::gReshardingCollectionClonerWriteThreadCount);
 
     if (reshardingCollectionClonerShouldFailWithStaleConfig.shouldFail()) {
-        uassert(StaleConfigInfo(_sourceNss,
-                                ShardVersionFactory::make(ChunkVersion::IGNORED(),
-                                                          boost::optional<CollectionIndexes>(
-                                                              boost::none)) /* receivedVersion */,
-                                boost::none /* wantedVersion */,
-                                ShardId{"0"}),
+        uassert(StaleConfigInfo(
+                    _sourceNss,
+                    ShardVersionFactory::make(ChunkVersion::IGNORED()) /* receivedVersion */,
+                    boost::none /* wantedVersion */,
+                    ShardId{"0"}),
                 str::stream() << "Throwing staleConfig for reshardingCollectionCloner failpoint.",
                 false);
     }

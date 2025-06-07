@@ -29,13 +29,13 @@
 
 
 #include "mongo/db/storage/storage_engine_lock_file.h"
-
-#include <boost/filesystem.hpp>
-#include <io.h>
-
 #include "mongo/logv2/log.h"
 #include "mongo/util/str.h"
 #include "mongo/util/text.h"
+
+#include <io.h>
+
+#include <boost/filesystem.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -158,7 +158,7 @@ Status StorageEngineLockFile::writeString(StringData str) {
 
     DWORD bytesWritten = 0;
     if (::WriteFile(_lockFileHandle->_handle,
-                    static_cast<LPCVOID>(str.rawData()),
+                    static_cast<LPCVOID>(str.data()),
                     static_cast<DWORD>(str.size()),
                     &bytesWritten,
                     NULL) == FALSE) {

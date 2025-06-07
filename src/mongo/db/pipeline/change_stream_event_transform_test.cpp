@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/change_stream_event_transform.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -45,7 +41,6 @@
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/pipeline/change_stream_event_transform.h"
 #include "mongo/db/pipeline/change_stream_helpers.h"
 #include "mongo/db/pipeline/change_stream_test_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream.h"
@@ -57,6 +52,12 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/time_support.h"
+
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -137,6 +138,51 @@ TEST(ChangeStreamEventTransformTest, TestCreateCollectionTransform) {
         {DocumentSourceChangeStream::kOperationDescriptionField, opDescription},
         {DocumentSourceChangeStream::kNsTypeField, "collection"_sd}};
 
+    ASSERT_DOCUMENT_EQ(applyTransformation(oplogEntry), expectedDoc);
+}
+
+TEST(ChangeStreamEventTransformTest, TestCreateIndexTransform) {
+    const NamespaceString nss =
+        NamespaceString::createNamespaceString_forTest(boost::none, "testDB.coll.name");
+    // Namespace for the command, i.e. "testDB.$cmd".
+    const NamespaceString commandNss = NamespaceString::makeCommandNamespace(nss.dbName());
+    const auto opDescription = Value(fromjson("{indexes: [{v: 2, key: {a: 1}, name: 'a_1'}]}"));
+    auto oplogEntry = makeOplogEntry(repl::OpTypeEnum::kCommand,  // op type
+                                     commandNss,                  // namespace
+                                     BSON("createIndexes" << nss.coll() << "v" << 2 << "key"
+                                                          << BSON("a" << 1) << "name"
+                                                          << "a_1"),  // o
+                                     testUuid(),                      // uuid
+                                     boost::none,                     // fromMigrate
+                                     boost::none);                    // o2
+
+    Document expectedDoc{{DocumentSourceChangeStream::kIdField,
+                          makeResumeToken(kDefaultTs,
+                                          testUuid(),
+                                          opDescription,
+                                          DocumentSourceChangeStream::kCreateIndexesOpType)},
+                         {DocumentSourceChangeStream::kOperationTypeField,
+                          DocumentSourceChangeStream::kCreateIndexesOpType},
+                         {DocumentSourceChangeStream::kClusterTimeField, kDefaultTs},
+                         {DocumentSourceChangeStream::kCollectionUuidField, testUuid()},
+                         {DocumentSourceChangeStream::kWallTimeField, Date_t()},
+                         {DocumentSourceChangeStream::kNamespaceField,
+                          Document{{"db", nss.db_forTest()}, {"coll", nss.coll()}}},
+                         {DocumentSourceChangeStream::kOperationDescriptionField, opDescription}};
+
+    ASSERT_DOCUMENT_EQ(applyTransformation(oplogEntry), expectedDoc);
+
+    // Verify that transforming "createIndexes" oplog entry with "spec" field results in the same
+    // "createIndexes" change event document.
+    oplogEntry =
+        makeOplogEntry(repl::OpTypeEnum::kCommand,  // op type
+                       commandNss,                  // namespace
+                       BSON("createIndexes" << nss.coll() << "spec"
+                                            << BSON("v" << 2 << "key" << BSON("a" << 1) << "name"
+                                                        << "a_1")),  // o
+                       testUuid(),                                   // uuid
+                       boost::none,                                  // fromMigrate
+                       boost::none);                                 // o2
     ASSERT_DOCUMENT_EQ(applyTransformation(oplogEntry), expectedDoc);
 }
 

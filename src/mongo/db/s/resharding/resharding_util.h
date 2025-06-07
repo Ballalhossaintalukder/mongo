@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -74,6 +62,19 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 
 namespace mongo {
@@ -223,7 +224,7 @@ Status getStatusFromAbortReason(ClassWithAbortReason& c) {
     BSONElement errmsgElement = abortReasonObj["errmsg"];
     int code = codeElement.numberInt();
     std::string errmsg;
-    if (errmsgElement.type() == String) {
+    if (errmsgElement.type() == BSONType::string) {
         errmsg = errmsgElement.String();
     } else if (!errmsgElement.eoo()) {
         errmsg = errmsgElement.toString();

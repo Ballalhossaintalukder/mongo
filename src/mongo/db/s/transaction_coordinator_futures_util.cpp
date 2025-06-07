@@ -29,10 +29,7 @@
 
 
 // IWYU pragma: no_include "cxxabi.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
-#include <string>
-#include <type_traits>
+#include "mongo/db/s/transaction_coordinator_futures_util.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -43,7 +40,7 @@
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/dbmessage.h"
-#include "mongo/db/s/transaction_coordinator_futures_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/executor/remote_command_request.h"
 #include "mongo/executor/task_executor_pool.h"
@@ -53,11 +50,16 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/util/cancellation.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
+
+#include <string>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTransaction
 
@@ -80,7 +82,7 @@ bool shouldActivateFailpoint(BSONObj commandObj, BSONObj data) {
           "data"_attr = data);
     BSONElement twoPhaseCommitStage = data["twoPhaseCommitStage"];
     invariant(!twoPhaseCommitStage.eoo());
-    invariant(twoPhaseCommitStage.type() == BSONType::String);
+    invariant(twoPhaseCommitStage.type() == BSONType::string);
     StringData twoPhaseCommitStageValue = twoPhaseCommitStage.valueStringData();
     constexpr std::array<StringData, 3> fieldNames{
         "prepareTransaction"_sd, "commitTransaction"_sd, "abortTransaction"_sd};

@@ -29,42 +29,22 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 
-#include <cstring>
-#include <string>
-#include <utility>
-#include <wiredtiger.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
-#include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
-#include "mongo/db/global_settings.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/record_id.h"
-#include "mongo/db/repl/repl_settings.h"
-#include "mongo/db/repl/replication_coordinator.h"
-#include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/execution_context.h"
-#include "mongo/db/storage/key_format.h"
-#include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit_test_harness.h"
-#include "mongo/db/storage/snapshot_manager.h"
-#include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_cursor_helpers.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/db/storage/write_unit_of_work.h"
-#include "mongo/db/transaction_resources.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/temp_dir.h"
@@ -72,6 +52,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source_mock.h"
 #include "mongo/util/str.h"
+
+#include <cstring>
+#include <string>
+#include <utility>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -81,25 +71,30 @@ public:
     WiredTigerRecoveryUnitHarnessHelper() : _dbpath("wt_test") {
         WiredTigerKVEngineBase::WiredTigerConfig wtConfig = getWiredTigerConfigFromStartupOptions();
         wtConfig.cacheSizeMB = 1;
-        _engine = std::make_unique<WiredTigerKVEngine>(std::string{kWiredTigerEngineName},
-                                                       _dbpath.path(),
-                                                       &_cs,
-                                                       std::move(wtConfig),
-                                                       false,
-                                                       false);
 
         // Use a replica set so that writes to replicated collections are not journaled and thus
         // retain their timestamps.
-        repl::ReplSettings replSettings;
-        replSettings.setReplSetString("rs");
-        setGlobalReplSettings(replSettings);
-        repl::ReplicationCoordinator::set(getGlobalServiceContext(),
-                                          std::make_unique<repl::ReplicationCoordinatorMock>(
-                                              getGlobalServiceContext(), replSettings));
+        _engine =
+            std::make_unique<WiredTigerKVEngine>(std::string{kWiredTigerEngineName},
+                                                 _dbpath.path(),
+                                                 &_cs,
+                                                 std::move(wtConfig),
+                                                 false /* repair */,
+                                                 true /* isReplSet */,
+                                                 false /* shouldRecoverFromOplogAsStandalone */,
+                                                 false /* inStandaloneMode */);
+
         _engine->notifyStorageStartupRecoveryComplete();
     }
 
-    ~WiredTigerRecoveryUnitHarnessHelper() override {}
+    ~WiredTigerRecoveryUnitHarnessHelper() override {
+#if __has_feature(address_sanitizer)
+        constexpr bool memLeakAllowed = false;
+#else
+        constexpr bool memLeakAllowed = true;
+#endif
+        _engine->cleanShutdown(memLeakAllowed);
+    }
 
     std::unique_ptr<RecoveryUnit> newRecoveryUnit() final {
         return std::unique_ptr<RecoveryUnit>(_engine->newRecoveryUnit());
@@ -109,8 +104,8 @@ public:
                                                    const std::string& ns) final {
         std::string ident = ns;
         NamespaceString nss = NamespaceString::createNamespaceString_forTest(ns);
-        const auto res = _engine->createRecordStore(nss, ident);
-        return _engine->getRecordStore(opCtx, nss, ident, CollectionOptions());
+        const auto res = _engine->createRecordStore(nss, ident, RecordStore::Options{});
+        return _engine->getRecordStore(opCtx, nss, ident, RecordStore::Options{}, UUID::gen());
     }
 
     WiredTigerKVEngine* getEngine() {
@@ -145,9 +140,9 @@ public:
         auto sc = harnessHelper->serviceContext();
         auto client = sc->getService()->makeClient(clientName);
         auto opCtx = client->makeOperationContext();
-        shard_role_details::setRecoveryUnit(opCtx.get(),
-                                            harnessHelper->newRecoveryUnit(),
-                                            WriteUnitOfWork::RecoveryUnitState::kNotInUnitOfWork);
+        auto ru = harnessHelper->newRecoveryUnit();
+        ru->setOperationContext(opCtx.get());
+        storage_details::setRecoveryUnit(opCtx.get(), std::move(ru));
         return std::make_pair(std::move(client), std::move(opCtx));
     }
 
@@ -162,10 +157,10 @@ public:
         clientAndCtx1 = makeClientAndOpCtx(harnessHelper.get(), "writer");
         clientAndCtx2 = makeClientAndOpCtx(harnessHelper.get(), "reader");
         ru1 = checked_cast<WiredTigerRecoveryUnit*>(
-            shard_role_details::getRecoveryUnit(clientAndCtx1.second.get()));
+            storage_details::getRecoveryUnit(clientAndCtx1.second.get()));
         ru1->setOperationContext(clientAndCtx1.second.get());
         ru2 = checked_cast<WiredTigerRecoveryUnit*>(
-            shard_role_details::getRecoveryUnit(clientAndCtx2.second.get()));
+            storage_details::getRecoveryUnit(clientAndCtx2.second.get()));
         ru2->setOperationContext(clientAndCtx2.second.get());
         snapshotManager = static_cast<WiredTigerSnapshotManager*>(
             harnessHelper->getEngine()->getSnapshotManager());
@@ -1019,7 +1014,7 @@ TEST_F(WiredTigerRecoveryUnitTestFixture, OptionalEvictionCanBeInterrupted) {
         auto clientAndCtx =
             makeClientAndOpCtx(harnessHelper.get(), "test" + std::to_string(enableFeature));
         OperationContext* opCtx = clientAndCtx.second.get();
-        auto ru = WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx));
+        auto ru = WiredTigerRecoveryUnit::get(storage_details::getRecoveryUnit(opCtx));
 
         WiredTigerEventHandler eventHandler;
         WT_SESSION* session = ru->getSessionNoTxn()->with([](WT_SESSION* arg) { return arg; });

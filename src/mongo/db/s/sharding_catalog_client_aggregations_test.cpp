@@ -27,17 +27,6 @@
  *    it in the license file.
  */
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -64,7 +53,6 @@
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
-#include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog/type_namespace_placement_gen.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/chunk_version.h"
@@ -72,6 +60,18 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -1208,98 +1208,4 @@ TEST_F(CatalogClientAggregationsTest, GetShardsThatOwnDataAtClusterTime_CleanUp_
         historicalPlacement_cleanup_coll1, {"shard1", "shard2"}, false /*exact*/);
 }
 
-// ############################# Indexes #############################
-TEST_F(CatalogClientAggregationsTest, TestCollectionAndIndexesAggregationWithNoIndexes) {
-    const NamespaceString nss = NamespaceString::createNamespaceString_forTest("TestDB.TestColl");
-    const ChunkVersion placementVersion{{OID::gen(), Timestamp(1, 0)}, {1, 0}};
-    const std::string shardName = "shard01";
-    const UUID uuid{UUID::gen()};
-    const KeyPattern shardKey{BSON("_id" << 1)};
-    setupShards({ShardType(shardName, "host01")});
-    setupCollection(nss,
-                    shardKey,
-                    {ChunkType(uuid,
-                               ChunkRange(BSONObjBuilder().appendMinKey("_id").obj(),
-                                          BSONObjBuilder().appendMaxKey("_id").obj()),
-                               placementVersion,
-                               ShardId("shard01"))});
-    auto [collection, indexes] = catalogClient()->getCollectionAndShardingIndexCatalogEntries(
-        operationContext(), nss, {repl::ReadConcernLevel::kSnapshotReadConcern});
-
-    ASSERT_EQ(indexes.size(), 0);
-    ASSERT_EQ(collection.getEpoch(), placementVersion.epoch());
-    ASSERT_EQ(collection.getTimestamp(), placementVersion.getTimestamp());
-    ASSERT_EQ(collection.getUuid(), uuid);
-}
-
-TEST_F(CatalogClientAggregationsTest, TestCollectionAndIndexesWithIndexes) {
-    const NamespaceString nss = NamespaceString::createNamespaceString_forTest("TestDB.TestColl");
-    const ChunkVersion placementVersion{{OID::gen(), Timestamp(1, 0)}, {1, 0}};
-    const std::string shardName = "shard01";
-    const UUID uuid{UUID::gen()};
-    const KeyPattern shardKey{BSON("_id" << 1)};
-    setupShards({ShardType(shardName, "host01")});
-    setupCollection(nss,
-                    shardKey,
-                    {ChunkType(uuid,
-                               ChunkRange(BSONObjBuilder().appendMinKey("_id").obj(),
-                                          BSONObjBuilder().appendMaxKey("_id").obj()),
-                               placementVersion,
-                               ShardId("shard01"))});
-    IndexCatalogType index1{"x_1", shardKey.toBSON(), {}, Timestamp(3, 0), uuid};
-    uassertStatusOK(insertToConfigCollection(
-        operationContext(), NamespaceString::kConfigsvrIndexCatalogNamespace, index1.toBSON()));
-    IndexCatalogType index2{"y_1", shardKey.toBSON(), {}, Timestamp(4, 0), uuid};
-    uassertStatusOK(insertToConfigCollection(
-        operationContext(), NamespaceString::kConfigsvrIndexCatalogNamespace, index2.toBSON()));
-
-    auto [collection, indexes] = catalogClient()->getCollectionAndShardingIndexCatalogEntries(
-        operationContext(), nss, {repl::ReadConcernLevel::kSnapshotReadConcern});
-
-    ASSERT_EQ(indexes.size(), 2);
-    ASSERT_EQ(collection.getEpoch(), placementVersion.epoch());
-    ASSERT_EQ(collection.getTimestamp(), placementVersion.getTimestamp());
-    ASSERT_EQ(collection.getUuid(), uuid);
-}
-
-TEST_F(CatalogClientAggregationsTest, TestCollectionAndIndexesWithMultipleCollections) {
-    const NamespaceString nssColl1 =
-        NamespaceString::createNamespaceString_forTest("TestDB.Collection1");
-    const NamespaceString nssColl2 =
-        NamespaceString::createNamespaceString_forTest("TestDB.Collection2");
-    const ChunkVersion placementVersion{{OID::gen(), Timestamp(1, 0)}, {1, 0}};
-    const std::string shardName = "shard01";
-    const UUID uuidColl1{UUID::gen()};
-    const UUID uuidColl2{UUID::gen()};
-    const KeyPattern shardKey{BSON("_id" << 1)};
-    setupShards({ShardType(shardName, "host01")});
-    setupCollection(nssColl1,
-                    shardKey,
-                    {ChunkType(uuidColl1,
-                               ChunkRange(BSONObjBuilder().appendMinKey("_id").obj(),
-                                          BSONObjBuilder().appendMaxKey("_id").obj()),
-                               placementVersion,
-                               ShardId("shard01"))});
-    setupCollection(nssColl2,
-                    shardKey,
-                    {ChunkType(uuidColl2,
-                               ChunkRange(BSONObjBuilder().appendMinKey("_id").obj(),
-                                          BSONObjBuilder().appendMaxKey("_id").obj()),
-                               placementVersion,
-                               ShardId("shard01"))});
-    IndexCatalogType index1{"x_1", shardKey.toBSON(), {}, Timestamp(3, 0), uuidColl1};
-    uassertStatusOK(insertToConfigCollection(
-        operationContext(), NamespaceString::kConfigsvrIndexCatalogNamespace, index1.toBSON()));
-    IndexCatalogType index2{"y_1", shardKey.toBSON(), {}, Timestamp(4, 0), uuidColl2};
-    uassertStatusOK(insertToConfigCollection(
-        operationContext(), NamespaceString::kConfigsvrIndexCatalogNamespace, index2.toBSON()));
-
-    auto [collection, indexes] = catalogClient()->getCollectionAndShardingIndexCatalogEntries(
-        operationContext(), nssColl1, {repl::ReadConcernLevel::kSnapshotReadConcern});
-
-    ASSERT_EQ(indexes.size(), 1);
-    ASSERT_EQ(collection.getEpoch(), placementVersion.epoch());
-    ASSERT_EQ(collection.getTimestamp(), placementVersion.getTimestamp());
-    ASSERT_EQ(collection.getUuid(), uuidColl1);
-}
 }  // namespace mongo

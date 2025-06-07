@@ -28,12 +28,6 @@
  */
 
 
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -57,6 +51,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/decorable.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -118,11 +118,11 @@ public:
                     shardOutput[ValidateDBMetadataCommandReply::kApiVersionErrorsFieldName];
                 tassert(5287400,
                         "The 'apiVersionErrors' field returned from shards should be an array ",
-                        apiVersionErrors && apiVersionErrors.type() == Array);
+                        apiVersionErrors && apiVersionErrors.type() == BSONType::array);
                 for (auto&& error : apiVersionErrors.Array()) {
                     tassert(5287401,
                             "The array element in 'apiVersionErrors' should be object",
-                            error.type() == Object);
+                            error.type() == BSONType::object);
                     ErrorReplyElement apiVersionError = ErrorReplyElement::parse(
                         IDLParserContext("ErrorReplyElement"), error.Obj());
 

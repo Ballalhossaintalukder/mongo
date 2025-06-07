@@ -29,8 +29,6 @@
 
 #include "mongo/db/update/pattern_cmp.h"
 
-#include <cstddef>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
@@ -40,6 +38,8 @@
 #include "mongo/db/exec/mutable_bson/const_element.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
 
 namespace mongo {
 namespace pattern_cmp {
@@ -91,8 +91,10 @@ bool PatternElementCmp::operator()(const mutablebson::Element& lhs,
 
         return (reversed ? comparedValue > 0 : comparedValue < 0);
     } else {
-        BSONObj lhsObj = lhs.getType() == Object ? lhs.getValueObject() : lhs.getValue().wrap("");
-        BSONObj rhsObj = rhs.getType() == Object ? rhs.getValueObject() : rhs.getValue().wrap("");
+        BSONObj lhsObj =
+            lhs.getType() == BSONType::object ? lhs.getValueObject() : lhs.getValue().wrap("");
+        BSONObj rhsObj =
+            rhs.getType() == BSONType::object ? rhs.getValueObject() : rhs.getValue().wrap("");
 
         BSONObj lhsKey = dps::extractElementsBasedOnTemplate(lhsObj, sortPattern, true);
         BSONObj rhsKey = dps::extractElementsBasedOnTemplate(rhsObj, sortPattern, true);

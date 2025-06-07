@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <iostream>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -43,7 +35,6 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/client.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/exec/matcher/matcher.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/matcher/extensions_callback_real.h"
@@ -60,6 +51,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/timer.h"
+
+#include <iostream>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace MatcherTests {
@@ -126,7 +125,8 @@ public:
     void run() {
         BSONObj query = fromjson("{ a : { $in : [4,6] } }");
         ASSERT_EQUALS(4, query["a"].embeddedObject()["$in"].embeddedObject()["0"].number());
-        ASSERT_EQUALS(NumberInt, query["a"].embeddedObject()["$in"].embeddedObject()["0"].type());
+        ASSERT_EQUALS(BSONType::numberInt,
+                      query["a"].embeddedObject()["$in"].embeddedObject()["0"].type());
 
         boost::intrusive_ptr<ExpressionContextForTest> expCtx(new ExpressionContextForTest());
         M m(query, expCtx);
@@ -245,7 +245,6 @@ public:
         OperationContext& opCtx = *opCtxPtr;
         const NamespaceString nss =
             NamespaceString::createNamespaceString_forTest("unittests.matchertests");
-        AutoGetCollectionForReadCommand ctx(&opCtx, nss);
         const auto expCtx = ExpressionContextBuilder{}.opCtx(opCtxPtr.get()).ns(kTestNss).build();
         M m(BSON("$where" << "function(){ return this.a == 1; }"),
             expCtx,

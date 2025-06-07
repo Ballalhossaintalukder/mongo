@@ -10,21 +10,28 @@
  *   # This test calls "find" with a filter on "_id" whose value is a namespace string. We cannot
  *   # test it as the override does not inject tenant prefix to this special namespace.
  *   simulate_atlas_proxy_incompatible,
- *   known_query_shape_computation_problem,  # TODO (SERVER-103069): Remove this tag.
  * ]
  */
 
 import {getTimeseriesCollForRawOps} from "jstests/core/libs/raw_operation_utils.js";
+import {
+    areViewlessTimeseriesEnabled
+} from "jstests/core/timeseries/libs/viewless_timeseries_util.js";
 
-function verifyViewPipeline(coll) {
-    const cProps =
-        db.runCommand({listCollections: 1, filter: {name: coll.getName()}}).cursor.firstBatch[0];
-    const cSeconds = cProps.options.timeseries.bucketMaxSpanSeconds;
-    const vProps = db.system.views.find({_id: `${db.getName()}.${coll.getName()}`}).toArray()[0];
-    const vSeconds = vProps.pipeline[0].$_internalUnpackBucket.bucketMaxSpanSeconds;
+function assertBucketMaxSpanSecondsEquals(coll, expectedValue) {
+    const cSeconds = coll.getMetadata().options.timeseries.bucketMaxSpanSeconds;
     assert.eq(cSeconds,
-              vSeconds,
-              `expected view pipeline 'bucketMaxSpanSeconds' to match timeseries options`);
+              expectedValue,
+              `expected collection 'bucketMaxSpanSeconds' to equal ${expectedValue}`);
+
+    if (!areViewlessTimeseriesEnabled(db)) {
+        const vProps =
+            db.system.views.find({_id: `${db.getName()}.${coll.getName()}`}).toArray()[0];
+        const vSeconds = vProps.pipeline[0].$_internalUnpackBucket.bucketMaxSpanSeconds;
+        assert.eq(cSeconds,
+                  vSeconds,
+                  `expected view pipeline 'bucketMaxSpanSeconds' to match timeseries options`);
+    }
 }
 
 function getDateOutsideBucketRange(coll, spanMS) {
@@ -125,7 +132,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
     if (TestData.runningWithBalancer) {
         assert.commandWorked(coll.createIndex({'t': 1}));
     }
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 60 * 60);
 
     // All measurements land in the same bucket.
     assert.commandWorked(coll.insert({t: ISODate("2021-04-22T20:00:00.000Z")}));
@@ -143,7 +150,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
     // Now let's bump to minutes and make sure we get the expected behavior
     assert.commandWorked(
         db.runCommand({collMod: coll.getName(), timeseries: {granularity: 'minutes'}}));
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 24 * 60 * 60);
 
     // If resharding is running in the background, it could be that neither of the buckets are in
     // memory here. If this is the case, the first insert will load the first bucket into memory but
@@ -179,7 +186,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
     if (TestData.runningWithBalancer) {
         assert.commandWorked(coll.createIndex({'t': 1}));
     }
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 60 * 60);
 
     // All measurements land in the same bucket.
     assert.commandWorked(coll.insert({t: ISODate("2021-04-22T20:00:00.000Z")}));
@@ -196,7 +203,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
 
     assert.commandWorked(
         db.runCommand({collMod: coll.getName(), timeseries: {granularity: 'hours'}}));
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 30 * 24 * 60 * 60);
 
     // All measurements land in the same bucket.
     assert.commandWorked(coll.insert({t: ISODate("2021-05-22T00:00:00.000Z")}));
@@ -228,7 +235,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
     if (TestData.runningWithBalancer) {
         assert.commandWorked(coll.createIndex({'t': 1}));
     }
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 24 * 60 * 60);
 
     // All measurements land in the same bucket.
     assert.commandWorked(coll.insert({t: ISODate("2021-04-22T20:00:00.000Z")}));
@@ -245,7 +252,7 @@ const dayInMS = 1000 * 60 * 60 * 24;
 
     assert.commandWorked(
         db.runCommand({collMod: coll.getName(), timeseries: {granularity: 'hours'}}));
-    verifyViewPipeline(coll);
+    assertBucketMaxSpanSecondsEquals(coll, 30 * 24 * 60 * 60);
 
     // All measurements land in the same bucket.
     assert.commandWorked(coll.insert({t: ISODate("2021-05-23T00:00:00.000Z")}));

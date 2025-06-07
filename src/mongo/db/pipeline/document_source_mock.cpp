@@ -29,11 +29,11 @@
 
 #include "mongo/db/pipeline/document_source_mock.h"
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/json.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/expression_context.h"
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -47,6 +47,7 @@ boost::intrusive_ptr<DocumentSourceMock> DocumentSourceMock::create(
 DocumentSourceMock::DocumentSourceMock(std::deque<GetNextResult> results,
                                        const boost::intrusive_ptr<ExpressionContext>& expCtx)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       mockConstraints(StreamType::kStreaming,
                       PositionRequirement::kNone,
                       HostTypeRequirement::kNone,
@@ -62,7 +63,7 @@ DocumentSourceMock::DocumentSourceMock(std::deque<GetNextResult> results,
 }
 
 const char* DocumentSourceMock::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 size_t DocumentSourceMock::size() const {

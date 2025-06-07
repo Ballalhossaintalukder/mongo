@@ -29,16 +29,17 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/base/status_with.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/repl_server_parameters_gen.h"
 #include "mongo/db/service_context.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/stdx/chrono.h"
 #include "mongo/stdx/future.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/stdx/unordered_map.h"
+
+#include <vector>
 
 
 namespace mongo {
@@ -49,6 +50,37 @@ namespace consensus {
  * Implementation of the Intent Registration system, used by operations to declare intents which are
  * required for access into the Storage layer.
  */
+
+class ReplicationStateTransitionGuard {
+    friend class IntentRegistry;
+    std::function<void()> _releaseCallback;
+    ReplicationStateTransitionGuard(std::function<void()> cb) : _releaseCallback(cb) {}
+
+public:
+    ReplicationStateTransitionGuard() = default;
+    ReplicationStateTransitionGuard(const ReplicationStateTransitionGuard&) = delete;
+    ReplicationStateTransitionGuard(ReplicationStateTransitionGuard&& other) noexcept
+        : _releaseCallback(std::move(other._releaseCallback)) {
+        other._releaseCallback = nullptr;
+    };
+    ReplicationStateTransitionGuard& operator=(const ReplicationStateTransitionGuard&) = delete;
+    ReplicationStateTransitionGuard& operator=(ReplicationStateTransitionGuard&& other) noexcept {
+        _releaseCallback = std::move(other._releaseCallback);
+        other._releaseCallback = nullptr;
+        return *this;
+    }
+
+    void release() {
+        if (_releaseCallback) {
+            _releaseCallback();
+            _releaseCallback = nullptr;
+        }
+    }
+    ~ReplicationStateTransitionGuard() {
+        release();
+    }
+};
+
 class IntentRegistry {
     friend class IntentRegistryTest;
 
@@ -57,6 +89,7 @@ public:
         Read,
         Write,
         LocalWrite,
+        PreparedTransaction,
         _NumDistinctIntents_,
     };
 
@@ -115,7 +148,15 @@ public:
      * that conflict with the ongoing state transtion from registering their
      * intent.
      */
-    stdx::future<bool> killConflictingOperations(InterruptionType interruption);
+    stdx::future<ReplicationStateTransitionGuard> killConflictingOperations(
+        InterruptionType interruption, boost::optional<uint32_t> timeout_sec = boost::none);
+
+    /**
+     * Updates metrics around user ops when a state transition that kills operations occurs (i.e.
+     * step up, step down, rollback, or shutdown). Also logs the metrics.
+     */
+    void updateAndLogStateTransitionMetrics(IntentRegistry::InterruptionType interrupt,
+                                            size_t numOpsKilled) const;
 
     /**
      * Marks the IntentRegistry enabled and resets the active and last interruption.
@@ -127,8 +168,23 @@ public:
      */
     void disable();
 
-    void setDrainTimeout(uint32_t sec);
+    /**
+     * Returns the Intent held by an opCtx (boost::none if it is not holding any).
+     */
+    boost::optional<Intent> getHeldIntent(OperationContext* opCtx) const;
 
+    /**
+     * Checks if the opCtx is holding an Intent.
+     */
+    bool isIntentHeld(OperationContext* opCtx) const;
+
+    static std::string intentToString(Intent intent);
+
+    static std::string interruptionToString(InterruptionType interrupt);
+
+    size_t getTotalOpsKilled() const;
+
+    std::vector<size_t> getTotalIntentsDeclared() const;
 
 private:
     struct tokenMap {
@@ -137,19 +193,27 @@ private:
         stdx::unordered_map<IntentToken::idType, OperationContext*> map;
     };
 
+    struct opCtxIntentMap {
+        stdx::mutex lock;
+        stdx::unordered_map<OperationContext*, Intent> map;
+    };
     bool _validIntent(Intent intent) const;
-    bool _killOperationsByIntent(Intent intent);
-    bool _waitForDrain(Intent intent, std::chrono::milliseconds timeout);
-    static std::string _intentToString(Intent intent);
+    void _killOperationsByIntent(Intent intent);
+    void _waitForDrain(Intent intent, stdx::chrono::milliseconds timeout);
 
     bool _enabled = true;
     stdx::mutex _stateMutex;
-    stdx::condition_variable activeInterruptionCV;
+    stdx::condition_variable _activeInterruptionCV;
     bool _activeInterruption = false;
     InterruptionType _lastInterruption = InterruptionType::None;
     std::vector<tokenMap> _tokenMaps;
-    std::chrono::seconds _drainTimeoutSec =
-        std::chrono::seconds(repl::fassertOnLockTimeoutForStepUpDown.load());
+    mutable opCtxIntentMap _opCtxIntentMap;
+
+    // Tracks total number of intents declared per type of intent.
+    std::vector<size_t> _totalIntentsDeclared;
+
+    // Tracks number of operations killed on state transition.
+    size_t _totalOpsKilled = 0;
 };
 }  // namespace consensus
 }  // namespace rss

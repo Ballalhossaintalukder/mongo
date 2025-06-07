@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <typeinfo>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/expression_walker.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,11 +44,18 @@
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/pipeline/expression_walker.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/string_map.h"
+
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <typeinfo>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -64,7 +65,7 @@ protected:
     auto jsonToPipeline(StringData jsonArray) {
         const auto inputBson = fromjson("{pipeline: " + jsonArray + "}");
 
-        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::Array);
+        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::array);
         auto rawPipeline = parsePipelineFromBSON(inputBson["pipeline"]);
         NamespaceString testNss =
             NamespaceString::createNamespaceString_forTest("test", "collection");

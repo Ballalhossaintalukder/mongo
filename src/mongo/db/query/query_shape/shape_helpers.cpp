@@ -37,7 +37,9 @@ namespace mongo::shape_helpers {
 static constexpr StringData hintSpecialField = "$hint"_sd;
 // A "Flat" object is one with only top-level fields. We won't descend recursively to shapify any
 // sub-objects.
-BSONObj shapifyFlatObj(BSONObj obj, const SerializationOptions& opts, bool valuesAreLiterals) {
+BSONObj shapifyFlatObj(const BSONObj& obj,
+                       const SerializationOptions& opts,
+                       bool valuesAreLiterals) {
     if (obj.isEmpty()) {
         // fast-path for the common case.
         return obj;
@@ -46,9 +48,9 @@ BSONObj shapifyFlatObj(BSONObj obj, const SerializationOptions& opts, bool value
     BSONObjBuilder bob;
     for (BSONElement elem : obj) {
         if (hintSpecialField == elem.fieldNameStringData()) {
-            if (elem.type() == BSONType::String) {
+            if (elem.type() == BSONType::string) {
                 bob.append(hintSpecialField, opts.serializeFieldPathFromString(elem.String()));
-            } else if (elem.type() == BSONType::Object) {
+            } else if (elem.type() == BSONType::object) {
                 opts.appendLiteral(&bob, hintSpecialField, elem.Obj());
             } else {
                 // SERVER-85500: $hint syntax will not be validated if the collection does not
@@ -73,11 +75,11 @@ BSONObj shapifyFlatObj(BSONObj obj, const SerializationOptions& opts, bool value
     return bob.obj();
 }
 
-BSONObj extractHintShape(BSONObj hintObj, const SerializationOptions& opts) {
+BSONObj extractHintShape(const BSONObj& hintObj, const SerializationOptions& opts) {
     return shapifyFlatObj(hintObj, opts, /* valuesAreLiterals = */ false);
 }
 
-BSONObj extractMinOrMaxShape(BSONObj obj, const SerializationOptions& opts) {
+BSONObj extractMinOrMaxShape(const BSONObj& obj, const SerializationOptions& opts) {
     return shapifyFlatObj(obj, opts, /* valuesAreLiterals = */ true);
 }
 

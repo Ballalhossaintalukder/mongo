@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -48,6 +41,13 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -59,7 +59,7 @@ namespace mongo {
  * be executed on router if all other stages are eligible, and will be sent to a random
  * participating shard otherwise.
  */
-class DocumentSourceInternalSplitPipeline final : public DocumentSource {
+class DocumentSourceInternalSplitPipeline final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalSplitPipeline"_sd;
 
@@ -74,7 +74,7 @@ public:
     }
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -115,7 +115,10 @@ private:
     DocumentSourceInternalSplitPipeline(const boost::intrusive_ptr<ExpressionContext>& expCtx,
                                         HostTypeRequirement mergeType,
                                         boost::optional<ShardId> mergeShardId)
-        : DocumentSource(kStageName, expCtx), _mergeType(mergeType), _mergeShardId(mergeShardId) {}
+        : DocumentSource(kStageName, expCtx),
+          exec::agg::Stage(kStageName, expCtx),
+          _mergeType(mergeType),
+          _mergeShardId(mergeShardId) {}
 
     GetNextResult doGetNext() final;
     Value serialize(const SerializationOptions& opts = SerializationOptions{}) const final;

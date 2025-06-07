@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <set>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -45,6 +39,12 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -53,7 +53,8 @@ namespace mongo {
  * pushdown into the query system, so this stage can be useful in tests to ensure that an
  * unoptimized code path is being exercised.
  */
-class DocumentSourceInternalInhibitOptimization final : public DocumentSource {
+class DocumentSourceInternalInhibitOptimization final : public DocumentSource,
+                                                        public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalInhibitOptimization"_sd;
 
@@ -61,10 +62,10 @@ public:
         BSONElement, const boost::intrusive_ptr<ExpressionContext>&);
 
     DocumentSourceInternalInhibitOptimization(const boost::intrusive_ptr<ExpressionContext>& expCtx)
-        : DocumentSource(kStageName, expCtx) {}
+        : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {}
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

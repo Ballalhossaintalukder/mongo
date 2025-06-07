@@ -28,17 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <cmath>
-#include <iterator>
-#include <s2cellid.h>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_geo_near.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -53,7 +43,6 @@
 #include "mongo/db/matcher/expression.h"
 #include "mongo/db/matcher/expression_geo.h"
 #include "mongo/db/matcher/expression_parser.h"
-#include "mongo/db/pipeline/document_source_geo_near.h"
 #include "mongo/db/pipeline/document_source_internal_compute_geo_near_distance.h"
 #include "mongo/db/pipeline/document_source_internal_unpack_bucket.h"
 #include "mongo/db/pipeline/document_source_match.h"
@@ -65,6 +54,19 @@
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/db/query/sort_pattern.h"
 #include "mongo/logv2/log.h"
+
+#include <algorithm>
+#include <cmath>
+#include <iterator>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <s2cellid.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -88,7 +90,6 @@ Value DocumentSourceGeoNear::serialize(const SerializationOptions& opts) const {
         result.setField(kKeyFieldName, Value(opts.serializeFieldPath(*keyFieldPath)));
     }
 
-
     // Serialize the expression as a literal if possible
     auto serializeExpr = [&](boost::intrusive_ptr<Expression> expr) -> Value {
         if (auto constExpr = dynamic_cast<ExpressionConstant*>(expr.get()); constExpr) {
@@ -111,7 +112,10 @@ Value DocumentSourceGeoNear::serialize(const SerializationOptions& opts) const {
         result.setField("minDistance", serializeExpr(minDistance));
     }
 
-    result.setField("query", query ? Value(query->getMatchExpression()->serialize(opts)) : Value());
+    // When the query is missing, we serialize to an empty document here (instead of omitting) in
+    // order to maintain stability of the query shape hash for this stage. See SERVER-104645.
+    result.setField("query",
+                    query ? Value(query->getMatchExpression()->serialize(opts)) : Value{BSONObj{}});
     result.setField("spherical", opts.serializeLiteral(spherical));
     if (distanceMultiplier) {
         result.setField("distanceMultiplier", opts.serializeLiteral(*distanceMultiplier));
@@ -377,8 +381,6 @@ bool DocumentSourceGeoNear::hasQuery() const {
 void DocumentSourceGeoNear::parseOptions(BSONObj options,
                                          const boost::intrusive_ptr<ExpressionContext>& pCtx) {
 
-    const std::string nearStr = "near";
-    const std::string distanceFieldStr = "distanceField";
     // First, check for explicitly-disallowed fields.
 
     // The old geoNear command used to accept a collation. We explicitly ban it here, since the
@@ -398,18 +400,18 @@ void DocumentSourceGeoNear::parseOptions(BSONObj options,
     uassert(50856, "$geoNear no longer supports the 'start' argument.", !options["start"]);
 
     // The "near" parameter is required.
-    uassert(5860400, "$geoNear requires a 'near' argument", options[nearStr]);
+    uassert(5860400, "$geoNear requires a 'near' argument", options[kNearFieldName]);
 
     // go through all the fields
     for (auto&& argument : options) {
         const auto argName = argument.fieldNameStringData();
-        if (argName == nearStr) {
+        if (argName == kNearFieldName) {
             _nearGeometry =
                 Expression::parseOperand(pCtx.get(), argument, pCtx->variablesParseState);
-        } else if (argName == distanceFieldStr) {
+        } else if (argName == kDistanceFieldFieldName) {
             uassert(16606,
                     "$geoNear requires that the 'distanceField' option is a String",
-                    argument.type() == String);
+                    argument.type() == BSONType::string);
             distanceField = FieldPath(argument.str());
         } else if (argName == "maxDistance") {
             maxDistance = Expression::parseOperand(pCtx.get(), argument, pCtx->variablesParseState);
@@ -426,17 +428,17 @@ void DocumentSourceGeoNear::parseOptions(BSONObj options,
         } else if (argName == "query") {
             uassert(ErrorCodes::TypeMismatch,
                     "query must be an object",
-                    argument.type() == BSONType::Object);
+                    argument.type() == BSONType::object);
             auto queryObj = argument.embeddedObject();
             if (!queryObj.isEmpty()) {
                 query = std::make_unique<Matcher>(queryObj.getOwned(), pExpCtx);
             }
         } else if (argName == "spherical") {
             spherical = argument.trueValue();
-        } else if (argName == "includeLocs") {
+        } else if (argName == kIncludeLocsFieldName) {
             uassert(16607,
                     "$geoNear requires that 'includeLocs' option is a String",
-                    argument.type() == String);
+                    argument.type() == BSONType::string);
             includeLocs = FieldPath(argument.str());
         } else if (argName == "uniqueDocs") {
             LOGV2_WARNING(23758,
@@ -446,7 +448,7 @@ void DocumentSourceGeoNear::parseOptions(BSONObj options,
                     str::stream() << "$geoNear parameter '" << DocumentSourceGeoNear::kKeyFieldName
                                   << "' must be of type string but found type: "
                                   << typeName(argument.type()),
-                    argument.type() == BSONType::String);
+                    argument.type() == BSONType::string);
             const auto keyFieldStr = argument.valueStringData();
             uassert(ErrorCodes::BadValue,
                     str::stream() << "$geoNear parameter '" << DocumentSourceGeoNear::kKeyFieldName
@@ -553,7 +555,9 @@ void DocumentSourceGeoNear::addVariableRefs(std::set<Variables::Id>* refs) const
 }
 
 DocumentSourceGeoNear::DocumentSourceGeoNear(const intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageName, pExpCtx), spherical(false) {}
+    : DocumentSource(kStageName, pExpCtx),
+      exec::agg::Stage(kStageName, pExpCtx),
+      spherical(false) {}
 
 boost::optional<DocumentSource::DistributedPlanLogic>
 DocumentSourceGeoNear::distributedPlanLogic() {

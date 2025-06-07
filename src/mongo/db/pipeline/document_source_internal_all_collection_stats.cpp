@@ -29,16 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_internal_all_collection_stats.h"
 
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <list>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -54,6 +44,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <iterator>
+#include <list>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 using boost::intrusive_ptr;
@@ -62,6 +62,7 @@ DocumentSourceInternalAllCollectionStats::DocumentSourceInternalAllCollectionSta
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
     DocumentSourceInternalAllCollectionStatsSpec spec)
     : DocumentSource(kStageNameInternal, pExpCtx),
+      exec::agg::Stage(kStageNameInternal, pExpCtx),
       _internalAllCollectionStatsSpec(std::move(spec)) {}
 
 REGISTER_DOCUMENT_SOURCE(_internalAllCollectionStats,
@@ -182,7 +183,7 @@ intrusive_ptr<DocumentSource> DocumentSourceInternalAllCollectionStats::createFr
     uassert(6789103,
             str::stream() << "$_internalAllCollectionStats must take a nested object but found: "
                           << elem,
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     uassert(6789104,
             "The $_internalAllCollectionStats stage must be run on the admin database",
@@ -196,7 +197,7 @@ intrusive_ptr<DocumentSource> DocumentSourceInternalAllCollectionStats::createFr
 }
 
 const char* DocumentSourceInternalAllCollectionStats::getSourceName() const {
-    return kStageNameInternal.rawData();
+    return kStageNameInternal.data();
 }
 
 Value DocumentSourceInternalAllCollectionStats::serialize(const SerializationOptions& opts) const {

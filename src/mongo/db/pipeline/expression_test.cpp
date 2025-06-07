@@ -30,10 +30,6 @@
 #include <absl/container/node_hash_map.h>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <climits>
-#include <cmath>
-#include <limits>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -65,6 +61,10 @@
 #include "mongo/util/summation.h"
 #include "mongo/util/time_support.h"
 
+#include <climits>
+#include <cmath>
+#include <limits>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 namespace mongo {
@@ -79,14 +79,15 @@ static BSONObj constify(const BSONObj& obj, bool parentIsArray = false) {
     BSONObjBuilder bob;
     for (BSONObjIterator itr(obj); itr.more(); itr.next()) {
         BSONElement elem = *itr;
-        if (elem.type() == Object) {
+        if (elem.type() == BSONType::object) {
             bob << elem.fieldName() << constify(elem.Obj(), false);
-        } else if (elem.type() == Array && !parentIsArray) {
+        } else if (elem.type() == BSONType::array && !parentIsArray) {
             // arrays within arrays are treated as constant values by the real
             // parser
             bob << elem.fieldName() << BSONArray(constify(elem.Obj(), true));
         } else if (elem.fieldNameStringData() == "$const" ||
-                   (elem.type() == mongo::String && elem.valueStringDataSafe().startsWith("$"))) {
+                   (elem.type() == BSONType::string &&
+                    elem.valueStringDataSafe().starts_with("$"))) {
             bob.append(elem);
         } else {
             bob.append(elem.fieldName(), BSON("$const" << elem));
@@ -2202,7 +2203,7 @@ TEST(ExpressionFLEStartsWithTest, ParseAssertConstraints) {
                 prefix: {
                     "$binary" : {
                         base64:
-                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                             "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                         subType: "6"
                     }
                 }
@@ -2211,6 +2212,26 @@ TEST(ExpressionFLEStartsWithTest, ParseAssertConstraints) {
 
         auto* startsWith = dynamic_cast<ExpressionEncStrStartsWith*>(parsedExpr.get());
         ASSERT_NE(startsWith, nullptr);
+    }
+
+    // Error with incorrect BinData type - must be placeholder or kFLE2FindTextPayload.
+    {
+        auto exprInvalidBson = fromjson(R"(
+            {$encStrStartsWith: {
+                input: "$foo",
+                prefix: {
+                    "$binary" : {
+                        base64:
+                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                        subType: "6"
+                    }
+                }
+            }})");
+
+        ASSERT_THROWS_CODE(
+            ExpressionEncStrStartsWith::parse(&expCtx, exprInvalidBson.firstElement(), vps),
+            DBException,
+            10112803);
     }
 }
 
@@ -2236,7 +2257,7 @@ TEST(ExpressionFLEStartsWithTest, ParseBinDataPayloadRoundtrip) {
             prefix: {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
             }
@@ -2251,7 +2272,7 @@ TEST(ExpressionFLEStartsWithTest, ParseBinDataPayloadRoundtrip) {
                "$const": {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
     }}
@@ -2343,7 +2364,7 @@ TEST(ExpressionFLEEndsWithTest, ParseAssertConstraints) {
                 suffix: {
                     "$binary" : {
                         base64:
-                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                             "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                         subType: "6"
                     }
                 }
@@ -2352,6 +2373,26 @@ TEST(ExpressionFLEEndsWithTest, ParseAssertConstraints) {
 
         auto* endsWith = dynamic_cast<ExpressionEncStrEndsWith*>(parsedExpr.get());
         ASSERT_NE(endsWith, nullptr);
+    }
+
+    // Error with incorrect BinData type - must be placeholder or kFLE2FindTextPayload.
+    {
+        auto exprInvalidBson = fromjson(R"(
+            {$encStrEndsWith: {
+                input: "$foo",
+                suffix: {
+                    "$binary" : {
+                        base64:
+                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                        subType: "6"
+                    }
+                }
+            }})");
+
+        ASSERT_THROWS_CODE(
+            ExpressionEncStrEndsWith::parse(&expCtx, exprInvalidBson.firstElement(), vps),
+            DBException,
+            10112803);
     }
 }
 
@@ -2377,7 +2418,7 @@ TEST(ExpressionFLEEndsWithTest, ParseBinDataPayloadRoundtrip) {
             suffix: {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
             }
@@ -2392,7 +2433,7 @@ TEST(ExpressionFLEEndsWithTest, ParseBinDataPayloadRoundtrip) {
                "$const": {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
     }}
@@ -2484,7 +2525,7 @@ TEST(ExpressionFLEStrContainsTest, ParseAssertConstraints) {
                 substring: {
                     "$binary" : {
                         base64:
-                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                             "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                         subType: "6"
                     }
                 }
@@ -2493,6 +2534,26 @@ TEST(ExpressionFLEStrContainsTest, ParseAssertConstraints) {
 
         auto* contains = dynamic_cast<ExpressionEncStrContains*>(parsedExpr.get());
         ASSERT_NE(contains, nullptr);
+    }
+
+    // Error with incorrect BinData type - must be placeholder or kFLE2FindTextPayload.
+    {
+        auto exprInvalidBson = fromjson(R"(
+            {$encStrContains: {
+                input: "$foo",
+                substring: {
+                    "$binary" : {
+                        base64:
+                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                        subType: "6"
+                    }
+                }
+            }})");
+
+        ASSERT_THROWS_CODE(
+            ExpressionEncStrContains::parse(&expCtx, exprInvalidBson.firstElement(), vps),
+            DBException,
+            10112803);
     }
 }
 
@@ -2518,7 +2579,7 @@ TEST(ExpressionFLEStrContainsTest, ParseBinDataPayloadRoundtrip) {
             substring: {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
             }
@@ -2533,7 +2594,7 @@ TEST(ExpressionFLEStrContainsTest, ParseBinDataPayloadRoundtrip) {
                "$const": {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }}}}})");
 
@@ -2624,7 +2685,7 @@ TEST(ExpressionFLEStrNormalizedEqTest, ParseAssertConstraints) {
                 string: {
                     "$binary" : {
                         base64:
-                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                             "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                         subType: "6"
                     }
                 }
@@ -2634,6 +2695,26 @@ TEST(ExpressionFLEStrNormalizedEqTest, ParseAssertConstraints) {
 
         auto* normalizedEq = dynamic_cast<ExpressionEncStrNormalizedEq*>(parsedExpr.get());
         ASSERT_NE(normalizedEq, nullptr);
+    }
+
+    // Error with incorrect BinData type - must be placeholder or kFLE2FindTextPayload.
+    {
+        auto exprInvalidBson = fromjson(R"(
+            {$encStrNormalizedEq: {
+                input: "$foo",
+                string: {
+                    "$binary" : {
+                        base64:
+                             "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                        subType: "6"
+                    }
+                }
+            }})");
+
+        ASSERT_THROWS_CODE(
+            ExpressionEncStrNormalizedEq::parse(&expCtx, exprInvalidBson.firstElement(), vps),
+            DBException,
+            10112803);
     }
 }
 
@@ -2659,7 +2740,7 @@ TEST(ExpressionFLEStrNormalizedEqTest, ParseBinDataPayloadRoundtrip) {
             string: {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }
             }
@@ -2674,7 +2755,7 @@ TEST(ExpressionFLEStrNormalizedEqTest, ParseBinDataPayloadRoundtrip) {
                "$const": {
                 "$binary" : {
                     base64:
-                         "BxI0VngSNJh2EjQSNFZ4kBIQ0JE8aMUFkPk5sSTVqfdNNfjqUfQQ1Uoj0BBcthrWoe9wyU3cN6zmWaQBPJ97t0ZPbecnMsU736yXre6cBO4Zdt/wThtY+v5+7vFgNnWpgRP0e+vam6QPmLvbBrO0LdsvAPTGW4yqwnzCIXCoEg7QPGfbfAXKPDTNenBfRlawiblmTOhO/6ljKotWsMp22q/rpHrn9IEIeJmecwuuPIJ7EA+XYQ3hOKVccYf2ogoK73+8xD/Vul83Qvr84Q8afc4QUMVs8A==",
+                         "A5AAAAEEdAACAAAAEGEARAAAAFWtpAQAAAABOUkiIcv1EcpWTI5w7Tcwls1AFQAAAAAE5SSIcv1EcpWTI5w7Tcwls1AFwAAAAAnYAMAAAAV2kAhjYXNlZgAIaGlhY2YAAnByZWZpeAAVAAAAEG9bAgAAAAGMYgACAAAAAABJjbAAwAAAAA==",
                     subType: "6"
                 }}}}})");
 

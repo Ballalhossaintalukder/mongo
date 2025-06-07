@@ -27,16 +27,13 @@
  *    it in the license file.
  */
 
-#include <string>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_count.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/pipeline/document_source_count.h"
 #include "mongo/db/pipeline/document_source_group.h"
 #include "mongo/db/pipeline/document_source_project.h"
 #include "mongo/db/pipeline/expression_context.h"
@@ -45,6 +42,10 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -61,7 +62,7 @@ list<intrusive_ptr<DocumentSource>> DocumentSourceCount::createFromBson(
     BSONElement elem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
     uassert(40156,
             str::stream() << "the count field must be a non-empty string",
-            elem.type() == String);
+            elem.type() == BSONType::string);
 
     StringData elemString = elem.valueStringData();
     uassert(

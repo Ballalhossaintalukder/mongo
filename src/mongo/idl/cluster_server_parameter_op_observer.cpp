@@ -29,19 +29,19 @@
 
 #include "mongo/idl/cluster_server_parameter_op_observer.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/timestamp.h"
-#include "mongo/db/db_raii.h"
+#include "mongo/db/shard_role.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/idl/cluster_parameter_synchronization_helpers.h"
 #include "mongo/logv2/log.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -125,7 +125,7 @@ void ClusterServerParameterOpObserver::onDelete(OperationContext* opCtx,
     }
 
     auto elem = doc[kIdField];
-    if (elem.type() != BSONType::String) {
+    if (elem.type() != BSONType::string) {
         // This delete makes no sense, but it's safe to ignore since the insert/update
         // would not have resulted in an in-memory update anyway.
         LOGV2_DEBUG(6226304,
@@ -194,11 +194,17 @@ void ClusterServerParameterOpObserver::onReplicationRollback(OperationContext* o
             continue;
         }
 
-        AutoGetCollectionForRead coll{opCtx,
-                                      NamespaceString::makeClusterParametersNSS(nss.tenantId())};
-        if (coll.getCollection()) {
+        const auto coll = acquireCollection(
+            opCtx,
+            CollectionAcquisitionRequest(NamespaceString::makeClusterParametersNSS(nss.tenantId()),
+                                         PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                         repl::ReadConcernArgs::get(opCtx),
+                                         AcquisitionPrerequisites::kRead),
+            MODE_IS);
+
+        if (coll.exists()) {
             cluster_parameters::resynchronizeAllTenantParametersFromCollection(
-                opCtx, *coll.getCollection().get());
+                opCtx, *coll.getCollectionPtr().get());
         } else {
             cluster_parameters::clearAllTenantParameters(opCtx, nss.tenantId());
         }

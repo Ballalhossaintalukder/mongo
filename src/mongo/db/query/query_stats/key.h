@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <absl/hash/hash.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <utility>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -48,6 +39,16 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/rpc/metadata/client_metadata.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <utility>
+
+#include <absl/hash/hash.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::query_stats {
 
@@ -301,8 +302,8 @@ protected:
      */
     Key(OperationContext* opCtx,
         std::unique_ptr<query_shape::Shape> queryShape,
-        boost::optional<BSONObj> hint,
-        boost::optional<repl::ReadConcernArgs> readConcern,
+        const boost::optional<BSONObj>& hint,
+        const boost::optional<repl::ReadConcernArgs>& readConcern,
         bool hasMaxTimeMS,
         query_shape::CollectionType collectionType = query_shape::CollectionType::kUnknown);
 

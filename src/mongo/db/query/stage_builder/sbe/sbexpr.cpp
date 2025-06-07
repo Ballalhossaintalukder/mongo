@@ -29,14 +29,14 @@
 
 #include "mongo/db/query/stage_builder/sbe/sbexpr.h"
 
-#include <charconv>
-
 #include "mongo/db/query/stage_builder/sbe/abt_holder_impl.h"
 #include "mongo/db/query/stage_builder/sbe/abt_lower.h"
 #include "mongo/db/query/stage_builder/sbe/builder.h"
 #include "mongo/db/query/stage_builder/sbe/expression_const_eval.h"
 #include "mongo/db/query/stage_builder/sbe/type_checker.h"
 #include "mongo/db/query/stage_builder/sbe/value_lifetime.h"
+
+#include <charconv>
 
 namespace mongo::stage_builder {
 using SlotId = sbe::value::SlotId;
@@ -64,9 +64,9 @@ boost::optional<SlotId> getSbeVariableInfo(const abt::ProjectionName& var) {
     constexpr StringData prefix = "__s"_sd;
     StringData name = var.value();
 
-    if (name.startsWith(prefix)) {
-        const char* ptr = name.rawData() + prefix.size();
-        const char* endPtr = name.rawData() + name.size();
+    if (name.starts_with(prefix)) {
+        const char* ptr = name.data() + prefix.size();
+        const char* endPtr = name.data() + name.size();
 
         SlotId slotId;
         auto fromCharsResult = std::from_chars(ptr, endPtr, slotId);
@@ -84,9 +84,9 @@ boost::optional<std::pair<FrameId, SlotId>> getSbeLocalVariableInfo(
     constexpr StringData prefix = "__l"_sd;
     StringData name = var.value();
 
-    if (name.startsWith(prefix)) {
-        const char* ptr = name.rawData() + prefix.size();
-        const char* endPtr = name.rawData() + name.size();
+    if (name.starts_with(prefix)) {
+        const char* ptr = name.data() + prefix.size();
+        const char* endPtr = name.data() + name.size();
 
         FrameId frameId;
         auto fromCharsResult = std::from_chars(ptr, endPtr, frameId);

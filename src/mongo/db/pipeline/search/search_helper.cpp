@@ -29,14 +29,6 @@
 
 #include "mongo/db/pipeline/search/search_helper.h"
 
-#include <boost/optional/optional.hpp>
-#include <list>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/db/exec/shard_filterer_impl.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_replace_root.h"
@@ -55,6 +47,14 @@
 #include "mongo/db/views/resolved_view.h"
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
 #include "mongo/util/assert_util.h"
+
+#include <list>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -246,29 +246,23 @@ bool hasReferenceToSearchMeta(const DocumentSource& ds) {
 }
 
 bool isSearchPipeline(const Pipeline* pipeline) {
-    if (!pipeline || pipeline->getSources().empty()) {
+    if (!pipeline || pipeline->empty()) {
         return false;
     }
     return isSearchStage(pipeline->peekFront());
 }
 
 bool isSearchMetaPipeline(const Pipeline* pipeline) {
-    if (!pipeline || pipeline->getSources().empty()) {
+    if (!pipeline || pipeline->empty()) {
         return false;
     }
     return isSearchMetaStage(pipeline->peekFront());
 }
 
-void addResolvedNamespaceForSearch(const NamespaceString& origNss,
-                                   const ResolvedView& resolvedView,
-                                   boost::intrusive_ptr<ExpressionContext> expCtx) {
-    expCtx->setView(boost::make_optional(std::make_pair(origNss, resolvedView.getPipeline())));
-}
-
-void checkAndAddResolvedNamespaceForSearch(boost::intrusive_ptr<ExpressionContext> expCtx,
-                                           const std::vector<mongo::BSONObj> pipelineObj,
-                                           ResolvedView resolvedView,
-                                           const NamespaceString& viewName) {
+void checkAndSetViewOnExpCtx(boost::intrusive_ptr<ExpressionContext> expCtx,
+                             const std::vector<mongo::BSONObj> pipelineObj,
+                             ResolvedView resolvedView,
+                             const NamespaceString& viewName) {
     auto lpp = LiteParsedPipeline(viewName, pipelineObj);
 
     // Search queries on views behave differently than non-search aggregations on views.
@@ -286,7 +280,7 @@ void checkAndAddResolvedNamespaceForSearch(boost::intrusive_ptr<ExpressionContex
     // view pipeline after idLookup.
     if (expCtx->isFeatureFlagMongotIndexedViewsEnabled() && lpp.hasSearchStage() &&
         !search_helper_bson_obj::isStoredSource(pipelineObj)) {
-        search_helpers::addResolvedNamespaceForSearch(viewName, resolvedView, expCtx);
+        expCtx->setView(boost::make_optional(std::make_pair(viewName, resolvedView.getPipeline())));
     }
 }
 
@@ -306,7 +300,7 @@ bool isStoredSource(const Pipeline* pipeline) {
 }
 
 bool isMongotPipeline(const Pipeline* pipeline) {
-    if (!pipeline || pipeline->getSources().empty()) {
+    if (!pipeline || pipeline->empty()) {
         return false;
     }
     return isMongotStage(pipeline->peekFront());
@@ -672,7 +666,11 @@ boost::optional<SearchQueryViewSpec> getViewFromBSONObj(
     boost::intrusive_ptr<ExpressionContext> expCtx, BSONObj spec) {
     // First, check if the view is held on the spec object (sharded scenarios).
     boost::optional<SearchQueryViewSpec> view;
-    if (spec.hasField("view") && spec["view"].type() == BSONType::Object) {
+    if (spec.hasField("view") && spec["view"].type() == BSONType::object) {
+        // If we are setting the view from the spec, the spec must be from an internal client. This
+        // is to prevent users from injecting a view into a search stage definition.
+        assertAllowedInternalIfRequired(
+            expCtx->getOperationContext(), "view", AllowedWithClientType::kInternal);
         view = SearchQueryViewSpec::parse(IDLParserContext("unpack SearchQueryViewSpec"),
                                           spec["view"].embeddedObject());
     }

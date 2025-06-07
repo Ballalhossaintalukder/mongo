@@ -33,13 +33,13 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <type_traits>
-
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/ctype.h"
+#include "mongo/util/str.h"
+
+#include <algorithm>
+#include <type_traits>
 
 namespace mongo {
 
@@ -192,7 +192,7 @@ void FieldRef::reserialize() const {
         if (i > 0)
             nextDotted.append(1, '.');
         const StringData part = getPart(i);
-        nextDotted.append(part.rawData(), part.size());
+        nextDotted.append(part.data(), part.size());
     }
 
     // Make the new string our contents
@@ -296,8 +296,7 @@ bool FieldRef::isNumericPathComponentStrict(StringData component) {
 }
 
 bool FieldRef::isNumericPathComponentLenient(StringData component) {
-    return !component.empty() &&
-        std::all_of(component.begin(), component.end(), [](auto c) { return ctype::isDigit(c); });
+    return !component.empty() && str::isAllDigits(component);
 }
 
 bool FieldRef::isNumericPathComponentStrict(FieldIndex i) const {
@@ -430,7 +429,7 @@ bool FieldRef::equalsDottedField(StringData other) const {
     for (size_t i = 0; i < _parts.size(); i++) {
         StringData part = getPart(i);
 
-        if (!rest.startsWith(part))
+        if (!rest.starts_with(part))
             return false;
 
         if (i == _parts.size() - 1)

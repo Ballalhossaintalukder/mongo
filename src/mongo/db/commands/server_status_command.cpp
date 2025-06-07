@@ -28,12 +28,6 @@
  */
 
 
-#include <ctime>
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -71,6 +65,12 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/version.h"
+
+#include <ctime>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -139,7 +139,7 @@ public:
         auto uptime = clock->now() - _started;
         result.append("uptimeMillis", durationCount<Milliseconds>(uptime));
         result.append("uptimeEstimate", durationCount<Seconds>(uptime));
-        result.appendDate("localTime", jsTime());
+        result.appendDate("localTime", Date_t::now());
 
         timeBuilder.appendNumber("after basic",
                                  durationCount<Milliseconds>(clock->now() - runStart));
@@ -147,7 +147,7 @@ public:
         // Individual section 'includeByDefault()' settings will be bypassed if the caller specified
         // {all: 1}.
         const auto& allElem = cmdObj["all"];
-        bool includeAllSections = allElem.type() ? allElem.trueValue() : false;
+        bool includeAllSections = stdx::to_underlying(allElem.type()) ? allElem.trueValue() : false;
 
         // --- all sections
         auto registry = ServerStatusSectionRegistry::instance();
@@ -160,7 +160,7 @@ public:
 
             bool include = section->includeByDefault();
             const auto& elem = cmdObj[section->getSectionName()];
-            if (elem.type()) {
+            if (stdx::to_underlying(elem.type())) {
                 include = elem.trueValue();
             }
 
@@ -172,7 +172,15 @@ public:
                 continue;
             }
 
-            section->appendSection(opCtx, elem, &result);
+            try {
+                section->appendSection(opCtx, elem, &result);
+            } catch (...) {
+                LOGV2_ERROR(9761501,
+                            "Section threw an error",
+                            "error"_attr = exceptionToStatus(),
+                            "section"_attr = section->getSectionName());
+                throw;
+            }
             timeBuilder.appendNumber(
                 static_cast<std::string>(str::stream() << "after " << section->getSectionName()),
                 durationCount<Milliseconds>(clock->now() - runStart));
@@ -189,7 +197,7 @@ public:
             if (auto svc = opCtx->getService())
                 metricTrees.push_back(&treeSet[svc->role()]);
             BSONObj excludePaths;
-            if (metricsEl.type() == BSONType::Object)
+            if (metricsEl.type() == BSONType::object)
                 excludePaths = BSON("metrics" << metricsEl.embeddedObject());
             appendMergedTrees(metricTrees, result, excludePaths);
         }

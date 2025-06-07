@@ -28,19 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <array>
-#include <cstring>
-#include <fmt/format.h>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/fle_crud.h"
 
 #include "mongo/base/data_range.h"
 #include "mongo/base/error_codes.h"
@@ -65,7 +53,6 @@
 #include "mongo/db/catalog/clustered_collection_util.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
-#include "mongo/db/fle_crud.h"
 #include "mongo/db/fle_query_interface_mock.h"
 #include "mongo/db/fts/unicode/string.h"
 #include "mongo/db/namespace_string.h"
@@ -93,6 +80,20 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -964,7 +965,7 @@ TEST_F(FleCrudTest, InsertV1PayloadAgainstV2Protocol) {
     payload.setServerEncryptionToken({{}});
     payload.setEncryptedTokens(bogusEncryptedTokens);
     payload.setValue(buf);
-    payload.setType(BSONType::String);
+    payload.setType(stdx::to_underlying(BSONType::string));
 
     std::vector<EDCServerPayloadInfo> serverPayload(1);
     serverPayload.front().fieldPathName = "encrypted";
@@ -994,7 +995,7 @@ TEST_F(FleCrudTest, InsertUnindexedV1AgainstV2Protocol) {
     payload.setServerEncryptionToken({{}});
     payload.setEncryptedTokens(bogusEncryptedTokens);
     payload.setValue(std::vector<uint8_t>{64});
-    payload.setType(BSONType::String);
+    payload.setType(stdx::to_underlying(BSONType::string));
     payload.setContentionFactor(0);
     payload.setIndexKeyId(indexKeyId);
     auto iup = payload.toBSON();
@@ -1033,8 +1034,15 @@ TEST_F(FleCrudTest, InsertUnindexedV1AgainstV2Protocol) {
 // search token sets ('b') is rejected.
 TEST_F(FleCrudTest, InsertPayloadIsBothRangeAndTextSearch) {
     auto bogusEncryptedTokens = StateCollectionTokensV2({{}}, false).encrypt({{}});
-    FLE2InsertUpdatePayloadV2 payload(
-        {}, {}, bogusEncryptedTokens, indexKeyId, BSONType::String, {}, {}, {}, 0);
+    FLE2InsertUpdatePayloadV2 payload({},
+                                      {},
+                                      bogusEncryptedTokens,
+                                      indexKeyId,
+                                      stdx::to_underlying(BSONType::string),
+                                      {},
+                                      {},
+                                      {},
+                                      0);
     payload.setEdgeTokenSet(std::vector<EdgeTokenSetV2>{{{}, {}, {}, bogusEncryptedTokens}});
     payload.setTextSearchTokenSets(
         TextSearchTokenSets{{{}, {}, {}, bogusEncryptedTokens}, {}, {}, {}});
@@ -1438,8 +1446,15 @@ TEST_F(FleCrudTest, FindAndModify_SetSafeContent) {
 BSONObj makeInsertUpdatePayload(StringData path, const UUID& uuid) {
     // Actual values don't matter for these tests (apart from indexKeyId).
     auto encryptedTokens = StateCollectionTokensV2({{}}, boost::none).encrypt({{}});
-    auto bson = FLE2InsertUpdatePayloadV2(
-                    {}, {}, std::move(encryptedTokens), uuid, BSONType::String, {}, {}, {}, 0)
+    auto bson = FLE2InsertUpdatePayloadV2({},
+                                          {},
+                                          std::move(encryptedTokens),
+                                          uuid,
+                                          stdx::to_underlying(BSONType::string),
+                                          {},
+                                          {},
+                                          {},
+                                          0)
                     .toBSON();
     std::vector<std::uint8_t> bindata;
     bindata.resize(bson.objsize() + 1);
@@ -1459,7 +1474,7 @@ TEST_F(FleCrudTest, validateIndexKeyValid) {
 
     auto validInsert = makeInsertUpdatePayload(field.getPath(), field.getKeyId());
     auto validPayload = EDCServerCollection::getEncryptedFieldInfo(validInsert);
-    validateInsertUpdatePayloads(fields, validPayload);
+    validateInsertUpdatePayloads(_opCtx.get(), fields, validPayload);
 }
 
 TEST_F(FleCrudTest, validateIndexKeyInvalid) {
@@ -1470,7 +1485,7 @@ TEST_F(FleCrudTest, validateIndexKeyInvalid) {
 
     auto invalidInsert = makeInsertUpdatePayload(field.getPath(), UUID::gen());
     auto invalidPayload = EDCServerCollection::getEncryptedFieldInfo(invalidInsert);
-    ASSERT_THROWS_WITH_CHECK(validateInsertUpdatePayloads(fields, invalidPayload),
+    ASSERT_THROWS_WITH_CHECK(validateInsertUpdatePayloads(_opCtx.get(), fields, invalidPayload),
                              DBException,
                              [&](const DBException& ex) {
                                  ASSERT_STRING_CONTAINS(ex.what(),
@@ -1763,12 +1778,6 @@ protected:
     stdx::unordered_set<std::string> getExpectedPrefixes(const unicode::String& foldedString,
                                                          uint32_t lb,
                                                          uint32_t ub);
-    uint32_t getMsizeForSubstring(StringData unfoldedString,
-                                  uint32_t lb,
-                                  uint32_t ub,
-                                  uint32_t mlen);
-    uint32_t getMsizeForPrefixSuffix(StringData unfoldedString, uint32_t lb, uint32_t ub);
-
     void verifyExpectationsAfterInsertions(
         const std::vector<std::pair<StringData, StringData>>& inserted);
 
@@ -2088,38 +2097,6 @@ stdx::unordered_set<std::string> QETextSearchCrudTest::getExpectedPrefixes(
     return res;
 }
 
-uint32_t QETextSearchCrudTest::getMsizeForSubstring(StringData unfoldedString,
-                                                    uint32_t lb,
-                                                    uint32_t ub,
-                                                    uint32_t mlen) {
-    // See
-    // https://github.com/10gen/mongo/blob/master/src/mongo/db/modules/enterprise/docs/fle/fle_string_search.md#strencode-substring
-    // for an explanation of this calculation.
-    uint32_t padded_len = uint32_t((unfoldedString.size() + 5 + 15) / 16) * 16 - 5;
-    if (lb > padded_len) {
-        return 0;
-    }
-    padded_len = std::min(mlen, padded_len);
-    uint32_t largest_substring = std::min(padded_len, ub);
-    uint32_t largest_substring_count = padded_len - largest_substring + 1;
-    uint32_t smallest_substring_count = padded_len - lb + 1;
-    return (largest_substring_count + smallest_substring_count) *
-        (smallest_substring_count - largest_substring_count + 1) / 2;
-}
-
-uint32_t QETextSearchCrudTest::getMsizeForPrefixSuffix(StringData unfoldedString,
-                                                       uint32_t lb,
-                                                       uint32_t ub) {
-    // See
-    // https://github.com/10gen/mongo/blob/master/src/mongo/db/modules/enterprise/docs/fle/fle_string_search.md#strencode-suffix-and-prefix
-    // for an explanation of this calculation.
-    const uint32_t padded_len = uint32_t((unfoldedString.size() + 5 + 15) / 16) * 16 - 5;
-    if (lb > padded_len) {
-        return 0;
-    }
-    return std::min(ub, padded_len) - lb + 1;
-}
-
 void QETextSearchCrudTest::verifyExpectationsAfterInsertions(
     const std::vector<std::pair<StringData, StringData>>& inserted) {
     stdx::unordered_map<std::string, int> affixCounts[3];
@@ -2154,15 +2131,16 @@ void QETextSearchCrudTest::verifyExpectationsAfterInsertions(
             stdx::unordered_set<std::string> affixes;
             switch (schema.type) {
                 case QueryTypeEnum::SubstringPreview:
-                    msize = getMsizeForSubstring(unfoldedStr, schema.lb, schema.ub, schema.mlen);
+                    msize =
+                        msizeForSubstring(unfoldedStr.size(), schema.lb, schema.ub, schema.mlen);
                     affixes = getExpectedSubstrings(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 case QueryTypeEnum::SuffixPreview:
-                    msize = getMsizeForPrefixSuffix(unfoldedStr, schema.lb, schema.ub);
+                    msize = msizeForSuffixOrPrefix(unfoldedStr.size(), schema.lb, schema.ub);
                     affixes = getExpectedSuffixes(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 case QueryTypeEnum::PrefixPreview:
-                    msize = getMsizeForPrefixSuffix(unfoldedStr, schema.lb, schema.ub);
+                    msize = msizeForSuffixOrPrefix(unfoldedStr.size(), schema.lb, schema.ub);
                     affixes = getExpectedPrefixes(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 default:

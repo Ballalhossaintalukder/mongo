@@ -29,25 +29,12 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <list>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/auth/privilege.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/plan_stats.h"
 #include "mongo/db/namespace_string.h"
@@ -67,9 +54,23 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <algorithm>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceUnionWith final : public DocumentSource {
+class DocumentSourceUnionWith final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$unionWith"_sd;
 
@@ -101,24 +102,12 @@ public:
                             std::unique_ptr<Pipeline, PipelineDeleter> pipeline);
 
     DocumentSourceUnionWith(const DocumentSourceUnionWith& original,
-                            const boost::intrusive_ptr<ExpressionContext>& newExpCtx)
-        : DocumentSource(kStageName, newExpCtx),
-          _pipeline(original._pipeline->clone(
-              newExpCtx ? newExpCtx->copyForSubPipeline(
-                              newExpCtx->getResolvedNamespace(original._userNss).ns,
-                              newExpCtx->getResolvedNamespace(original._userNss).uuid)
-                        : nullptr)),
-          _userNss(original._userNss),
-          _userPipeline(original._userPipeline),
-          _variables(original._variables),
-          _variablesParseState(original._variablesParseState) {
-        _pipeline->getContext()->setInUnionWith(true);
-    }
+                            const boost::intrusive_ptr<ExpressionContext>& newExpCtx);
 
     ~DocumentSourceUnionWith() override;
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -189,7 +178,7 @@ public:
     }
 
     bool hasNonEmptyPipeline() const {
-        return _pipeline && !_pipeline->getSources().empty();
+        return _pipeline && !_pipeline->empty();
     }
 
     const Pipeline& getPipeline() const {
@@ -251,6 +240,7 @@ private:
         const ExceptionFor<ErrorCodes::CommandOnShardedViewNotSupportedOnMongod>& e) const;
 
     std::unique_ptr<Pipeline, PipelineDeleter> _pipeline;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
     // The original, unresolved namespace to union.
     NamespaceString _userNss;
     // The aggregation pipeline defined with the user request, prior to optimization and view

@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -46,6 +39,13 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -69,7 +69,7 @@ void AccumulatorPush::processInternal(const Value& input, bool merging) {
         // If we're merging, we need to take apart the arrays we receive and put their elements into
         // the array we are collecting.  If we didn't, then we'd get an array of arrays, with one
         // array from each merge source.
-        assertMergingInputType(input, Array);
+        assertMergingInputType(input, BSONType::array);
 
         const vector<Value>& vec = input.getArray();
         for (auto&& val : vec) {

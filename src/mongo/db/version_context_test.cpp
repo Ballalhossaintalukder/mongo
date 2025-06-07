@@ -28,11 +28,11 @@
  */
 #include "mongo/db/version_context.h"
 
-#include <fmt/format.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/unittest/unittest.h"
+
 #include "src/mongo/bson/bsonmisc.h"
+#include <fmt/format.h>
 
 namespace mongo {
 // (Generic FCV reference): used for testing, should exist across LTS binary versions
@@ -230,8 +230,7 @@ TEST_F(VersionContextTest, DeserializeFromInvalidDocument) {
     ASSERT_THROWS_BAD_VALUE(makeFromOFCVString("7.0"));
     ASSERT_THROWS_BAD_VALUE(makeFromOFCVString("99999999999999999999999999999999.0"));
 
-    // TODO(SERVER-102086): "invalid" should be a bad OFCV value
-    // ASSERT_THROWS_BAD_VALUE(makeFromOFCVString("invalid"));
+    ASSERT_THROWS_BAD_VALUE(makeFromOFCVString("invalid"));
     ASSERT_THROWS_BAD_VALUE(makeFromOFCVString("unset"));
     ASSERT_THROWS_BAD_VALUE(
         makeFromOFCVString(fmt::format(StringData("{}\0", 3), kLastLTSFCVString)));

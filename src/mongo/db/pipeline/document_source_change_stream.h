@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <list>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -68,6 +59,16 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 
+#include <list>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -83,7 +84,7 @@ public:
                                                  const LiteParserOptions& options) {
             uassert(6188500,
                     str::stream() << "$changeStream must take a nested object but found: " << spec,
-                    spec.type() == BSONType::Object);
+                    spec.type() == BSONType::object);
             return std::make_unique<LiteParsed>(spec.fieldName(), nss, spec);
         }
 
@@ -304,7 +305,7 @@ public:
     enum class ChangeStreamType { kSingleCollection, kSingleDatabase, kAllChangesForCluster };
 
     /**
-     * Helpers for Determining which regex to match a change stream against.
+     * Helpers for determining which regex to match a change stream against.
      */
     static ChangeStreamType getChangeStreamType(const NamespaceString& nss);
     static std::string regexEscapeNsForChangeStream(StringData source);
@@ -315,9 +316,54 @@ public:
         const boost::intrusive_ptr<ExpressionContext>& expCtx);
     static std::string getCollRegexForChangeStream(
         const boost::intrusive_ptr<ExpressionContext>& expCtx);
+    static std::string getViewNsRegexForChangeStream(
+        const boost::intrusive_ptr<ExpressionContext>& expCtx);
     static std::string getCmdNsRegexForChangeStream(
         const boost::intrusive_ptr<ExpressionContext>& expCtx);
-    static std::string getViewNsRegexForChangeStream(
+
+    /**
+     * Helper function that creates the BSON for matching changes to a specific namespace.
+     * This will always create a 'BSONObj' with an empty field name. The first and only
+     * 'BSONElement' in the 'BSONObj' will contain either a BSON String value with the collection
+     * name in case the change stream is opened on a single database, or a BSON RegEx if the change
+     * stream is opened on the entire cluster. Callers can use 'BSON("ns" <<
+     * getViewNsMatchObjForChangeStream(expCtx).firstElement())' to use the return value.
+     */
+    static BSONObj getNsMatchObjForChangeStream(
+        const boost::intrusive_ptr<ExpressionContext>& expCtx);
+
+    /**
+     * Helper function that creates the BSON for matching changes to view definitions.
+     * This will always create a 'BSONObj' with an empty field name. The first and only
+     * 'BSONElement' in the 'BSONObj' will contain either a BSON String value with the collection
+     * name in case the change stream is opened on a single database, or a BSON RegEx if the change
+     * stream is opened on the entire cluster. Callers can use 'BSON("ns" <<
+     * getViewNsMatchObjForChangeStream(expCtx).firstElement())' to use the return value.
+     */
+    static BSONObj getViewNsMatchObjForChangeStream(
+        const boost::intrusive_ptr<ExpressionContext>& expCtx);
+
+    /**
+     * Helper function that creates the BSON for matching a specific collection.
+     * This will always create a 'BSONObj' with an empty field name. The first and only
+     * 'BSONElement' in the 'BSONObj' will contain either a BSON String value with the collection
+     * name in case the change stream is opened on a single collection, and a BSON RegEx otherwise.
+     * Callers can use 'BSON("ns" << getCollMatchObjForChangeStream(expCtx).firstElement())' to use
+     * the return value.
+     */
+    static BSONObj getCollMatchObjForChangeStream(
+        const boost::intrusive_ptr<ExpressionContext>& expCtx);
+
+    /**
+     * Helper function that creates the BSON for matching the '$cmd' namespace.
+     * This will always create a 'BSONObj' with an empty field name. The first and only
+     * 'BSONElement' in the 'BSONObj' will contain either a BSON String value with the database or
+     * collection name in case the change stream is opened on a database or a collection, or a BSON
+     * RegEx if the change stream is opened on the entire cluster.
+     * Callers can use 'BSON("ns" << getCmdNsMatchObjForChangeStream(expCtx).firstElement())' to use
+     * the return value.
+     */
+    static BSONObj getCmdNsMatchObjForChangeStream(
         const boost::intrusive_ptr<ExpressionContext>& expCtx);
 
     /**
@@ -395,11 +441,11 @@ private:
  * shared logic between all of the internal change stream stages. For internally created match
  * stages see 'DocumentSourceInternalChangeStreamMatch'.
  */
-class DocumentSourceInternalChangeStreamStage : public DocumentSource {
+class DocumentSourceInternalChangeStreamStage : public DocumentSource, public exec::agg::Stage {
 public:
     DocumentSourceInternalChangeStreamStage(StringData stageName,
                                             const boost::intrusive_ptr<ExpressionContext>& expCtx)
-        : DocumentSource(stageName, expCtx) {}
+        : DocumentSource(stageName, expCtx), exec::agg::Stage(stageName, expCtx) {}
 
     Value serialize(const SerializationOptions& opts = SerializationOptions{}) const override {
         if (opts.isSerializingForQueryStats()) {

@@ -30,14 +30,6 @@
 
 #include "views_for_database.h"
 
-#include <string>
-#include <utility>
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_validate.h"
@@ -46,7 +38,6 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/basic_types_gen.h"
-#include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
@@ -68,6 +59,14 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 
+#include <string>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
 
@@ -79,6 +78,7 @@ RecordId find(OperationContext* opCtx,
     const IndexCatalogEntry* entry = systemViews->getIndexCatalog()->findIdIndex(opCtx)->getEntry();
     return entry->accessMethod()->asSortedData()->findSingle(
         opCtx,
+        *shard_role_details::getRecoveryUnit(opCtx),
         systemViews,
         entry,
         BSON("_id" << NamespaceStringUtil::serialize(viewName,

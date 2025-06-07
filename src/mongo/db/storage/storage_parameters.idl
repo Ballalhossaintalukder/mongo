@@ -111,22 +111,6 @@ server_parameters:
         default: true
         redact: false
 
-    maintainValidCursorsAcrossSBEReadCommands:
-        description: "Enable maintaining valid cursors across SBE read commands (find, agg, getMore)"
-        set_at: startup
-        cpp_varname: gMaintainValidCursorsAcrossReadCommands
-        cpp_vartype: bool
-        default: false
-        redact: false
-
-    maintainValidCursorsAcrossSBEYield:
-        description: "Enable retaining valid cursors across SBE query yield"
-        set_at: startup
-        cpp_varname: gYieldingSupportForSBE
-        cpp_vartype: bool
-        default: false
-        redact: false
-
     internalInsertMaxBatchSize:
         description: "Maximum number of documents that we will insert in a single batch."
         set_at: [startup, runtime]
@@ -222,6 +206,42 @@ server_parameters:
         default: false
         redact: false
 
+    cachePressureEvictionStallThresholdProportion:
+        description: "To adjust the thread pressure sensitivity proportion in detecting cache pressure for the storage engine."
+        set_at: [startup, runtime]
+        cpp_vartype: "AtomicWord<double>"
+        cpp_varname: gCachePressureEvictionStallThresholdProportion
+        default: 0.95
+        validator: {gte: 0, lte: 1}
+        redact: false
+
+    cachePressureEvictionStallDetectionWindowSeconds:
+        description: "The duration of time to allow cache pressure statistics to accumulate and average."
+        set_at: [startup, runtime]
+        cpp_vartype: "AtomicWord<int>"
+        cpp_varname: gCachePressureEvictionStallDetectionWindowSeconds
+        default: 30
+        validator: {gte: 1}
+        redact: false
+
+    cachePressureExponentiallyDecayingMovingAverageAlphaValue:
+        description: "The alpha value used to calculate the exponentially decaying moving average of total tickets."
+        set_at: [startup, runtime]
+        cpp_vartype: "AtomicWord<double>"
+        cpp_varname: gCachePressureExponentiallyDecayingMovingAverageAlphaValue
+        default: 0.1
+        validator: {gte: 0, lte: 1}
+        redact: false
+
+    # TODO (SERVER-102036): Remove this parameter.
+    disableSpillKVEngine:
+        description: "Temporary parameter to disable spill kv engine."
+        cpp_vartype: bool
+        cpp_varname: gDisableSpillKVEngine
+        set_at: startup
+        default: false
+        redact: false
+
 feature_flags:
     featureFlagLargeBatchedOperations:
         description: >-
@@ -266,3 +286,15 @@ feature_flags:
         cpp_varname: feature_flags::gStorageEngineInterruptibility
         default: false
         shouldBeFCVGated: false
+    featureFlagCreateSpillKVEngine:
+        description: "When enabled, create a second storage engine instance that is used for creating SpillTables."
+        cpp_varname: feature_flags::gFeatureFlagCreateSpillKVEngine
+        default: false
+        shouldBeFCVGated: false
+    featureFlagReplicateLocalCatalogIdentifiers:
+        description: >-
+            Enable replication of local catalog identifiers across replica set nodes, ensuring the
+            _mdb_catalog and its associated storage table 'ident' mappings remain consistent.
+        cpp_varname: feature_flags::gFeatureFlagReplicateLocalCatalogIdentifiers
+        default: false
+        shouldBeFCVGated: true

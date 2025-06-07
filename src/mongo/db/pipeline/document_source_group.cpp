@@ -29,14 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_group.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/inlined_vector.h>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <fmt/format.h>
-#include <utility>
-
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
@@ -54,6 +46,15 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/util/assert_util.h"
 
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
 constexpr StringData DocumentSourceGroup::kStageName;
@@ -65,17 +66,19 @@ REGISTER_DOCUMENT_SOURCE(group,
 ALLOCATE_DOCUMENT_SOURCE_ID(group, DocumentSourceGroup::id)
 
 const char* DocumentSourceGroup::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 boost::intrusive_ptr<DocumentSourceGroup> DocumentSourceGroup::create(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     const boost::intrusive_ptr<Expression>& groupByExpression,
     std::vector<AccumulationStatement> accumulationStatements,
+    bool willBeMerged,
     boost::optional<int64_t> maxMemoryUsageBytes) {
     boost::intrusive_ptr<DocumentSourceGroup> groupStage =
         new DocumentSourceGroup(expCtx, maxMemoryUsageBytes);
     groupStage->_groupProcessor.setIdExpression(groupByExpression);
+    groupStage->_groupProcessor.setWillBeMerged(willBeMerged);
     for (auto&& statement : accumulationStatements) {
         groupStage->_groupProcessor.addAccumulationStatement(statement);
     }

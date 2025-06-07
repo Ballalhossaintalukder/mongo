@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <iostream>
-#include <iterator>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "stitch_support/stitch_support.h"
 
 #include "mongo/base/initializer.h"
@@ -50,6 +42,14 @@
 #include "mongo/util/exit_code.h"
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/scopeguard.h"
+
+#include <algorithm>
+#include <iostream>
+#include <iterator>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -500,7 +500,7 @@ TEST_F(StitchSupportTest, TestReplacementZeroTimestamp) {
         mongo::fromjson(checkUpdate("{b: Timestamp(0, 0)}", "{_id: 123, a: 456}").c_str());
     auto elemB = result["b"];
     ASSERT_TRUE(elemB.ok());
-    ASSERT_EQUALS(elemB.type(), mongo::BSONType::bsonTimestamp);
+    ASSERT_EQUALS(elemB.type(), mongo::BSONType::timestamp);
     auto ts = elemB.timestamp();
     ASSERT_NOT_EQUALS(0U, ts.getSecs());
     ASSERT_NOT_EQUALS(0U, ts.getInc());
@@ -511,7 +511,7 @@ TEST_F(StitchSupportTest, TestUpdateCurrentDateTimestamp) {
         checkUpdate("{$currentDate: {b: {$type: 'timestamp'}}}", "{_id: 123, a: 456}").c_str());
     auto elemB = result["b"];
     ASSERT_TRUE(elemB.ok());
-    ASSERT_EQUALS(elemB.type(), mongo::BSONType::bsonTimestamp);
+    ASSERT_EQUALS(elemB.type(), mongo::BSONType::timestamp);
     auto ts = elemB.timestamp();
     ASSERT_NOT_EQUALS(0U, ts.getSecs());
     ASSERT_NOT_EQUALS(0U, ts.getInc());

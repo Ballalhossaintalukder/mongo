@@ -34,7 +34,6 @@
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
-#include "mongo/db/transaction_resources.h"
 
 namespace mongo {
 /**
@@ -74,13 +73,12 @@ protected:
     /**
      * Returns false if and only if the cursor advanced to EOF.
      */
-    [[nodiscard]] bool advanceWTCursor() {
+    [[nodiscard]] bool advanceWTCursor(RecoveryUnit& ru) {
         WT_CURSOR* c = _cursor->get();
         int ret = wiredTigerPrepareConflictRetry(
-            *_opCtx,
-            StorageExecutionContext::get(_opCtx)->getPrepareConflictTracker(),
-            *shard_role_details::getRecoveryUnit(_opCtx),
-            [&] { return _forward ? c->next(c) : c->prev(c); });
+            *_opCtx, StorageExecutionContext::get(_opCtx)->getPrepareConflictTracker(), ru, [&] {
+                return _forward ? c->next(c) : c->prev(c);
+            });
         if (ret == WT_NOTFOUND) {
             return false;
         }
@@ -88,23 +86,12 @@ protected:
         return true;
     }
 
-    void getKey(WT_CURSOR* cursor, WT_ITEM* key, ResourceConsumption::MetricsCollector* metrics) {
+    void getKey(WT_CURSOR* cursor, WT_ITEM* key) {
         invariantWTOK(cursor->get_key(cursor, key), cursor->session);
-
-        if (metrics) {
-            metrics->incrementOneIdxEntryRead(cursor->internal_uri, key->size);
-        }
     }
 
-    void getKeyValue(WT_CURSOR* cursor,
-                     WT_ITEM* key,
-                     WT_ITEM* value,
-                     ResourceConsumption::MetricsCollector* metrics) {
+    void getKeyValue(WT_CURSOR* cursor, WT_ITEM* key, WT_ITEM* value) {
         invariantWTOK(cursor->get_raw_key_value(cursor, key, value), cursor->session);
-
-        if (metrics) {
-            metrics->incrementOneIdxEntryRead(cursor->internal_uri, key->size);
-        }
     }
 
     OperationContext* _opCtx;

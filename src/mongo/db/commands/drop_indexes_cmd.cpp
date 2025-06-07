@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -62,6 +52,7 @@
 #include "mongo/db/index_builds/multi_index_block.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_role.h"
@@ -78,6 +69,16 @@
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -205,8 +206,12 @@ public:
         IndexBuildsCoordinator::get(opCtx)->assertNoIndexBuildInProgForCollection(
             acquisition.uuid());
 
-        // This is necessary to set up CurOp and update the Top stats.
-        OldClientContext ctx(opCtx, toReIndexNss);
+        AutoStatsTracker statsTracker(opCtx,
+                                      toReIndexNss,
+                                      Top::LockType::WriteLocked,
+                                      AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                                      DatabaseProfileSettings::get(opCtx->getServiceContext())
+                                          .getDatabaseProfileLevel(toReIndexNss.dbName()));
 
         const auto defaultIndexVersion = IndexDescriptor::getDefaultIndexVersion();
 

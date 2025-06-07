@@ -29,19 +29,11 @@
 
 #include "mongo/db/s/resharding/resharding_oplog_application.h"
 
-#include "mongo/db/catalog_raii.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/catalog/index_catalog.h"
+#include "mongo/db/catalog_raii.h"
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
@@ -66,6 +58,7 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/session/session_catalog_mongod.h"
 #include "mongo/db/shard_role.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/transaction/transaction_operations.h"
@@ -75,7 +68,6 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/database_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
@@ -86,6 +78,14 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 

@@ -29,15 +29,6 @@
 
 #include "mongo/s/write_ops/write_without_shard_key_util.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -60,6 +51,7 @@
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/timeseries/timeseries_update_delete_util.h"
 #include "mongo/db/timeseries/timeseries_write_util.h"
+#include "mongo/db/timeseries/write_ops/timeseries_write_ops_utils.h"
 #include "mongo/db/transaction/transaction_api.h"
 #include "mongo/db/update/update_driver.h"
 #include "mongo/db/update/update_util.h"
@@ -84,6 +76,15 @@
 #include "mongo/util/future.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/out_of_line_executor.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -133,11 +134,12 @@ std::pair<BSONObj, BSONObj> generateUpsertDocument(
     tassert(7777500,
             "Expected timeseries buckets collection namespace",
             updateRequest.getNamespaceString().isTimeseriesBucketsCollection());
-    auto upsertBucketObj = timeseries::makeBucketDocument(std::vector{upsertDoc},
-                                                          updateRequest.getNamespaceString(),
-                                                          collectionUUID,
-                                                          *timeseriesOptions,
-                                                          comparator);
+    auto upsertBucketObj =
+        timeseries::write_ops::makeBucketDocument(std::vector{upsertDoc},
+                                                  updateRequest.getNamespaceString(),
+                                                  collectionUUID,
+                                                  *timeseriesOptions,
+                                                  comparator);
     return {upsertBucketObj, upsertDoc};
 }
 
@@ -352,7 +354,7 @@ StatusWith<ClusterWriteWithoutShardKeyResponse> runTwoPhaseWriteProtocol(
                     auto bypassEmptyTsReplacementField = sharedBlock->cmdObj.getField(
                         write_ops::WriteCommandRequestBase::kBypassEmptyTsReplacementFieldName);
 
-                    if (bypassEmptyTsReplacementField.type() == BSONType::Bool) {
+                    if (bypassEmptyTsReplacementField.type() == BSONType::boolean) {
                         insertRequest.getWriteCommandRequestBase().setBypassEmptyTsReplacement(
                             bypassEmptyTsReplacementField.Bool());
                     }

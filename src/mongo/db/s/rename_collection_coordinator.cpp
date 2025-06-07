@@ -28,17 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/rename_collection_coordinator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bson_field.h"
@@ -67,12 +57,11 @@
 #include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/s/forwardable_operation_metadata.h"
-#include "mongo/db/s/rename_collection_coordinator.h"
-#include "mongo/db/s/sharded_index_catalog_commands_gen.h"
 #include "mongo/db/s/sharding_ddl_coordinator.h"
 #include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_logging.h"
 #include "mongo/db/s/sharding_recovery_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/shard_id.h"
@@ -88,7 +77,6 @@
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_collection_gen.h"
-#include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog/type_namespace_placement_gen.h"
 #include "mongo/s/catalog/type_tags.h"
 #include "mongo/s/catalog_cache.h"
@@ -102,7 +90,6 @@
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/util/future_impl.h"
@@ -110,6 +97,18 @@
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -282,46 +281,6 @@ void checkCatalogConsistencyAcrossShards(OperationContext* opCtx,
     if (!dropTarget) {
         checkTargetCollectionDoesNotExistInCluster(opCtx, toNss, participants, executor);
     }
-}
-
-void renameIndexMetadataInShards(OperationContext* opCtx,
-                                 const NamespaceString& nss,
-                                 const RenameCollectionRequest& request,
-                                 const OperationSessionInfo& osi,
-                                 const std::shared_ptr<executor::TaskExecutor>& executor,
-                                 RenameCollectionCoordinatorDocument* doc,
-                                 const CancellationToken& token) {
-    const auto [configTime, newIndexVersion] = [opCtx]() -> std::pair<LogicalTime, Timestamp> {
-        VectorClock::VectorTime vt = VectorClock::get(opCtx)->getTime();
-        return {vt.configTime(), vt.clusterTime().asTimestamp()};
-    }();
-
-    // Bump the index version only if there are indexes in the source collection.
-    auto optTrackedCollInfo = doc->getOptTrackedCollInfo();
-    if (optTrackedCollInfo && optTrackedCollInfo->getIndexVersion()) {
-        // Bump sharding catalog's index version on the config server if the source collection is
-        // sharded. It will be updated later on.
-        optTrackedCollInfo->setIndexVersion(
-            {doc->getNewTargetCollectionUuid().get_value_or(optTrackedCollInfo->getUuid()),
-             newIndexVersion});
-        doc->setOptTrackedCollInfo(optTrackedCollInfo);
-    }
-
-    // Update global index metadata in shards.
-    auto& toNss = request.getTo();
-
-    auto participants = Grid::get(opCtx)->shardRegistry()->getAllShardIds(opCtx);
-    ShardsvrRenameIndexMetadata renameIndexCatalogReq(
-        nss,
-        toNss,
-        {doc->getNewTargetCollectionUuid().get_value_or(doc->getSourceUUID().value()),
-         newIndexVersion});
-    renameIndexCatalogReq.setDbName(toNss.dbName());
-    generic_argument_util::setMajorityWriteConcern(renameIndexCatalogReq);
-    generic_argument_util::setOperationSessionInfo(renameIndexCatalogReq, osi);
-    auto opts = std::make_shared<async_rpc::AsyncRPCOptions<ShardsvrRenameIndexMetadata>>(
-        executor, token, renameIndexCatalogReq);
-    sharding_ddl_util::sendAuthenticatedCommandToShards(opCtx, opts, participants);
 }
 
 std::vector<ShardId> getLatestCollectionPlacementInfoFor(OperationContext* opCtx,
@@ -525,29 +484,6 @@ SemiFuture<BatchedCommandResponse> deleteZonesStatement(const txn_api::Transacti
     return txnClient.runCRUDOp(request, {-1});
 }
 
-SemiFuture<BatchedCommandResponse> deleteShardingIndexCatalogMetadataStatement(
-    const txn_api::TransactionClient& txnClient, const boost::optional<UUID>& uuid) {
-    if (uuid) {
-        // delete index catalog metadata
-        BatchedCommandRequest request([&] {
-            write_ops::DeleteCommandRequest deleteOp(
-                NamespaceString::kConfigsvrIndexCatalogNamespace);
-            deleteOp.setDeletes({[&] {
-                write_ops::DeleteOpEntry entry;
-                entry.setQ(BSON(IndexCatalogType::kCollectionUUIDFieldName << *uuid));
-                entry.setMulti(true);
-                return entry;
-            }()});
-            return deleteOp;
-        }());
-
-        return txnClient.runCRUDOp(request, {-1});
-    } else {
-        return noOpStatement();
-    }
-}
-
-
 void renameCollectionMetadataInTransaction(OperationContext* opCtx,
                                            const boost::optional<CollectionType>& optFromCollType,
                                            const NamespaceString& fromNss,
@@ -595,13 +531,6 @@ void renameCollectionMetadataInTransaction(OperationContext* opCtx,
                                                              {} /*shards*/,
                                                              2,
                                                              deleteCollResponse);
-                })
-                .thenRunOn(txnExec)
-                .then([&](const BatchedCommandResponse& response) {
-                    uassertStatusOK(response.toStatus());
-
-                    return deleteShardingIndexCatalogMetadataStatement(txnClient,
-                                                                       droppedTargetUUID);
                 })
                 // Delete "FROM" collection
                 .thenRunOn(txnExec)
@@ -693,13 +622,6 @@ void renameCollectionMetadataInTransaction(OperationContext* opCtx,
                                                              {},
                                                              2,
                                                              deleteCollResponse);
-                })
-                .thenRunOn(txnExec)
-                .then([&](const BatchedCommandResponse& response) {
-                    uassertStatusOK(response.toStatus());
-
-                    return deleteShardingIndexCatalogMetadataStatement(txnClient,
-                                                                       droppedTargetUUID);
                 })
                 .thenRunOn(txnExec)
                 .then([&](const BatchedCommandResponse& response) {
@@ -1095,12 +1017,6 @@ ExecutorFuture<void> RenameCollectionCoordinator::_runImpl(
                         opCtx, getNewSession(opCtx), **executor);
                 }
 
-                {
-                    const auto session = getNewSession(opCtx);
-                    renameIndexMetadataInShards(
-                        opCtx, nss(), _request, session, **executor, &_doc, token);
-                }
-
                 // Update the collection metadata after the rename.
                 // Renaming the metadata will also resume migrations for the resulting collection.
                 {
@@ -1167,8 +1083,8 @@ ExecutorFuture<void> RenameCollectionCoordinator::_runImpl(
                         opCtx, _request.getTo()));
                 auto placementVersion =
                     cm.hasRoutingTable() ? cm.getVersion() : ChunkVersion::UNSHARDED();
-                _response = RenameCollectionResponse(ShardVersionFactory::make(
-                    std::move(placementVersion), boost::none /* IndexVersion */));
+                _response = RenameCollectionResponse(
+                    ShardVersionFactory::make(std::move(placementVersion)));
 
                 ShardingLogging::get(opCtx)->logChange(
                     opCtx,

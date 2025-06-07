@@ -27,27 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/filesystem/directory.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/path_traits.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <fstream>  // IWYU pragma: keep
-#include <iostream>
-#include <iterator>
-#include <memory>
-#include <ratio>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -75,6 +60,19 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/options_parser/value.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <fstream>  // IWYU pragma: keep
+#include <iostream>
+#include <iterator>
+#include <memory>
+#include <ratio>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 

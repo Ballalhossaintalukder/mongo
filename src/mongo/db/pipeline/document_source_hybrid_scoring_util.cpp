@@ -29,11 +29,26 @@
 
 #include "mongo/db/pipeline/document_source_hybrid_scoring_util.h"
 
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/pipeline/document_source_add_fields.h"
+#include "mongo/db/pipeline/document_source_geo_near.h"
+#include "mongo/db/pipeline/document_source_internal_inhibit_optimization.h"
+#include "mongo/db/pipeline/document_source_limit.h"
+#include "mongo/db/pipeline/document_source_match.h"
+#include "mongo/db/pipeline/document_source_rank_fusion.h"
+#include "mongo/db/pipeline/document_source_sample.h"
+#include "mongo/db/pipeline/document_source_score.h"
+#include "mongo/db/pipeline/document_source_score_fusion.h"
 #include "mongo/db/pipeline/document_source_set_metadata.h"
 #include "mongo/db/pipeline/document_source_single_document_transformation.h"
+#include "mongo/db/pipeline/document_source_skip.h"
+#include "mongo/db/pipeline/document_source_sort.h"
 #include "mongo/db/pipeline/search/document_source_search.h"
 #include "mongo/db/pipeline/search/document_source_vector_search.h"
+#include "mongo/db/query/util/string_util.h"
+
+#include <fmt/ranges.h>
 
 namespace mongo::hybrid_scoring_util {
 
@@ -47,69 +62,319 @@ bool isScoreStage(const boost::intrusive_ptr<DocumentSource>& stage) {
     return setMetadataTransform->getMetaType() == DocumentMetadataFields::MetaType::kScore;
 }
 
-// TODO SERVER-100754: A pipeline that begins with a $match stage that isTextQuery() should also
-// count.
-// TODO SERVER-100754 This custom logic should be able to be replaced by using DepsTracker to
-// walk the pipeline and see if "score" metadata is produced.
-bool isScoredPipeline(const Pipeline& pipeline) {
-    // Note that we don't check for $rankFusion and $scoreFusion explicitly because it will be
-    // desugared by this point.
-    static const std::set<StringData> implicitlyScoredStages{DocumentSourceVectorSearch::kStageName,
-                                                             DocumentSourceSearch::kStageName};
-    auto sources = pipeline.getSources();
-    if (sources.empty()) {
-        return false;
-    }
-
-    auto firstStageName = sources.front()->getSourceName();
-    return implicitlyScoredStages.contains(firstStageName) ||
-        std::any_of(sources.begin(), sources.end(), isScoreStage);
-}
-
 double getPipelineWeight(const StringMap<double>& weights, const std::string& pipelineName) {
     // If no weight is provided, default to 1.
     return weights.contains(pipelineName) ? weights.at(pipelineName) : 1;
 }
 
-namespace score_details {
+StringMap<double> validateWeights(
+    const mongo::BSONObj& inputWeights,
+    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& inputPipelines,
+    const StringData stageName) {
+    // Output map of pipeline name, to weight of pipeline.
+    StringMap<double> weights;
+    // Keeps track of the weights that do not reference a valid pipeline most often from a
+    // misspelling/typo.
+    std::vector<std::string> invalidWeights;
+    // Keeps track of the pipelines that have been successfully matched/taken by specified weights.
+    // We use this to build a list of pipelines that have not been matched later,
+    // if necessary to suggest pipelines that might have been misspelled.
+    stdx::unordered_set<std::string> matchedPipelines;
 
-boost::intrusive_ptr<DocumentSource> addScoreDetails(
-    const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const std::string& prefix,
-    const bool inputGeneratesScore,
-    const bool inputGeneratesScoreDetails) {
-    const std::string scoreDetails = fmt::format("{}_scoreDetails", prefix);
-    BSONObjBuilder bob;
-    {
-        BSONObjBuilder addFieldsBob(bob.subobjStart("$addFields"_sd));
+    for (const auto& weightEntry : inputWeights) {
+        // First validate that this pipeline exists.
+        if (!inputPipelines.contains(weightEntry.fieldName())) {
+            // This weight does not reference a valid pipeline.
+            // The query will eventually fail, but we process all the weights first
+            // to give the best suggestions in the error message.
+            invalidWeights.push_back(weightEntry.fieldName());
+            continue;
+        }
 
-        if (inputGeneratesScoreDetails) {
-            // If the input pipeline generates scoreDetails (for example, $search may generate
-            // searchScoreDetails), then we'll use the existing details:
-            // {$addFields: {prefix_scoreDetails: {$meta: "scoreDetails"}}}
-            // We don't grab {$meta: "score"} because we assume any existing scoreDetails already
-            // includes its own score at "scoreDetails.value".
-            addFieldsBob.append(scoreDetails, BSON("$meta" << "scoreDetails"));
-        } else if (inputGeneratesScore) {
-            // If the input pipeline does not generate scoreDetails but does generate a "score" (for
-            // example, a $text query sorted on the text score), we'll build our own scoreDetails
-            // for the pipeline like:
-            // {$addFields: {prefix_scoreDetails: {value: {$meta: "score"}, details: []}}}
-            addFieldsBob.append(
-                scoreDetails,
-                BSON("value" << BSON("$meta" << "score") << "details" << BSONArrayBuilder().arr()));
-        } else {
-            // If the input pipeline generates neither "score" not "scoreDetails" (for example, a
-            // pipeline with just a $sort), we don't have any interesting information to include in
-            // scoreDetails (rank is added later). We'll still build empty scoreDetails to
-            // reflect that:
-            // {$addFields: {prefix_scoreDetails: {details: []}}}
-            addFieldsBob.append(scoreDetails, BSON("details" << BSONArrayBuilder().arr()));
+        // The pipeline exists, but must not already have been seen; else its a duplicate.
+        // Otherwise, add it to the output map.
+        // This should never arise because the BSON processing layer filters out
+        // redundant keys, but we leave it in as a defensive programming measure.
+        uassert(9967401,
+                str::stream() << "A pipeline named '" << weightEntry.fieldName()
+                              << "' is specified more than once in the $" << stageName
+                              << "'combinations.weight' object.",
+                !weights.contains(weightEntry.fieldName()));
+
+        // Unique, existing pipeline weight found.
+        // Validate the weight number and add to output map.
+        // weightEntry.Number() throws a uassert if non-numeric.
+        double weight = weightEntry.Number();
+        uassert(9460300,
+                str::stream() << stageName << "'s pipeline weight must be non-negative, but given "
+                              << weight << " for pipeline '" << weightEntry.fieldName() << "'.",
+                weight >= 0);
+        weights[weightEntry.fieldName()] = weight;
+        matchedPipelines.insert(weightEntry.fieldName());
+    }
+
+    // All weights that the user has specified have been processed.
+    // Check for error cases.
+    if (int(inputPipelines.size()) < inputWeights.nFields()) {
+        // There are more specified weights than input pipelines.
+        // Give feedback on which possible weights are extraneous.
+        tassert(9967501,
+                "There must be at least some invalid weights when there are more weights "
+                "than input pipelines to $" +
+                    stageName,
+                !invalidWeights.empty());
+        // Fail query.
+        uasserted(
+            9460301,
+            fmt::format(
+                "${} input has more weights ({}) than pipelines ({}). "
+                "If 'combination.weights' is specified, there must be a less or equal number of "
+                "weights as pipelines, each of which is unique and existing. "
+                "Possible extraneous specified weights = [{}]",
+                stageName,
+                inputWeights.nFields(),
+                int(inputPipelines.size()),
+                fmt::join(invalidWeights, ", ")));
+    } else if (!invalidWeights.empty()) {
+        // There are invalid / misspelled weights.
+        // Fail the query with the best pipeline recommendations we can generate.
+        failWeightsValidationWithPipelineSuggestions(
+            inputPipelines, matchedPipelines, invalidWeights, stageName);
+    }
+
+    // Successfully validated weights.
+    return weights;
+}
+
+void failWeightsValidationWithPipelineSuggestions(
+    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& allPipelines,
+    const stdx::unordered_set<std::string>& matchedPipelines,
+    const std::vector<std::string>& invalidWeights,
+    const StringData stageName) {
+    // The list of unmatchedPipelines is first computed to find
+    // the valid set of possible suggestions.
+    std::vector<std::string> unmatchedPipelines;
+    for (const auto& pipeline : allPipelines) {
+        if (!matchedPipelines.contains(pipeline.first)) {
+            unmatchedPipelines.push_back(pipeline.first);
         }
     }
-    const auto spec = bob.obj();
-    return DocumentSourceAddFields::createFromBson(spec.firstElement(), expCtx);
+
+    // For each invalid weight, find the best possible suggested unmatched pipeline,
+    // that is, the one with the shortest levenshtein distance.
+    // The first entry in the pair is the name of the invalid weight,
+    // the second entry is the list of the suggested unmatched pipeline.
+    std::vector<std::pair<std::string, std::vector<std::string>>> suggestions =
+        query_string_util::computeTypoSuggestions(unmatchedPipelines, invalidWeights);
+
+    // 'i' is the index into the 'suggestions' array.
+    auto convertSingleSuggestionToString = [&](const std::size_t i) -> std::string {
+        std::string s = fmt::format("(provided: '{}' -> ", suggestions[i].first);
+        if (suggestions[i].second.size() == 1) {
+            s += fmt::format("suggested: '{}')", suggestions[i].second.front());
+        } else {
+            s += fmt::format("suggestions: [{}])", fmt::join(suggestions[i].second, ", "));
+        }
+        if (i < suggestions.size() - 1) {
+            s += ", ";
+        }
+        return s;
+    };
+
+    // All best suggestions have been computed.
+    // The build error message that contains all suggestions.
+    std::string errorMsg = fmt::format(
+        "${} stage contained ({}) weight(s) in "
+        "'combination.weights' that did not reference valid pipeline names. "
+        "Suggestions for valid pipeline names: ",
+        stageName,
+        std::to_string(invalidWeights.size()));
+    for (std::size_t i = 0; i < suggestions.size(); i++) {
+        errorMsg += convertSingleSuggestionToString(i);
+    }
+
+    // Fail query.
+    uasserted(9967500, errorMsg);
 }
+
+Status isSelectionPipeline(const std::vector<BSONObj>& bsonPipeline) {
+    if (bsonPipeline.empty()) {
+        return Status(ErrorCodes::Error::BadValue, "Input pipeline must not be empty.");
+    }
+
+    for (const auto& stage : bsonPipeline) {
+        if (auto status = isSelectionStage(stage); !status.isOK()) {
+            return status;
+        }
+    }
+
+    return Status::OK();
+}
+
+Status isSelectionStage(const BSONObj& bsonStage) {
+    // Please keep the following in alphabetical order.
+    static const std::set<StringData> validSelectionStagesForHybridSearch = {
+        DocumentSourceInternalInhibitOptimization::kStageName,
+        DocumentSourceLimit::kStageName,
+        DocumentSourceMatch::kStageName,
+        DocumentSourceRankFusion::kStageName,
+        DocumentSourceSample::kStageName,
+        DocumentSourceScore::kStageName,
+        DocumentSourceScoreFusion::kStageName,
+        DocumentSourceSkip::kStageName,
+        DocumentSourceSort::kStageName,
+        DocumentSourceVectorSearch::kStageName,
+    };
+
+    if (bsonStage.isEmpty()) {
+        // Empty BSON stage was provided - it is not a selection stage.
+        return Status(ErrorCodes::Error::InvalidBSON, "Input stages must not be empty.");
+    }
+
+    auto fieldName = *bsonStage.getFieldNames<std::set<std::string>>().begin();
+    if (validSelectionStagesForHybridSearch.contains(fieldName)) {
+        return Status::OK();
+    }
+
+    // The following stages are conditionally selection stages, depending on the specification.
+    if (bsonStage.hasField(DocumentSourceGeoNear::kStageName)) {
+        // $geoNear is only a selection stage if it does not specify 'includeLocs' or
+        // 'distanceField'.
+        const auto& spec = bsonStage[DocumentSourceGeoNear::kStageName];
+        if (!spec.isABSONObj()) {
+            // The spec for $geoNear should be a BSON object.
+            return Status(ErrorCodes::Error::InvalidBSON,
+                          "Spec for $geoNear must be a BSON object, but was given: " +
+                              bsonStage.toString());
+        }
+
+        const auto& specBsonObj = spec.Obj();
+        bool hasModificationFields =
+            specBsonObj.hasField(DocumentSourceGeoNear::kDistanceFieldFieldName) ||
+            specBsonObj.hasField(DocumentSourceGeoNear::kIncludeLocsFieldName);
+        return hasModificationFields
+            ? Status(ErrorCodes::Error::BadValue,
+                     "$geoNear is only a selection stage if 'includeLocs' and 'distanceField' are "
+                     "not specified, because these options modify the input documents by adding "
+                     "output fields.")
+            : Status::OK();
+    }
+
+    if (bsonStage.hasField(DocumentSourceSearch::kStageName)) {
+        // $search is only a selection stage if 'returnStoredSource' is false.
+        const auto& spec = bsonStage[DocumentSourceSearch::kStageName];
+        if (!spec.isABSONObj()) {
+            // The spec for $search should be a BSON object.
+            return Status(ErrorCodes::Error::InvalidBSON,
+                          "Spec for $search must be a BSON object, but was given: " +
+                              bsonStage.toString());
+        }
+
+        const auto& specBsonObj = spec.Obj();
+        if (!specBsonObj.hasField(mongot_cursor::kReturnStoredSourceArg)) {
+            // The spec does not specify 'returnStoredSource' and the default is false.
+            // This is a selection stage.
+            return Status::OK();
+        }
+
+        const auto& returnStoredSourceArg = specBsonObj[mongot_cursor::kReturnStoredSourceArg];
+        if (!returnStoredSourceArg.isBoolean()) {
+            // 'returnStoredSource' should be a bool.
+            return Status(ErrorCodes::Error::InvalidBSON,
+                          "Spec for 'returnStoredSource' should be a boolean, but was given: " +
+                              bsonStage.toString());
+        }
+
+        return returnStoredSourceArg.boolean()
+            ? Status(ErrorCodes::Error::BadValue,
+                     "$search is only a selection stage if 'returnStoredSource' is false because "
+                     "it modifies the output fields.")
+            : Status::OK();
+    }
+
+    // If here, then the stage was not a valid hybrid search selection stage.
+    return Status(
+        ErrorCodes::Error::BadValue,
+        fieldName +
+            " is not a selection stage because it modifies or transforms the input documents.");
+}
+
+Status isRankedPipeline(const std::vector<BSONObj>& bsonPipeline) {
+    if (bsonPipeline.empty()) {
+        return Status(ErrorCodes::Error::BadValue, "Input pipeline must not be empty.");
+    }
+
+    // Please keep the following in alphabetical order.
+    static const std::set<StringData> implicitlyRankedStages{
+        DocumentSourceGeoNear::kStageName,
+        DocumentSourceRankFusion::kStageName,
+        DocumentSourceScoreFusion::kStageName,
+        DocumentSourceSearch::kStageName,
+        DocumentSourceVectorSearch::kStageName,
+    };
+
+    // Check if the pipeline begins with an implicitly ranked stage.
+    const auto& firstStage = bsonPipeline.front();
+    bool firstStageIsImplicitlyRanked = !firstStage.isEmpty() &&
+        implicitlyRankedStages.contains(*firstStage.getFieldNames<std::set<std::string>>().begin());
+
+    // Check if the pipeline has an explicit $sort stage.
+    bool hasSortStage = std::any_of(bsonPipeline.begin(), bsonPipeline.end(), [](auto&& stage) {
+        return stage.hasField(DocumentSourceSort::kStageName);
+    });
+
+    return (firstStageIsImplicitlyRanked || hasSortStage)
+        ? Status::OK()
+        : Status(ErrorCodes::Error::BadValue,
+                 "Pipeline did not begin with a ranked stage and did not contain an explicit $sort "
+                 "stage.");
+}
+
+Status isScoredPipeline(const std::vector<BSONObj>& bsonPipeline,
+                        const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    if (bsonPipeline.empty()) {
+        return Status(ErrorCodes::Error::BadValue, "Input pipeline must not be empty.");
+    }
+
+    // Please keep the following in alphabetical order.
+    static const std::set<StringData> implicitlyScoredStages{
+        DocumentSourceRankFusion::kStageName,
+        DocumentSourceScoreFusion::kStageName,
+        DocumentSourceSearch::kStageName,
+        DocumentSourceVectorSearch::kStageName,
+    };
+
+    const auto& firstStage = bsonPipeline.front();
+
+    // A $match stage w/ a $text operator is a scored stage.
+    if (firstStage.hasField(DocumentSourceMatch::kStageName) &&
+        firstStage[DocumentSourceMatch::kStageName].isABSONObj()) {
+        const auto& matchSpec = firstStage[DocumentSourceMatch::kStageName].Obj();
+        std::unique_ptr<MatchExpression> expr = uassertStatusOK(MatchExpressionParser::parse(
+            matchSpec, expCtx, ExtensionsCallbackNoop(), Pipeline::kAllowedMatcherFeatures));
+        if (DocumentSourceMatch::containsTextOperator(*expr)) {
+            return Status::OK();
+        }
+    }
+
+    // Check if the pipeline begins with an implicitly scored stage.
+    bool firstStageIsImplicitlyScored = !firstStage.isEmpty() &&
+        implicitlyScoredStages.contains(*firstStage.getFieldNames<std::set<std::string>>().begin());
+
+    // Check if the pipeline has an explicit $score stage.
+    bool hasScoreStage = std::any_of(bsonPipeline.begin(), bsonPipeline.end(), [](auto&& stage) {
+        return stage.hasField(DocumentSourceScore::kStageName);
+    });
+
+    return firstStageIsImplicitlyScored || hasScoreStage
+        ? Status::OK()
+        : Status(
+              ErrorCodes::Error::BadValue,
+              "Pipeline did not begin with a scored stage and did not contain an explicit $score "
+              "stage.");
+}
+
+namespace score_details {
 
 std::pair<std::string, BSONObj> constructScoreDetailsForGrouping(const std::string pipelineName) {
     const std::string scoreDetailsName = fmt::format("{}_scoreDetails", pipelineName);
@@ -120,19 +385,33 @@ std::pair<std::string, BSONObj> constructScoreDetailsForGrouping(const std::stri
 boost::intrusive_ptr<DocumentSource> constructCalculatedFinalScoreDetails(
     const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& inputs,
     const StringMap<double>& weights,
+    const bool isRankFusion,
     const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     std::vector<boost::intrusive_ptr<Expression>> detailsChildren;
     for (auto it = inputs.begin(); it != inputs.end(); it++) {
         const std::string& pipelineName = it->first;
-        const std::string rankFieldName = fmt::format("${}_rank", pipelineName);
         const std::string scoreDetailsFieldName = fmt::format("${}_scoreDetails", pipelineName);
-        double weight = getPipelineWeight(weights, pipelineName);
+        double weight = hybrid_scoring_util::getPipelineWeight(weights, pipelineName);
 
-        auto mergeObjectsObj =
-            BSON("$mergeObjects"_sd << BSON_ARRAY(BSON("inputPipelineName"_sd
-                                                       << pipelineName << "rank"_sd << rankFieldName
-                                                       << "weight"_sd << weight)
-                                                  << scoreDetailsFieldName));
+        BSONObjBuilder mergeObjectsArrSubObj;
+        mergeObjectsArrSubObj.append("inputPipelineName"_sd, pipelineName);
+        if (isRankFusion) {
+            mergeObjectsArrSubObj.append("rank"_sd, fmt::format("${}_rank", pipelineName));
+        } else {
+            // ScoreFusion case.
+            mergeObjectsArrSubObj.append("inputPipelineRawScore"_sd,
+                                         fmt::format("${}_rawScore", pipelineName));
+        }
+        mergeObjectsArrSubObj.append("weight"_sd, weight);
+        if (!isRankFusion) {
+            mergeObjectsArrSubObj.append("value"_sd, fmt::format("${}_score", pipelineName));
+        }
+        mergeObjectsArrSubObj.done();
+        BSONArrayBuilder mergeObjectsArr;
+        mergeObjectsArr.append(mergeObjectsArrSubObj.obj());
+        mergeObjectsArr.append(scoreDetailsFieldName);
+        mergeObjectsArr.done();
+        BSONObj mergeObjectsObj = BSON("$mergeObjects"_sd << mergeObjectsArr.arr());
         boost::intrusive_ptr<Expression> mergeObjectsExpr =
             ExpressionFromAccumulator<AccumulatorMergeObjects>::parse(
                 expCtx.get(), mergeObjectsObj.firstElement(), expCtx->variablesParseState);
@@ -148,19 +427,13 @@ boost::intrusive_ptr<DocumentSource> constructCalculatedFinalScoreDetails(
     return addFields;
 }
 
-boost::intrusive_ptr<DocumentSource> constructScoreDetailsMetadata(
-    const std::string& scoreDetailsDescription,
-    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
-    auto setScoreDetails = DocumentSourceSetMetadata::create(
-        expCtx,
-        Expression::parseObject(expCtx.get(),
-                                BSON("value" << "$score"
-                                             << "description" << scoreDetailsDescription
-                                             << "details"
-                                             << "$calculatedScoreDetails"),
-                                expCtx->variablesParseState),
-        DocumentMetadataFields::kScoreDetails);
-    return setScoreDetails;
+std::string stringifyExpression(boost::optional<IDLAnyType> expression) {
+    BSONObjBuilder expressionBob;
+    expression->serializeToBSON("string", &expressionBob);
+    expressionBob.done();
+    std::string exprString = expressionBob.obj().toString();
+    std::replace(exprString.begin(), exprString.end(), '\"', '\'');
+    return exprString;
 }
 }  // namespace score_details
 }  // namespace mongo::hybrid_scoring_util

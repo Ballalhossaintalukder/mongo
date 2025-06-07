@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/json.h"
@@ -39,6 +36,9 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -153,17 +153,38 @@ TEST_F(InternalUnpackBucketGroupReorder, OptimizeForCountNegative) {
 // referencing the metaField, a constant expression, and/or for fixed buckets $dateTrunc expression
 // on the timeField
 TEST_F(InternalUnpackBucketGroupReorder, MinMaxGroupOnMetadata) {
-    auto groupSpecObj =
-        fromjson("{$group: {_id: '$meta1.a.b', accmin: {$min: '$b'}, accmax: {$max: '$c'}}}");
+    {
+        auto groupSpecObj =
+            fromjson("{$group: {_id: '$meta1.a.b', accmin: {$min: '$b'}, accmax: {$max: '$c'}}}");
 
-    auto serialized = makeAndOptimizePipeline(
-        getExpCtx(), {groupSpecObj}, 3600 /* bucketMaxSpanSeconds */, false /* fixedBuckets */);
-    ASSERT_EQ(1, serialized.size());
+        auto serialized = makeAndOptimizePipeline(
+            getExpCtx(), {groupSpecObj}, 3600 /* bucketMaxSpanSeconds */, false /* fixedBuckets */);
+        ASSERT_EQ(1, serialized.size());
 
-    auto optimized = fromjson(
-        "{$group: {_id: '$meta.a.b', accmin: {$min: '$control.min.b'}, accmax: {$max: "
-        "'$control.max.c'}, $willBeMerged: false}}");
-    ASSERT_BSONOBJ_EQ(optimized, serialized[0]);
+        auto optimized = fromjson(
+            "{$group: {_id: '$meta.a.b', accmin: {$min: '$control.min.b'}, accmax: {$max: "
+            "'$control.max.c'}, $willBeMerged: false}}");
+        ASSERT_BSONOBJ_EQ(optimized, serialized[0]);
+    }
+
+    {
+        // Ensure that $willBeMerged is copied into the rewritten $group stage.
+        auto groupSpecObj = fromjson(
+            "{$group: {_id: '$meta1.a.b', accmin: {$min: '$b'}, accmax: {$max: '$c'}, "
+            "$willBeMerged: "
+            "true}}");
+
+        auto serialized = makeAndOptimizePipeline(
+            getExpCtx(), {groupSpecObj}, 3600 /* bucketMaxSpanSeconds */, false /* fixedBuckets */);
+        ASSERT_EQ(1, serialized.size());
+
+        // $willBeMerged will only be serialized when it is set to false & we are not already
+        // merging.
+        auto optimized = fromjson(
+            "{$group: {_id: '$meta.a.b', accmin: {$min: '$control.min.b'}, accmax: {$max: "
+            "'$control.max.c'}}}");
+        ASSERT_BSONOBJ_EQ(optimized, serialized[0]);
+    }
 }
 
 // Test SERVER-73822 fix: complex $min and $max (i.e. not just straight field refs) work correctly.

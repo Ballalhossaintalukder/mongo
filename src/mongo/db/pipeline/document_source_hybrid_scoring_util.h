@@ -42,69 +42,112 @@ namespace mongo::hybrid_scoring_util {
 bool isScoreStage(const boost::intrusive_ptr<DocumentSource>& stage);
 
 /**
- * Checks if this pipeline will generate score metadata.
- */
-bool isScoredPipeline(const Pipeline& pipeline);
-
-/**
  * Return pipeline's associated weight, if it exists. Otherwise, return a default of 1.
  */
 double getPipelineWeight(const StringMap<double>& weights, const std::string& pipelineName);
 
-namespace score_details {
+/**
+ * Verifies that each entry in inputWeights specifies a numerical weight value associated with a
+ * unique and valid pipeline name from inputPipelines. inputWeights has the following structure:
+ * {"pipelineName": weightVal} where "pipelineName" is a string and weightVal is a double. Returns a
+ * map from the pipeline name to the specified weight (as a double) for that pipeline.
+ * Note: not all pipelines must be in the returned map. This means any valid subset from none to all
+ * of the pipelines may be contained in the resulting map. Any pipelines not present in the
+ * resulting map have an implicit default weight of 1.
+ */
+StringMap<double> validateWeights(
+    const mongo::BSONObj& inputWeights,
+    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& inputPipelines,
+    StringData stageName);
 
 /**
- * Builds and returns an $addFields stage that materializes scoreDetails for an individual input
- * pipeline. The way we materialize scoreDetails depends on if the input pipeline generates "score"
- * or "scoreDetails" metadata.
+ * This function will fail the query in the case where nonexistent pipelines were referenced in the
+ * weights. Before failing the query outright, the function first computes the best valid, unmatched
+ * pipeline the user could have intended for each invalid weight and builds it into a
+ * user-friendly error message to give the best possible feedback.
  *
- * Later, these individual input pipeline scoreDetails will be gathered together in order to build
- * scoreDetails for the overall $rankFusion pipeline (see calculateFinalScoreDetails()).
+ * Note: This function needs a list of the unmatched pipelines, but is instead given a list of
+ *       all pipelines and matched pipelines, which can be used to compute the unmatched pipelines.
+ *       This is for performance reasons, because the caller of this function can easily know these
+ *       inputs, and only needs to call this function in error cases.
  */
-boost::intrusive_ptr<DocumentSource> addScoreDetails(
-    const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const std::string& prefix,
-    bool inputGeneratesScore,
-    bool inputGeneratesScoreDetails);
+void failWeightsValidationWithPipelineSuggestions(
+    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& allPipelines,
+    const stdx::unordered_set<std::string>& matchedPipelines,
+    const std::vector<std::string>& invalidWeights,
+    StringData stageName);
 
+/**
+ * Returns no error if the BSON pipeline is a selection pipeline. A selection pipeline only
+ * retrieves a set of documents from a collection, without doing any modifications. For example it
+ * cannot do a $project or $replaceRoot.
+ */
+Status isSelectionPipeline(const std::vector<BSONObj>& bsonPipeline);
+
+/**
+ * Returns no error if the BSON stage is a selection stage. A selection stage only retrieves a set
+ * of documents from a collection, without doing any modifications.
+ */
+Status isSelectionStage(const BSONObj& bsonStage);
+
+/**
+ * Returns no error if the BSON pipeline is a ranked pipeline. A ranked pipeline is a pipeline that
+ * starts with an implicitly ranked stage, or contains an explicit $sort.
+ */
+Status isRankedPipeline(const std::vector<BSONObj>& bsonPipeline);
+
+/**
+ * Returns no error if the BSON pipeline is an scored pipeline. An ordered pipeline is a pipeline
+ * that begins with a stage that generates a score, or contains an explicit $score.
+ */
+Status isScoredPipeline(const std::vector<BSONObj>& bsonPipeline,
+                        const boost::intrusive_ptr<ExpressionContext>& expCtx);
+
+namespace score_details {
 /**
  * Construct the scoreDetails field name and obj (ex: name_scoreDetails: {$mergeObjects:
  * $name_scoreDetails}) for the grouping stage.
  */
 std::pair<std::string, BSONObj> constructScoreDetailsForGrouping(std::string pipelineName);
 
-// Calculate the final scoreDetails field for the entire stage. Creates the following object:
+// Calculate the final scoreDetails field for the entire stage. If rankFusion is false, then the
+// object for scoreFusion gets generated. Creates the following object:
+// For rankFusion:
 /*
     { $addFields: {
         calculatedScoreDetails: [
         {
             $mergeObjects: [
-                {inputPipelineName: "name1", rank: "$name1_rank", weight: <weight>},
+                {inputPipelineName: "name1", rank: "$name1_rank",
+                    weight: <weight>},
                 "$name1_scoreDetails"
             ]
         },
+*/
+// For scoreFusion:
+/*
+    { $addFields: {
+        calculatedScoreDetails: [
         {
             $mergeObjects: [
-                {inputPipelineName: "name2", rank: "$name2_rank", weight: <weight>},
+                {inputPipelineName: "name2", inputPipelineRawScore: "$name2_rawScore",
+                    weight: <weight>, value: "$name2_score"},
                 "$name2_scoreDetails"
             ]
-        },
-        ...
+        }
         ]
     }}
 */
 boost::intrusive_ptr<DocumentSource> constructCalculatedFinalScoreDetails(
     const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& inputs,
     const StringMap<double>& weights,
+    bool isRankFusion,
     const boost::intrusive_ptr<ExpressionContext>& expCtx);
 
 /**
- * Constuct the scoreDetails metadata object. Looks like the following:
- * { "$setMetadata": {"scoreDetails": {"value": "$score", "description":
- * {"scoreDetailsDescription..."}, "details": "$calculatedScoreDetails"}}},
+ * Returns the stringified verion of a given expression with the following format:
+ * "string": {"stringified expression"}
  */
-boost::intrusive_ptr<DocumentSource> constructScoreDetailsMetadata(
-    const std::string& scoreDetailsDescription,
-    const boost::intrusive_ptr<ExpressionContext>& expCtx);
+std::string stringifyExpression(boost::optional<IDLAnyType> expression);
 }  // namespace score_details
 }  // namespace mongo::hybrid_scoring_util

@@ -27,9 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/optional/optional.hpp>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/pull_node.h"
 
 #include "mongo/base/clonable_ptr.h"
 #include "mongo/bson/bsonmisc.h"
@@ -44,8 +42,10 @@
 #include "mongo/db/matcher/extensions_callback.h"
 #include "mongo/db/matcher/extensions_callback_noop.h"
 #include "mongo/db/query/collation/collator_interface.h"
-#include "mongo/db/update/pull_node.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -66,7 +66,7 @@ public:
     }
 
     bool match(const mutablebson::ConstElement& element) final {
-        if (element.getType() == mongo::Object) {
+        if (element.getType() == BSONType::object) {
             return exec::matcher::matchesBSON(&*_matchExpr, element.getValueObject());
         } else {
             return false;
@@ -156,11 +156,11 @@ Status PullNode::init(BSONElement modExpr, const boost::intrusive_ptr<Expression
     invariant(modExpr.ok());
 
     try {
-        if (modExpr.type() == mongo::Object &&
+        if (modExpr.type() == BSONType::object &&
             !MatchExpressionParser::parsePathAcceptingKeyword(
                 modExpr.embeddedObject().firstElement())) {
             _matcher = std::make_unique<ObjectMatcher>(modExpr.embeddedObject(), expCtx);
-        } else if (modExpr.type() == mongo::Object || modExpr.type() == mongo::RegEx) {
+        } else if (modExpr.type() == BSONType::object || modExpr.type() == BSONType::regEx) {
             _matcher = std::make_unique<WrappedObjectMatcher>(modExpr, expCtx);
         } else {
             _matcher = std::make_unique<EqualityMatcher>(modExpr, expCtx->getCollator());

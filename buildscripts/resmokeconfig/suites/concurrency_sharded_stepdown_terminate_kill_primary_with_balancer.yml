@@ -62,6 +62,13 @@ selector:
     # to finish. This can cause the CheckMetadataConsistency hook to hit LockBusy errors.
     - jstests/concurrency/fsm_workloads/timeseries/timeseries_insert_idle_bucket_expiration.js
 
+    # long_secondary_reads.js initializes each test by creating 2000 documents.
+    # If a stepdown occurs during initialization, the test fails with the error:
+    # "InterruptedDueToReplStateChange".
+    # TODO SERVER-105488: Investigate alternative methods for initializing the test collection
+    # to avoid stepdown-related interruptions.
+    - jstests/concurrency/fsm_workloads/query/long_secondary_reads.js
+
   exclude_with_any_tags:
     - requires_standalone
     - assumes_balancer_off
@@ -72,7 +79,6 @@ selector:
     - requires_profiling
     - does_not_support_stepdowns
     - assumes_unsharded_collection
-    - requires_getmore
     # implicitly_retry_on_migration_in_progress.js alters find/aggregate commands
     # so that the whole result set is returned through a single batch
     - assumes_no_implicit_cursor_exhaustion
@@ -89,6 +95,7 @@ executor:
       eval: >-
         await import("jstests/libs/override_methods/implicitly_shard_accessed_collections.js");
         await import("jstests/libs/override_methods/implicitly_retry_crud_on_no_progress_made.js");
+        await import("jstests/libs/override_methods/implicitly_retry_on_migration_in_progress.js");
       global_vars:
         TestData:
           runningWithConfigStepdowns: true
@@ -97,7 +104,6 @@ executor:
           useActionPermittedFile: [ContinuousStepdown]
           runningWithBalancer: true
           implicitlyShardOnCreateCollectionOnly: true
-          fsmPreOverridesLoadedCallback: import("jstests/libs/override_methods/implicitly_retry_on_migration_in_progress.js");
   hooks:
     - class: ContinuousStepdown
       config_stepdown: true

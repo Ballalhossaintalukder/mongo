@@ -27,7 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
+#include "mongo/db/update/object_replace_executor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -39,10 +39,11 @@
 #include "mongo/db/exec/mutable_bson/algorithm.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/exec/mutable_bson/element.h"
-#include "mongo/db/update/object_replace_executor.h"
 #include "mongo/db/update/update_node_test_fixture.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
 
 namespace mongo {
 namespace {
@@ -122,13 +123,13 @@ TEST_F(ObjectReplaceExecutorTest, NonIdTimestampsModified) {
 
     auto elemA = doc.root()["a"];
     ASSERT_TRUE(elemA.ok());
-    ASSERT_EQUALS(elemA.getType(), BSONType::bsonTimestamp);
+    ASSERT_EQUALS(elemA.getType(), BSONType::timestamp);
     ASSERT_NOT_EQUALS(0U, elemA.getValueTimestamp().getSecs());
     ASSERT_NOT_EQUALS(0U, elemA.getValueTimestamp().getInc());
 
     auto elemB = doc.root()["b"];
     ASSERT_TRUE(elemB.ok());
-    ASSERT_EQUALS(elemB.getType(), BSONType::bsonTimestamp);
+    ASSERT_EQUALS(elemB.getType(), BSONType::timestamp);
     ASSERT_NOT_EQUALS(0U, elemB.getValueTimestamp().getSecs());
     ASSERT_NOT_EQUALS(0U, elemB.getValueTimestamp().getInc());
 

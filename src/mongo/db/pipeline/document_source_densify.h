@@ -29,21 +29,6 @@
 
 #pragma once
 
-#include <boost/smart_ptr.hpp>
-#include <list>
-#include <set>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -70,6 +55,21 @@
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <list>
+#include <set>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 
 namespace mongo {
@@ -125,7 +125,7 @@ public:
     static DensifyValue getFromValue(const Value& val) {
         uassert(5733201,
                 "Densify field type must be numeric or a date",
-                val.numeric() || val.getType() == BSONType::Date);
+                val.numeric() || val.getType() == BSONType::date);
         if (!val.numeric()) {
             return val.getDate();
         }
@@ -321,7 +321,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> create(
     bool isInternal);
 }  // namespace document_source_densify
 
-class DocumentSourceInternalDensify final : public DocumentSource {
+class DocumentSourceInternalDensify final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalDensify"_sd;
     static constexpr StringData kPartitionByFieldsFieldName = "partitionByFields"_sd;
@@ -333,6 +333,7 @@ public:
                                   std::list<FieldPath> partitions,
                                   RangeStatement range)
         : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
           _memTracker(internalDocumentSourceDensifyMaxMemoryBytes.load()),
           _field(std::move(field)),
           _partitions(std::move(partitions)),
@@ -417,7 +418,7 @@ public:
     }
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

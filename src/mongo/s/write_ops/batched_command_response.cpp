@@ -29,12 +29,6 @@
 
 #include "mongo/s/write_ops/batched_command_response.h"
 
-#include <fmt/ostream.h>
-#include <iosfwd>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -45,6 +39,12 @@
 #include "mongo/db/repl/bson_extract_optime.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/util/assert_util.h"
+
+#include <iosfwd>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/ostream.h>
 
 namespace mongo {
 namespace {
@@ -196,11 +196,11 @@ bool BatchedCommandResponse::parseBSON(const BSONObj& source, std::string* errMs
     _isLastOpSet = true;
     if (opTimeElement.eoo()) {
         _isLastOpSet = false;
-    } else if (opTimeElement.type() == bsonTimestamp) {
+    } else if (opTimeElement.type() == BSONType::timestamp) {
         _lastOp = repl::OpTime(opTimeElement.timestamp(), repl::OpTime::kUninitializedTerm);
-    } else if (opTimeElement.type() == Date) {
+    } else if (opTimeElement.type() == BSONType::date) {
         _lastOp = repl::OpTime(Timestamp(opTimeElement.date()), repl::OpTime::kUninitializedTerm);
-    } else if (opTimeElement.type() == Object) {
+    } else if (opTimeElement.type() == BSONType::object) {
         Status status = bsonExtractOpTimeField(source, "opTime", &_lastOp);
         if (!status.isOK()) {
             return false;

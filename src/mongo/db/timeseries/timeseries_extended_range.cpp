@@ -29,13 +29,6 @@
 
 #include "mongo/db/timeseries/timeseries_extended_range.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <memory>
-#include <string>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/data_view.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +43,13 @@
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries {
 
@@ -83,7 +83,7 @@ bool bucketsHaveDateOutsideStandardRange(const TimeseriesOptions& options,
         auto timeElem = minObj.getField(options.getTimeField());
         uassert(6781402,
                 "Time series bucket document does not have a valid min time element",
-                timeElem && BSONType::Date == timeElem.type());
+                timeElem && BSONType::date == timeElem.type());
 
         auto date = timeElem.Date();
         return dateOutsideStandardRange(date);

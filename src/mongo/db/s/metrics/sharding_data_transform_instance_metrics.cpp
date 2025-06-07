@@ -29,19 +29,21 @@
 
 #include "mongo/db/s/metrics/sharding_data_transform_instance_metrics.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <utility>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/s/metrics/sharding_data_transform_metrics_observer.h"
+#include "mongo/db/s/resharding/resharding_cumulative_metrics.h"
 #include "mongo/db/server_options.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -292,6 +294,10 @@ ShardingDataTransformInstanceMetrics::getCumulativeMetrics() {
     return _cumulativeMetrics;
 }
 
+ReshardingCumulativeMetrics* ShardingDataTransformInstanceMetrics::getTypedCumulativeMetrics() {
+    return dynamic_cast<ReshardingCumulativeMetrics*>(getCumulativeMetrics());
+}
+
 ClockSource* ShardingDataTransformInstanceMetrics::getClockSource() const {
     return _clockSource;
 }
@@ -316,9 +322,114 @@ void ShardingDataTransformInstanceMetrics::setLastOpEndingChunkImbalance(int64_t
     _cumulativeMetrics->setLastOpEndingChunkImbalance(imbalanceCount);
 }
 
+void ShardingDataTransformInstanceMetrics::onInsertApplied() {
+    _insertsApplied.fetchAndAdd(1);
+    getTypedCumulativeMetrics()->onInsertApplied();
+}
+
+void ShardingDataTransformInstanceMetrics::onUpdateApplied() {
+    _updatesApplied.fetchAndAdd(1);
+    getTypedCumulativeMetrics()->onUpdateApplied();
+}
+
+void ShardingDataTransformInstanceMetrics::onDeleteApplied() {
+    _deletesApplied.fetchAndAdd(1);
+    getTypedCumulativeMetrics()->onDeleteApplied();
+}
+
+void ShardingDataTransformInstanceMetrics::onOplogEntriesFetched(int64_t numEntries) {
+    _oplogEntriesFetched.fetchAndAdd(numEntries);
+    getTypedCumulativeMetrics()->onOplogEntriesFetched(numEntries);
+}
+
+void ShardingDataTransformInstanceMetrics::onOplogEntriesApplied(int64_t numEntries) {
+    _oplogEntriesApplied.fetchAndAdd(numEntries);
+    getTypedCumulativeMetrics()->onOplogEntriesApplied(numEntries);
+}
+
+void ShardingDataTransformInstanceMetrics::onBatchRetrievedDuringOplogFetching(
+    Milliseconds elapsed) {
+    getTypedCumulativeMetrics()->onBatchRetrievedDuringOplogFetching(elapsed);
+}
+
+void ShardingDataTransformInstanceMetrics::onLocalInsertDuringOplogFetching(
+    const Milliseconds& elapsed) {
+    getTypedCumulativeMetrics()->onLocalInsertDuringOplogFetching(elapsed);
+}
+
+void ShardingDataTransformInstanceMetrics::onBatchRetrievedDuringOplogApplying(
+    const Milliseconds& elapsed) {
+    getTypedCumulativeMetrics()->onBatchRetrievedDuringOplogApplying(elapsed);
+}
+
+void ShardingDataTransformInstanceMetrics::onOplogLocalBatchApplied(Milliseconds elapsed) {
+    getTypedCumulativeMetrics()->onOplogLocalBatchApplied(elapsed);
+}
+
+boost::optional<ReshardingMetricsTimeInterval> ShardingDataTransformInstanceMetrics::getIntervalFor(
+    PhaseEnum phase) const {
+    return _phaseDurations.getIntervalFor(phase);
+}
+
+boost::optional<Date_t> ShardingDataTransformInstanceMetrics::getStartFor(PhaseEnum phase) const {
+    return _phaseDurations.getStartFor(phase);
+}
+
+boost::optional<Date_t> ShardingDataTransformInstanceMetrics::getEndFor(PhaseEnum phase) const {
+    return _phaseDurations.getEndFor(phase);
+}
+
+void ShardingDataTransformInstanceMetrics::setStartFor(PhaseEnum phase, Date_t date) {
+    _phaseDurations.setStartFor(phase, date);
+}
+
+void ShardingDataTransformInstanceMetrics::setEndFor(PhaseEnum phase, Date_t date) {
+    _phaseDurations.setEndFor(phase, date);
+}
+
 ShardingDataTransformInstanceMetrics::UniqueScopedObserver
 ShardingDataTransformInstanceMetrics::registerInstanceMetrics() {
     return _cumulativeMetrics->registerInstanceMetrics(_observer.get());
+}
+
+int64_t ShardingDataTransformInstanceMetrics::getInsertsApplied() const {
+    return _insertsApplied.load();
+}
+
+int64_t ShardingDataTransformInstanceMetrics::getUpdatesApplied() const {
+    return _updatesApplied.load();
+}
+
+int64_t ShardingDataTransformInstanceMetrics::getDeletesApplied() const {
+    return _deletesApplied.load();
+}
+
+int64_t ShardingDataTransformInstanceMetrics::getOplogEntriesFetched() const {
+    return _oplogEntriesFetched.load();
+}
+
+int64_t ShardingDataTransformInstanceMetrics::getOplogEntriesApplied() const {
+    return _oplogEntriesApplied.load();
+}
+
+void ShardingDataTransformInstanceMetrics::restoreInsertsApplied(int64_t count) {
+    _insertsApplied.store(count);
+}
+
+void ShardingDataTransformInstanceMetrics::restoreUpdatesApplied(int64_t count) {
+    _updatesApplied.store(count);
+}
+
+void ShardingDataTransformInstanceMetrics::restoreDeletesApplied(int64_t count) {
+    _deletesApplied.store(count);
+}
+
+void ShardingDataTransformInstanceMetrics::restoreOplogEntriesFetched(int64_t count) {
+    _oplogEntriesFetched.store(count);
+}
+
+void ShardingDataTransformInstanceMetrics::restoreOplogEntriesApplied(int64_t count) {
+    _oplogEntriesApplied.store(count);
 }
 
 }  // namespace mongo

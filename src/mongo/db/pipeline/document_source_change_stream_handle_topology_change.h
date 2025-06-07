@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
@@ -54,6 +47,14 @@
 #include "mongo/s/query/exec/async_results_merger_params_gen.h"
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -80,7 +81,7 @@ public:
         const boost::intrusive_ptr<ExpressionContext>&);
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     Value doSerialize(const SerializationOptions& opts = SerializationOptions{}) const final;
@@ -97,6 +98,12 @@ public:
     }
 
     void addVariableRefs(std::set<Variables::Id>* refs) const final {}
+
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
+    }
 
 private:
     DocumentSourceChangeStreamHandleTopologyChange(const boost::intrusive_ptr<ExpressionContext>&);

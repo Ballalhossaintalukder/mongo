@@ -31,17 +31,6 @@
 
 #include "mongo/db/curop.h"
 
-#include <absl/container/flat_hash_set.h>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -81,6 +70,17 @@
 #include "mongo/util/net/socket_utils.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <tuple>
+
+#include <absl/container/flat_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -689,23 +689,10 @@ bool CurOp::completeAndLogOperation(const logv2::LogOptions& logOptions,
         _debug.prepareConflictDurationMillis =
             duration_cast<Milliseconds>(prepareConflictDurationMicros);
 
-        auto operationMetricsPtr = [&]() -> ResourceConsumption::OperationMetrics* {
-            auto& metricsCollector = ResourceConsumption::MetricsCollector::get(opCtx);
-            if (metricsCollector.hasCollectedMetrics()) {
-                return &metricsCollector.getMetrics();
-            }
-            return nullptr;
-        }();
-
         const auto& storageMetrics = getOperationStorageMetrics();
 
         logv2::DynamicAttributes attr;
-        _debug.report(opCtx,
-                      &lockStats,
-                      operationMetricsPtr,
-                      storageMetrics,
-                      getPrepareReadConflicts(),
-                      &attr);
+        _debug.report(opCtx, &lockStats, storageMetrics, getPrepareReadConflicts(), &attr);
 
         LOGV2_OPTIONS(51803, logOptions, "Slow query", attr);
 
@@ -910,6 +897,14 @@ void CurOp::reportState(BSONObjBuilder* builder,
 
     if (!_planSummary.empty()) {
         builder->append("planSummary", _planSummary);
+    }
+
+    if (int64_t inUseMemBytes = getInUseMemoryBytes()) {
+        builder->append("inUseMemBytes", inUseMemBytes);
+    }
+
+    if (int64_t maxUsedMemBytes = getMaxUsedMemoryBytes()) {
+        builder->append("maxUsedMemBytes", maxUsedMemBytes);
     }
 
     if (_genericCursor) {

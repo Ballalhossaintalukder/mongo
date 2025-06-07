@@ -1,5 +1,5 @@
 /**
- * Tests basic index creation and operations on a time-series bucket collection.
+ * Tests basic raw index creation and operations directly on buckets, by using rawData operations.
  *
  * @tags: [
  *   # This test depends on certain writes ending up in the same bucket. Stepdowns and tenant
@@ -7,10 +7,10 @@
  *   does_not_support_stepdowns,
  *   # We need a timeseries collection.
  *   requires_timeseries,
- *   known_query_shape_computation_problem,  # TODO (SERVER-103069): Remove this tag.
  * ]
  */
 import {
+    createRawTimeseriesIndex,
     getTimeseriesCollForRawOps,
     kRawOperationSpec,
 } from "jstests/core/libs/raw_operation_utils.js";
@@ -23,20 +23,19 @@ import {
 
 TimeseriesTest.run((insert) => {
     const coll = db[jsTestName()];
-    const bucketsColl = db.getCollection('system.buckets.' + coll.getName());
 
     const timeFieldName = 'time';
 
     coll.drop();
     assert.commandWorked(
         db.createCollection(coll.getName(), {timeseries: {timeField: timeFieldName}}));
-    assert.commandWorked(bucketsColl.createIndex({"control.min.time": 1}));
+    assert.commandWorked(createRawTimeseriesIndex(coll, {"control.min.time": 1}));
 
     const t = new Date();
     const doc = {_id: 0, [timeFieldName]: t, x: 0};
     assert.commandWorked(insert(coll, doc), 'failed to insert doc: ' + tojson(doc));
 
-    assert.commandWorked(bucketsColl.createIndex({"control.max.time": 1}));
+    assert.commandWorked(createRawTimeseriesIndex(coll, {"control.max.time": 1}));
 
     let buckets = getTimeseriesCollForRawOps(coll).find().rawData().toArray();
     assert.eq(buckets.length, 1, 'Expected one bucket but found ' + tojson(buckets));

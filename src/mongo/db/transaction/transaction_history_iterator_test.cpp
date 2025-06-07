@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/transaction/transaction_history_iterator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -48,11 +44,16 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/shard_id.h"
-#include "mongo/db/transaction/transaction_history_iterator.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -117,7 +118,7 @@ TEST_F(SessionHistoryIteratorTest, NormalHistory) {
         repl::OpTime(Timestamp(67, 54801), 2));  // optime of previous write in transaction
     insertOplogEntry(entry4);
 
-    TransactionHistoryIterator iter(repl::OpTime(Timestamp(97, 2472), 2));
+    TransactionHistoryIterator iter(repl::OpTime(Timestamp(97, 2472), 2), true);
 
     {
         ASSERT_TRUE(iter.hasNext());
@@ -162,7 +163,7 @@ TEST_F(SessionHistoryIteratorTest, NextShouldAssertIfHistoryIsTruncated) {
     insertOplogEntry(entry);
 
     repl::OpTime opTime(Timestamp(67, 54801), 2);
-    TransactionHistoryIterator iter(opTime);
+    TransactionHistoryIterator iter(opTime, true);
     ASSERT_TRUE(iter.hasNext());
 
     auto nextEntry = iter.next(opCtx());
@@ -180,7 +181,7 @@ TEST_F(SessionHistoryIteratorTest, OplogInWriteHistoryChainWithMissingPrevTSShou
                                 boost::none);  // optime of previous write in transaction
     insertOplogEntry(entry);
 
-    TransactionHistoryIterator iter(repl::OpTime(Timestamp(67, 54801), 2));
+    TransactionHistoryIterator iter(repl::OpTime(Timestamp(67, 54801), 2), true);
     ASSERT_TRUE(iter.hasNext());
     ASSERT_THROWS_CODE(iter.next(opCtx()), AssertionException, ErrorCodes::FailedToParse);
 }

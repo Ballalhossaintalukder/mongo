@@ -29,15 +29,6 @@
 
 #include <boost/container/small_vector.hpp>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -75,6 +66,16 @@
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 /**
  * This file tests db/exec/merge_sort.cpp
@@ -485,8 +486,8 @@ public:
 
         // b:51 (EOF)
         params = makeIndexScanParams(&_opCtx, coll, getIndex(secondIndex, coll));
-        params.bounds.startKey = BSON("" << 51 << "" << MinKey);
-        params.bounds.endKey = BSON("" << 51 << "" << MaxKey);
+        params.bounds.startKey = BSON("" << 51 << "" << BSONType::minKey);
+        params.bounds.endKey = BSON("" << 51 << "" << BSONType::maxKey);
         ms->addChild(std::make_unique<IndexScan>(_expCtx.get(), coll, params, ws.get(), nullptr));
         std::unique_ptr<FetchStage> fetchStage =
             std::make_unique<FetchStage>(_expCtx.get(), ws.get(), std::move(ms), nullptr, coll);

@@ -28,22 +28,13 @@
  */
 
 
-#include "mongo/db/s/resharding/resharding_coordinator_service_util.h"
-#include <algorithm>
-#include <cstddef>
-#include <deque>
-#include <functional>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/s/resharding/resharding_util.h"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/oid.h"
 #include "mongo/bson/timestamp.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source.h"
@@ -51,9 +42,9 @@
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/s/config/config_server_test_fixture.h"
+#include "mongo/db/s/resharding/resharding_coordinator_service_util.h"
 #include "mongo/db/s/resharding/resharding_server_parameters_gen.h"
 #include "mongo/db/s/resharding/resharding_txn_cloner.h"
-#include "mongo/db/s/resharding/resharding_util.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/session/session_txn_record_gen.h"
@@ -65,6 +56,17 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <deque>
+#include <functional>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
@@ -548,19 +550,19 @@ protected:
         return pipeline;
     }
 
-    bool pipelineMatchesDeque(const std::unique_ptr<Pipeline, PipelineDeleter>& pipeline,
+    bool pipelineMatchesDeque(const std::unique_ptr<exec::agg::Pipeline>& execPipeline,
                               const std::deque<SessionTxnRecord>& transactions) {
         auto expected = transactions.begin();
         boost::optional<Document> next;
         for (size_t i = 0; i < transactions.size(); i++) {
-            next = pipeline->getNext();
+            next = execPipeline->getNext();
             if (expected == transactions.end() || !next ||
                 !expected->toBSON().binaryEqual(next->toBson())) {
                 return false;
             }
             expected++;
         }
-        return !pipeline->getNext() && expected == transactions.end();
+        return !execPipeline->getNext() && expected == transactions.end();
     }
 };
 
@@ -569,8 +571,9 @@ TEST_F(ReshardingTxnCloningPipelineTest, TxnPipelineSorted) {
         makeTransactions(10, 10, [](size_t) { return Timestamp::min(); });
 
     auto pipeline = constructPipeline(mockResults, Timestamp::max(), boost::none);
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources());
 
-    ASSERT(pipelineMatchesDeque(pipeline, expectedTransactions));
+    ASSERT(pipelineMatchesDeque(execPipeline, expectedTransactions));
 }
 
 TEST_F(ReshardingTxnCloningPipelineTest, TxnPipelineAfterID) {
@@ -582,8 +585,9 @@ TEST_F(ReshardingTxnCloningPipelineTest, TxnPipelineAfterID) {
     expectedTransactions.erase(expectedTransactions.begin(), middleTransaction + 1);
 
     auto pipeline = constructPipeline(mockResults, Timestamp::max(), middleTransactionSessionId);
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources());
 
-    ASSERT(pipelineMatchesDeque(pipeline, expectedTransactions));
+    ASSERT(pipelineMatchesDeque(execPipeline, expectedTransactions));
 }
 
 }  // namespace

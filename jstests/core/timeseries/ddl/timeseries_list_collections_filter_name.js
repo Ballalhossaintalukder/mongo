@@ -7,6 +7,10 @@
  *   requires_timeseries,
  * ]
  */
+import {
+    areViewlessTimeseriesEnabled
+} from "jstests/core/timeseries/libs/viewless_timeseries_util.js";
+
 const timeFieldName = 'time';
 
 const coll = db[jsTestName()];
@@ -17,6 +21,17 @@ assert.commandWorked(db.createCollection(coll.getName(), {timeseries: {timeField
 const collections =
     assert.commandWorked(db.runCommand({listCollections: 1, filter: {name: coll.getName()}}))
         .cursor.firstBatch;
+assert.eq(1, collections.length);
+const collectionDocument = collections[0];
+
+// Exclude the collection UUID from the comparison, as it is randomly generated.
+assert.eq(areViewlessTimeseriesEnabled(db), collectionDocument.info.uuid !== undefined);
+delete collectionDocument.info.uuid;
+
+if (areViewlessTimeseriesEnabled(db)) {
+    // TODO(SERVER-105339): listCollections should not return clusteredIndex field
+    delete collectionDocument.options.clusteredIndex;
+}
 
 const timeseriesOptions = {
     timeField: timeFieldName,
@@ -24,11 +39,11 @@ const timeseriesOptions = {
     bucketMaxSpanSeconds: 3600
 };
 
-const collectionOptions = [{
+const collectionOptions = {
     name: coll.getName(),
     type: 'timeseries',
     options: {timeseries: timeseriesOptions},
     info: {readOnly: false},
-}];
+};
 
-assert.eq(collections, collectionOptions);
+assert.eq(collectionDocument, collectionOptions);

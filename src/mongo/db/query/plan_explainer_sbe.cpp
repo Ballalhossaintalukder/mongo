@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <cstddef>
-#include <cstdint>
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/plan_explainer_sbe.h"
 
 #include "mongo/bson/bson_depth.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,7 +43,6 @@
 #include "mongo/db/query/index_entry.h"
 #include "mongo/db/query/plan_explainer_factory.h"
 #include "mongo/db/query/plan_explainer_impl.h"
-#include "mongo/db/query/plan_explainer_sbe.h"
 #include "mongo/db/query/plan_summary_stats_visitor.h"
 #include "mongo/db/query/projection.h"
 #include "mongo/db/query/projection_ast_util.h"
@@ -61,6 +53,15 @@
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <set>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -448,7 +449,8 @@ void statsToBSON(const sbe::PlanStageStats* stats,
 PlanExplainer::PlanStatsDetails buildPlanStatsDetails(
     const QuerySolution* solution,
     const sbe::PlanStageStats& stats,
-    const boost::optional<BSONObj>& execPlanDebugInfo,
+    const sbe::PlanStage* sbePlanStageRoot,
+    const stage_builder::PlanStageData* sbePlanStageData,
     const boost::optional<std::string>& planSummary,
     const boost::optional<BSONObj>& queryParams,
     const boost::optional<BSONArray>& remotePlanInfo,
@@ -475,7 +477,6 @@ PlanExplainer::PlanStatsDetails buildPlanStatsDetails(
         statsToBSON(solution->root(), &bob, &bob);
     }
 
-    tassert(9258810, "encountered unexpected missing BSONObj", execPlanDebugInfo);
     BSONObjBuilder plan;
     if (planSummary) {
         plan.append("planSummary", *planSummary);
@@ -484,7 +485,20 @@ PlanExplainer::PlanStatsDetails buildPlanStatsDetails(
     plan.append("isCached", isCached);
     plan.append("queryPlan", bob.obj());
 
-    plan.append("slotBasedPlan", *execPlanDebugInfo);
+    int explainThresholdBytes = internalQueryExplainSizeThresholdBytes.loadRelaxed();
+
+    if (plan.len() > explainThresholdBytes) {
+        plan.append("warning", "slotBasedPlan exceeded BSON size limit for explain");
+    } else {
+        BSONObj execPlanDebugInfo = PlanExplainerSBEBase::buildExecPlanDebugInfo(
+            sbePlanStageRoot, sbePlanStageData, explainThresholdBytes - plan.len() /*lengthCap*/
+        );
+        if (plan.len() + execPlanDebugInfo.objsize() > explainThresholdBytes) {
+            plan.append("warning", "slotBasedPlan exceeded BSON size limit for explain");
+        } else {
+            plan.append("slotBasedPlan", execPlanDebugInfo);
+        }
+    }
     if (remotePlanInfo && !remotePlanInfo->isEmpty()) {
         plan.append("remotePlans", *remotePlanInfo);
     }
@@ -580,7 +594,8 @@ PlanExplainer::PlanStatsDetails PlanExplainerSBEBase::getWinningPlanStats(
 
     return buildPlanStatsDetails(_solution,
                                  *stats,
-                                 buildExecPlanDebugInfo(_root, _rootData),
+                                 _root,
+                                 _rootData,
                                  boost::none /* planSummary */,
                                  boost::none /* queryParams */,
                                  buildRemotePlanInfo(),

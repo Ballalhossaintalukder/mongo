@@ -84,7 +84,7 @@ enum class DataRemoval {
 /**
  * Performs two-phase index drop.
  *
- * Passthrough to DurableCatalog::removeIndex to execute the first phase of drop by removing the
+ * Passthrough to durable_catalog::removeIndex to execute the first phase of drop by removing the
  * index catalog entry, then registers an onCommit hook to schedule the second phase of drop to
  * delete the index data. The 'dataRemoval' field can be used to specify whether the second phase of
  * drop, table data deletion, should run immediately or delayed: immediate deletion should only be
@@ -106,7 +106,7 @@ void removeIndex(OperationContext* opCtx,
 /**
  * Performs two-phase collection drop.
  *
- * Passthrough to DurableCatalog::dropCollection to execute the first phase of drop by removing the
+ * Passthrough to durable_catalog::dropCollection to execute the first phase of drop by removing the
  * collection entry, then registers an onCommit hook to schedule the second phase of drop to delete
  * the collection data.
  *
@@ -134,8 +134,10 @@ Status dropCollectionsWithPrefix(OperationContext* opCtx,
 
 /**
  * Shuts down collection catalog and storage engine cleanly.
+ * Set `memLeakAllowed` to true for faster shutdown.
  */
-void shutDownCollectionCatalogAndGlobalStorageEngineCleanly(ServiceContext* service);
+void shutDownCollectionCatalogAndGlobalStorageEngineCleanly(ServiceContext* service,
+                                                            bool memLeakAllowed);
 
 /**
  * Starts up storage engine and initializes the collection catalog.

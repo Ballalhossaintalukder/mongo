@@ -29,19 +29,20 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <map>
-#include <stack>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/matcher/expression.h"
 #include "mongo/db/query/algebra/operator.h"
 #include "mongo/db/query/algebra/polyvalue.h"
 #include "mongo/db/query/index_bounds.h"
 #include "mongo/db/query/index_entry.h"
+
+#include <map>
+#include <stack>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo::interval_evaluation_tree {
 class ConstNode;
@@ -178,49 +179,6 @@ public:
         return allChildrenEqual(other);
     }
 };
-
-template <typename H>
-class IETHasher {
-public:
-    IETHasher(H hashState) : _hashState(std::move(hashState)) {}
-
-    H releaseHashState() {
-        return std::move(_hashState);
-    }
-
-    void transport(const ConstNode& node) {
-        combine(node, node.oil.toString(false));
-    }
-
-    void transport(const EvalNode& node) {
-        combine(node, node.matchType(), node.inputParamId());
-    }
-
-    void transport(const ExplodeNode& node, const IET&) {
-        auto cacheKey = node.cacheKey();
-        combine(node, node.index(), cacheKey.first, cacheKey.second);
-    }
-
-    template <typename N, typename... Ts>
-    void transport(const N& node, const Ts&... values) {
-        combine(node);
-    }
-
-private:
-    template <typename N, typename... Ts>
-    void combine(const N& node, const Ts&... values) {
-        _hashState = H::combine(std::move(_hashState), typeid(N).name(), values...);
-    }
-
-    H _hashState;
-};
-
-template <typename H>
-H AbslHashValue(H h, const IET& iet) {
-    IETHasher hasher(std::move(h));
-    algebra::transport<false>(iet, hasher);
-    return hasher.releaseHashState();
-}
 
 std::string ietToString(const IET& iet);
 std::string ietsToString(const IndexEntry& index, const std::vector<IET>& iets);

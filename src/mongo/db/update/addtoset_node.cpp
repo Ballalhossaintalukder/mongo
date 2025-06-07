@@ -27,18 +27,19 @@
  *    it in the license file.
  */
 
-#include <set>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/addtoset_node.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement_comparator_interface.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/query/collation/collator_interface.h"
-#include "mongo/db/update/addtoset_node.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <set>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -75,11 +76,11 @@ Status AddToSetNode::init(BSONElement modExpr,
     bool isEach = false;
 
     // If the value of 'modExpr' is an object whose first field is '$each', treat it as an $each.
-    if (modExpr.type() == BSONType::Object) {
+    if (modExpr.type() == BSONType::object) {
         auto firstElement = modExpr.Obj().firstElement();
         if (firstElement && firstElement.fieldNameStringData() == "$each") {
             isEach = true;
-            if (firstElement.type() != BSONType::Array) {
+            if (firstElement.type() != BSONType::array) {
                 return Status(
                     ErrorCodes::TypeMismatch,
                     str::stream()
@@ -116,7 +117,7 @@ ModifierNode::ModifyResult AddToSetNode::updateExistingElement(mutablebson::Elem
             str::stream() << "Cannot apply $addToSet to non-array field. Field named '"
                           << element->getFieldName() << "' has non-array type "
                           << typeName(element->getType()),
-            element->getType() == BSONType::Array);
+            element->getType() == BSONType::array);
 
     // Find the set of elements that do not already exist in the array 'element'.
     std::vector<BSONElement> elementsToAdd;

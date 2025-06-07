@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <utility>
-#include <vector>
-
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/client/read_preference.h"
@@ -44,11 +40,21 @@
 #include "mongo/util/future.h"
 #include "mongo/util/out_of_line_executor.h"
 
+#include <utility>
+#include <vector>
+
 namespace mongo {
 namespace resharding {
 
+using primary_only_service_helpers::kDefaultRetryabilityPredicate;
+using primary_only_service_helpers::RetryabilityPredicate;
 using primary_only_service_helpers::RetryingCancelableOperationContextFactory;
 using primary_only_service_helpers::WithAutomaticRetry;
+
+const auto kRetryabilityPredicateIncludeWriteConcernTimeout = [](const Status& status) {
+    return kDefaultRetryabilityPredicate(status) || status == ErrorCodes::WriteConcernTimeout;
+};
+
 
 /**
  * Converts a vector of SharedSemiFutures into a vector of ExecutorFutures.

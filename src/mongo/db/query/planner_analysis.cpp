@@ -31,17 +31,15 @@
 #include "mongo/db/query/planner_analysis.h"
 
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
+#include <cstring>
+
+#include <s2cellid.h>
+
 #include <boost/cstdint.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-#include <cstring>
-#include <s2cellid.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <set>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -72,6 +70,10 @@
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <set>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -786,14 +788,27 @@ void removeInclusionProjectionBelowGroupRecursive(QuerySolutionNode* solnRoot) {
     }
 }
 
-// Determines whether 'index' is eligible for executing the right side of a pushed down $lookup over
+// Determines whether 'index' is eligible for executing the right side of a $lookup over
 // 'foreignField'.
+bool isIndexEligibleForRightSideOfLookup(const IndexEntry& index, const std::string& foreignField) {
+    return (index.type == INDEX_BTREE || index.type == INDEX_HASHED) &&
+        index.keyPattern.firstElement().fieldName() == foreignField && !index.filterExpr &&
+        !index.sparse;
+}
+
+bool isIndexCollationCompatible(const IndexEntry& index, const CollatorInterface* collator) {
+    return CollatorInterface::collatorsMatch(collator, index.collator);
+}
+
+// Determines whether 'index' is eligible for executing the right side of a pushed down $lookup over
+// 'foreignField'. When a $lookup is pushed to SBE, an index should have a compatible collation to
+// be eligible for the execution of the right side of $lookup. This is not necessary when the
+// $lookup is executed in classic.
 bool isIndexEligibleForRightSideOfLookupPushdown(const IndexEntry& index,
                                                  const CollatorInterface* collator,
                                                  const std::string& foreignField) {
-    return (index.type == INDEX_BTREE || index.type == INDEX_HASHED) &&
-        index.keyPattern.firstElement().fieldName() == foreignField && !index.filterExpr &&
-        !index.sparse && CollatorInterface::collatorsMatch(collator, index.collator);
+    return isIndexEligibleForRightSideOfLookup(index, foreignField) &&
+        isIndexCollationCompatible(index, collator);
 }
 
 bool isShardedCollScan(QuerySolutionNode* solnRoot) {
@@ -869,6 +884,32 @@ void QueryPlannerAnalysis::removeImpreciseInternalExprFilters(const QueryPlanner
     for (auto& child : root.children) {
         removeImpreciseInternalExprFilters(params, *child);
     }
+}
+
+// static
+bool QueryPlannerAnalysis::canUseIndexForRightSideOfLookupInSBE(
+    const std::string& foreignField,
+    const std::vector<IndexEntry>& fullIndexList,
+    const CollatorInterface* collator) {
+
+    bool hasEligibleIndex = false;
+
+    for (const auto& index : fullIndexList) {
+        if (isIndexEligibleForRightSideOfLookup(index, foreignField)) {
+            if (isIndexCollationCompatible(index, collator)) {
+                return true;
+            }
+            // There is an index that could potentially be used but it is not collation compatible.
+            // Check if there is another eligible and collation compatible index.
+            hasEligibleIndex = true;
+        }
+    }
+
+    // If there was no eligible index (hasEligibleIndex = false), return true since there is no
+    // problem pushing down to SBE in this case. If there was an eligible index and we are here
+    // (hasEligibleIndex = true), the index was not collation compatible so we should not push to
+    // SBE.
+    return !hasEligibleIndex;
 }
 
 // static
@@ -950,7 +991,7 @@ void QueryPlannerAnalysis::analyzeGeo(const QueryPlannerParams& params,
         }
 
         for (auto& elt : indexEntry.keyPattern) {
-            if (elt.type() == BSONType::String && elt.String() == "2dsphere") {
+            if (elt.type() == BSONType::string && elt.String() == "2dsphere") {
                 twoDSphereFields.insert(elt.fieldName());
             }
         }
@@ -965,7 +1006,7 @@ BSONObj QueryPlannerAnalysis::getSortPattern(const BSONObj& indexKeyPattern) {
     BSONObjIterator kpIt(indexKeyPattern);
     while (kpIt.more()) {
         BSONElement elt = kpIt.next();
-        if (elt.type() == mongo::String) {
+        if (elt.type() == BSONType::string) {
             break;
         }
         // The canonical check as to whether a key pattern element is "ascending" or "descending" is

@@ -29,10 +29,6 @@
 
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <climits>
-#include <cmath>
-#include <limits>
-
 #include "mongo/bson/json.h"
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/db/exec/document_value/document.h"
@@ -42,6 +38,10 @@
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/pipeline/name_expression.h"
 #include "mongo/unittest/unittest.h"
+
+#include <climits>
+#include <cmath>
+#include <limits>
 
 namespace mongo {
 namespace expression_evaluation_test {
@@ -97,14 +97,14 @@ TEST(NowAndClusterTime, BasicTest) {
     {
         auto expression = ExpressionFieldPath::parse(&expCtx, "$$NOW", expCtx.variablesParseState);
         Value result = expression->evaluate(Document(), &expCtx.variables);
-        ASSERT_EQ(result.getType(), Date);
+        ASSERT_EQ(result.getType(), BSONType::date);
     }
     // $$CLUSTER_TIME is the timestamp type.
     {
         auto expression =
             ExpressionFieldPath::parse(&expCtx, "$$CLUSTER_TIME", expCtx.variablesParseState);
         Value result = expression->evaluate(Document(), &expCtx.variables);
-        ASSERT_EQ(result.getType(), bsonTimestamp);
+        ASSERT_EQ(result.getType(), BSONType::timestamp);
     }
 
     // Multiple references to $$NOW must return the same value.

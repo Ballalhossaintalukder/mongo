@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/client/connection_string.h"
@@ -48,6 +44,10 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/sharding_test_fixture_common.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace mongo {
 
@@ -80,7 +80,7 @@ protected:
     Status initializeGlobalShardingStateForMongodForTest(
         const ConnectionString& configConnStr,
         std::unique_ptr<CatalogCache> catalogCache,
-        std::shared_ptr<ShardServerCatalogCacheLoader> catalogCacheLoader = nullptr);
+        std::shared_ptr<ShardServerCatalogCacheLoader> catalogCacheLoader);
 
     // Syntactic sugar for getting sharding components off the Grid, if they have been initialized.
 

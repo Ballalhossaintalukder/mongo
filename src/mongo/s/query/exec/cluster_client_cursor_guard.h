@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <memory>
-
 #include "mongo/db/operation_context.h"
 #include "mongo/s/query/exec/cluster_client_cursor.h"
+
+#include <memory>
 
 namespace mongo {
 
@@ -70,6 +70,13 @@ public:
      * Returns a pointer to the underlying cursor.
      */
     ClusterClientCursor* operator->() {
+        return _ccc.get();
+    }
+
+    /**
+     * Returns a pointer to the underlying cursor.
+     */
+    ClusterClientCursor* get() {
         return _ccc.get();
     }
 

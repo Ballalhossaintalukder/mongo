@@ -27,25 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/data_range.h"
 #include "mongo/base/secure_allocator.h"
 #include "mongo/base/status.h"
@@ -87,6 +68,25 @@
 #include "mongo/util/murmur3.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -607,7 +607,7 @@ void FleCompactTest::testCompactValueV2_NoNullAnchors(const Value& value,
         compactOneRangeFieldPad(_queryImpl.get(),
                                 _namespaces.escNss,
                                 "rangeField"_sd,
-                                BSONType::NumberLong,
+                                BSONType::numberLong,
                                 queryTypeConfig,
                                 0.42,
                                 1,
@@ -638,7 +638,7 @@ void FleCompactTest::testCompactValueV2_NoNullAnchors(const Value& value,
         compactOneRangeFieldPad(_queryImpl.get(),
                                 _namespaces.escNss,
                                 "rangeField"_sd,
-                                BSONType::NumberLong,
+                                BSONType::numberLong,
                                 queryTypeConfig,
                                 0.42,
                                 1,
@@ -1052,7 +1052,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_MaximizeUniqueTokens) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1072,7 +1072,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_MaximizeUniqueTokens) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1098,7 +1098,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_MinimizeUniqueTokens) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1118,7 +1118,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_MinimizeUniqueTokens) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1143,7 +1143,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_TinyDomainSize) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1163,7 +1163,7 @@ TEST_F(FleCompactTest, InjectSomeAnchorPadding_TinyDomainSize) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberInt,
+                            BSONType::numberInt,
                             queryTypeConfig,
                             0.42,
                             2,
@@ -1185,7 +1185,7 @@ TEST_F(FleCompactTest, InjectManyAnchorPadding) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c"_sd,
-                            BSONType::NumberLong,
+                            BSONType::numberLong,
                             queryTypeConfig,
                             1,
                             5,
@@ -1211,7 +1211,7 @@ TEST_F(FleCompactTest, InjectAnchorPaddingOverBatchWriteLimit) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c",
-                            BSONType::NumberLong,
+                            BSONType::numberLong,
                             queryTypeConfig,
                             1,
                             uniqueLeaves,
@@ -1227,7 +1227,7 @@ TEST_F(FleCompactTest, InjectAnchorPaddingOverBatchWriteLimit) {
     compactOneRangeFieldPad(_queryImpl.get(),
                             _namespaces.escNss,
                             "a.b.c",
-                            BSONType::NumberLong,
+                            BSONType::numberLong,
                             queryTypeConfig,
                             1,
                             uniqueLeaves,

@@ -27,15 +27,16 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/expression_js_emit.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/expression/evaluate.h"
-#include "mongo/db/pipeline/expression_js_emit.h"
+
+#include <cstddef>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -61,14 +62,14 @@ boost::intrusive_ptr<Expression> ExpressionInternalJsEmit::parse(ExpressionConte
     uassert(31221,
             str::stream() << kExpressionName
                           << " requires an object as an argument, found: " << typeName(expr.type()),
-            expr.type() == BSONType::Object);
+            expr.type() == BSONType::object);
 
     BSONElement evalField = expr["eval"];
 
     uassert(31222, str::stream() << "The map function must be specified.", evalField);
     uassert(31224,
             "The map function must be of type string or code",
-            evalField.type() == BSONType::String || evalField.type() == BSONType::Code);
+            evalField.type() == BSONType::string || evalField.type() == BSONType::code);
 
     std::string funcSourceString = evalField._asCode();
     BSONElement thisField = expr["this"];

@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <limits>
-#include <string>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/arithmetic_node.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -38,13 +35,17 @@
 #include "mongo/bson/json.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/update/arithmetic_node.h"
 #include "mongo/db/update/runtime_update_path.h"
 #include "mongo/db/update/update_executor.h"
 #include "mongo/db/update/update_node_test_fixture.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <limits>
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -486,13 +487,13 @@ TEST_F(ArithmeticNodeTest, OverflowIntToLong) {
 
     const int initialValue = std::numeric_limits<int>::max();
     mutablebson::Document doc(BSON("a" << initialValue));
-    ASSERT_EQUALS(mongo::NumberInt, doc.root()["a"].getType());
+    ASSERT_EQUALS(mongo::BSONType::numberInt, doc.root()["a"].getType());
     setPathTaken(makeRuntimeUpdatePathForTest("a"));
     addIndexedPath("a");
     auto result = node.apply(getApplyParams(doc.root()["a"]), getUpdateNodeApplyParams());
     ASSERT_FALSE(result.noop);
     ASSERT_TRUE(getIndexAffectedFromLogEntry());
-    ASSERT_EQUALS(mongo::NumberLong, doc.root()["a"].getType());
+    ASSERT_EQUALS(mongo::BSONType::numberLong, doc.root()["a"].getType());
     ASSERT_EQUALS(BSON("a" << static_cast<long long>(initialValue) + 1), doc);
     ASSERT_FALSE(doc.isInPlaceModeEnabled());
     ASSERT_EQUALS(getModifiedPaths(), "{a}");
@@ -506,13 +507,13 @@ TEST_F(ArithmeticNodeTest, UnderflowIntToLong) {
 
     const int initialValue = std::numeric_limits<int>::min();
     mutablebson::Document doc(BSON("a" << initialValue));
-    ASSERT_EQUALS(mongo::NumberInt, doc.root()["a"].getType());
+    ASSERT_EQUALS(mongo::BSONType::numberInt, doc.root()["a"].getType());
     setPathTaken(makeRuntimeUpdatePathForTest("a"));
     addIndexedPath("a");
     auto result = node.apply(getApplyParams(doc.root()["a"]), getUpdateNodeApplyParams());
     ASSERT_FALSE(result.noop);
     ASSERT_TRUE(getIndexAffectedFromLogEntry());
-    ASSERT_EQUALS(mongo::NumberLong, doc.root()["a"].getType());
+    ASSERT_EQUALS(mongo::BSONType::numberLong, doc.root()["a"].getType());
     ASSERT_EQUALS(BSON("a" << static_cast<long long>(initialValue) - 1), doc);
     ASSERT_FALSE(doc.isInPlaceModeEnabled());
     ASSERT_EQUALS(getModifiedPaths(), "{a}");

@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/dynamic_bitset/dynamic_bitset.hpp>
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/index/wildcard_key_generator.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -47,7 +38,6 @@
 #include "mongo/db/exec/projection_executor_builder.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/field_ref.h"
-#include "mongo/db/index/wildcard_key_generator.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/query/projection_parser.h"
@@ -57,6 +47,17 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/dynamic_bitset/dynamic_bitset.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -174,22 +175,22 @@ void SingleDocumentKeyEncoder::traverseWildcard(BSONObj obj, bool objIsArray, Fi
         pushPathComponent(elem, objIsArray, path);
 
         switch (elem.type()) {
-            case BSONType::Array:
+            case BSONType::array:
                 // If this is a nested array, we don't descend it but instead index it as a value.
                 if (_addKeyForNestedArray(elem, *path, objIsArray)) {
                     break;
                 }
 
-                // Add an entry for the multi-key path, and then fall through to BSONType::Object.
+                // Add an entry for the multi-key path, and then fall through to BSONType::object.
                 _addMultiKey(*path);
                 [[fallthrough]];
 
-            case BSONType::Object:
+            case BSONType::object:
                 if (_addKeyForEmptyLeaf(elem, *path)) {
                     break;
                 }
 
-                traverseWildcard(elem.Obj(), elem.type() == BSONType::Array, path);
+                traverseWildcard(elem.Obj(), elem.type() == BSONType::array, path);
                 break;
 
             default:
@@ -258,7 +259,7 @@ bool SingleDocumentKeyEncoder::_addKeyForNestedArray(BSONElement elem,
                                                      const FieldRef& fullPath,
                                                      bool enclosingObjIsArray) {
     // If this element is an array whose parent is also an array, index it as a value.
-    if (enclosingObjIsArray && elem.type() == BSONType::Array) {
+    if (enclosingObjIsArray && elem.type() == BSONType::array) {
         _addKey(elem, fullPath);
         return true;
     }
@@ -270,7 +271,7 @@ bool SingleDocumentKeyEncoder::_addKeyForEmptyLeaf(BSONElement elem, const Field
     if (elem.embeddedObject().isEmpty()) {
         // In keeping with the behaviour of regular indexes, an empty object is indexed as-is while
         // empty arrays are indexed as 'undefined'.
-        _addKey(elem.type() == BSONType::Array ? BSONElement{} : elem, fullPath);
+        _addKey(elem.type() == BSONType::array ? BSONElement{} : elem, fullPath);
         return true;
     }
     return false;

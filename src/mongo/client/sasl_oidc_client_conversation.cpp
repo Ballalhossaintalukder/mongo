@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <fmt/format.h>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/client/sasl_oidc_client_conversation.h"
 
 #include "mongo/base/data_builder.h"
 #include "mongo/base/data_range.h"
@@ -48,7 +41,6 @@
 #include "mongo/bson/util/builder.h"
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/client/mongo_uri.h"
-#include "mongo/client/sasl_oidc_client_conversation.h"
 #include "mongo/client/sasl_oidc_client_types_gen.h"
 #include "mongo/db/auth/oauth_authorization_server_metadata_gen.h"
 #include "mongo/db/auth/oauth_discovery_factory.h"
@@ -58,6 +50,15 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/net/http_client.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -116,8 +117,8 @@ std::pair<std::string, std::string> doDeviceAuthorizationGrantFlow(
     auto deviceAuthorizationEndpoint = discoveryReply.getDeviceAuthorizationEndpoint().get();
     uassert(ErrorCodes::BadValue,
             "Device authorization endpoint in server reply must be an https endpoint or localhost",
-            deviceAuthorizationEndpoint.startsWith("https://"_sd) ||
-                deviceAuthorizationEndpoint.startsWith("http://localhost"_sd));
+            deviceAuthorizationEndpoint.starts_with("https://"_sd) ||
+                deviceAuthorizationEndpoint.starts_with("http://localhost"_sd));
 
     auto clientId = serverReply.getClientId();
     uassert(ErrorCodes::BadValue,
@@ -295,7 +296,7 @@ StatusWith<bool> SaslOIDCClientConversation::_secondStep(StringData input,
     if (_accessToken.empty()) {
         // Currently, only device authorization flow is supported for token acquisition.
         // Parse device authorization endpoint from input.
-        ConstDataRange inputCdr(input.rawData(), input.size());
+        ConstDataRange inputCdr(input.data(), input.size());
         auto payload = inputCdr.read<Validated<BSONObj>>().val;
         auto serverReply = auth::OIDCMechanismServerStep1::parse(
             IDLParserContext{"oidcServerStep1Reply"}, payload);
@@ -310,8 +311,8 @@ StatusWith<bool> SaslOIDCClientConversation::_secondStep(StringData input,
         uassert(ErrorCodes::BadValue,
                 "Missing or invalid token endpoint in server reply",
                 tokenEndpoint && !tokenEndpoint->empty() &&
-                    (tokenEndpoint->startsWith("https://"_sd) ||
-                     tokenEndpoint->startsWith("http://localhost"_sd)));
+                    (tokenEndpoint->starts_with("https://"_sd) ||
+                     tokenEndpoint->starts_with("http://localhost"_sd)));
 
         // Cache the token endpoint for potential reuse during the refresh flow.
         oidcClientGlobalParams.oidcTokenEndpoint = tokenEndpoint->toString();

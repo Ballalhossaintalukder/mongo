@@ -29,11 +29,11 @@
 
 #include "mongo/db/query/cost_based_ranker/heuristic_estimator.h"
 
-#include <span>
-
 #include "mongo/db/matcher/expression_leaf.h"
 #include "mongo/db/matcher/expression_type.h"
 #include "mongo/db/query/cost_based_ranker/ce_utils.h"
+
+#include <span>
 
 namespace mongo::cost_based_ranker {
 
@@ -231,7 +231,7 @@ SelectivityEstimate estimateInterval(const Interval& interval, CardinalityEstima
     // At this point, we know this interval is a range.
 
     // We use different heuristic based on whether this range is open or closed.
-    if (interval.start.type() == MinKey || interval.end.type() == MaxKey ||
+    if (interval.start.type() == BSONType::minKey || interval.end.type() == BSONType::maxKey ||
         !interval.startInclusive || !interval.endInclusive) {
         return heuristicOpenRangeSel(inputCard);
     }

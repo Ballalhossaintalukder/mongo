@@ -29,19 +29,7 @@
 
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
+#include "mongo/db/pipeline/document_source_find_and_modify_image_lookup.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -51,7 +39,6 @@
 #include "mongo/db/commands/txn_cmds_gen.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/pipeline/document_source_find_and_modify_image_lookup.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
 #include "mongo/db/repl/apply_ops_command_info.h"
@@ -70,6 +57,21 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -174,7 +176,7 @@ DocumentSourceFindAndModifyImageLookup::createFromBson(
     const BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5806003,
             str::stream() << "the '" << kStageName << "' spec must be an object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     bool includeCommitTimestamp = false;
     for (auto&& subElem : elem.Obj()) {
@@ -183,7 +185,7 @@ DocumentSourceFindAndModifyImageLookup::createFromBson(
                     str::stream() << "expected a boolean for the "
                                   << kIncludeCommitTransactionTimestampFieldName << " option to "
                                   << kStageName << " stage, got " << typeName(subElem.type()),
-                    subElem.type() == Bool);
+                    subElem.type() == BSONType::boolean);
             includeCommitTimestamp = subElem.Bool();
         } else {
             uasserted(6387800,
@@ -198,6 +200,7 @@ DocumentSourceFindAndModifyImageLookup::createFromBson(
 DocumentSourceFindAndModifyImageLookup::DocumentSourceFindAndModifyImageLookup(
     const boost::intrusive_ptr<ExpressionContext>& expCtx, bool includeCommitTimestamp)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _includeCommitTransactionTimestamp(includeCommitTimestamp) {}
 
 StageConstraints DocumentSourceFindAndModifyImageLookup::constraints(
@@ -278,7 +281,7 @@ Document DocumentSourceFindAndModifyImageLookup::_downConvertIfNeedsRetryImage(D
         tassert(6387806,
                 str::stream() << "'" << CommitTransactionOplogObject::kCommitTimestampFieldName
                               << "' field is not a BSON Timestamp",
-                commitTxnTs.getType() == BSONType::bsonTimestamp);
+                commitTxnTs.getType() == BSONType::timestamp);
         MutableDocument mutableInputDoc{inputDoc};
         mutableInputDoc.remove(CommitTransactionOplogObject::kCommitTimestampFieldName);
         return {mutableInputDoc.freeze().toBson(), commitTxnTs.getTimestamp()};

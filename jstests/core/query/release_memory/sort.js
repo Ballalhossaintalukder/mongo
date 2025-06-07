@@ -8,11 +8,12 @@
  *   requires_fcv_82,
  *   requires_getmore,
  *   uses_getmore_outside_of_transaction,
+ *   # This test relies on query commands returning specific batch-sized responses.
+ *   assumes_no_implicit_cursor_exhaustion,
  * ]
  */
 
 import {DiscoverTopology} from "jstests/libs/discover_topology.js";
-import {getEngine} from "jstests/libs/query/analyze_plan.js";
 import {
     accumulateServerStatusMetric,
     assertReleaseMemoryFailedWithCode
@@ -71,7 +72,7 @@ const pipelines = [
 ];
 
 for (let pipeline of pipelines) {
-    jsTestLog("Testing pipeline: " + tojson(pipeline));
+    jsTest.log.info("Testing pipeline: ", pipeline);
 
     let previousSpillCount = getSortSpillCounter();
     assertCursorSortedByIndex(coll.aggregate(pipeline));

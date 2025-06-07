@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -41,6 +37,10 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -74,7 +74,7 @@ void AccumulatorMergeObjects::processInternal(const Value& input, bool merging) 
     uassert(40400,
             str::stream() << "$mergeObjects requires object inputs, but input " << input.toString()
                           << " is of type " << typeName(input.getType()),
-            (input.getType() == BSONType::Object));
+            (input.getType() == BSONType::object));
 
     FieldIterator iter = input.getDocument().fieldIterator();
     while (iter.more()) {

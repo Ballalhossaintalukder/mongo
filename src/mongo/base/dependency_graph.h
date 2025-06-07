@@ -29,14 +29,14 @@
 
 #pragma once
 
+#include "mongo/base/status.h"
+#include "mongo/stdx/unordered_map.h"
+#include "mongo/stdx/unordered_set.h"
+
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "mongo/base/status.h"
-#include "mongo/stdx/unordered_map.h"
-#include "mongo/stdx/unordered_set.h"
 
 namespace mongo {
 
@@ -63,9 +63,9 @@ public:
      * Note that cycles in the dependency graph are not discovered by this function.
      * Rather, they're discovered by `topSort`, below.
      */
-    void addNode(std::string name,
-                 std::vector<std::string> prerequisites,
-                 std::vector<std::string> dependents,
+    void addNode(const std::string& name,
+                 const std::vector<std::string>& prerequisites,
+                 const std::vector<std::string>& dependents,
                  std::unique_ptr<Payload> payload = nullptr);
 
     /**

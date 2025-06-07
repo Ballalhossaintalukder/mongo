@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <list>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_sort.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -47,7 +37,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/document_source_limit.h"
-#include "mongo/db/pipeline/document_source_sort.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
@@ -61,6 +50,18 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+#include <list>
+#include <tuple>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -137,6 +138,7 @@ DocumentSourceSort::DocumentSourceSort(const boost::intrusive_ptr<ExpressionCont
                                        const SortPattern& sortOrder,
                                        DocumentSourceSort::SortStageOptions options)
     : DocumentSource(kStageName, pExpCtx),
+      exec::agg::Stage(kStageName, pExpCtx),
       _sortExecutor({sortOrder,
                      options.limit,
                      options.maxMemoryUsageBytes.value_or(
@@ -168,7 +170,7 @@ REGISTER_DOCUMENT_SOURCE_CONDITIONALLY(_internalBoundedSort,
                                        ::mongo::getTestCommandsEnabled()
                                            ? AllowedWithClientType::kAny
                                            : AllowedWithClientType::kInternal,
-                                       kDoesNotRequireFeatureFlag,
+                                       nullptr,  // featureFlag
                                        true);
 
 DocumentSource::GetNextResult::ReturnStatus DocumentSourceSort::timeSorterPeek() {
@@ -399,7 +401,8 @@ void DocumentSourceSort::serializeToArray(std::vector<Value>& array,
     } else {
         MutableDocument mutDoc(_sortExecutor->sortPattern().serialize(
             SortPattern::SortKeySerialization::kForPipelineSerialization, opts));
-        if (_outputSortKeyMetadata) {
+        // If we are serializing for query shape, omit this field in order to maintain stabiilty.
+        if (_outputSortKeyMetadata && opts.isKeepingLiteralsUnchanged()) {
             mutDoc[kInternalOutputSortKey] = Value(_outputSortKeyMetadata);
         }
         array.push_back(Value(DOC(kStageName << mutDoc.freeze())));
@@ -475,7 +478,8 @@ void DocumentSourceSort::addVariableRefs(std::set<Variables::Id>* refs) const {
 
 boost::intrusive_ptr<DocumentSource> DocumentSourceSort::createFromBson(
     BSONElement spec, const boost::intrusive_ptr<ExpressionContext>& pExpCtx) {
-    uassert(15973, "the $sort key specification must be an object", spec.type() == Object);
+    uassert(
+        15973, "the $sort key specification must be an object", spec.type() == BSONType::object);
 
     auto specObj = spec.Obj();
     // Reconstruct the sort order without these internal fields.
@@ -565,11 +569,12 @@ boost::intrusive_ptr<DocumentSourceSort> DocumentSourceSort::parseBoundedSort(
     BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(6369905,
             "the $_internalBoundedSort key specification must be an object",
-            elem.type() == Object);
+            elem.type() == BSONType::object);
     BSONObj args = elem.embeddedObject();
 
     BSONElement key = args["sortKey"];
-    uassert(6369904, "$_internalBoundedSort sortKey must be an object", key.type() == Object);
+    uassert(
+        6369904, "$_internalBoundedSort sortKey must be an object", key.type() == BSONType::object);
 
     // Empty sort pattern is not allowed for the bounded sort.
     uassert(6900501,
@@ -578,7 +583,7 @@ boost::intrusive_ptr<DocumentSourceSort> DocumentSourceSort::parseBoundedSort(
     SortPattern pat{key.embeddedObject(), expCtx};
 
     {
-        auto timePart = pat.back();
+        const auto& timePart = pat.back();
         uassert(6369901,
                 "$_internalBoundedSort doesn't support an expression in the time field (the last "
                 "component of sortKey)",
@@ -590,8 +595,9 @@ boost::intrusive_ptr<DocumentSourceSort> DocumentSourceSort::parseBoundedSort(
     }
 
     BSONElement bound = args["bound"];
-    uassert(
-        6460200, "$_internalBoundedSort bound must be an object", bound && bound.type() == Object);
+    uassert(6460200,
+            "$_internalBoundedSort bound must be an object",
+            bound && bound.type() == BSONType::object);
 
     BSONElement boundOffsetElem = bound.Obj()[DocumentSourceSort::kOffset];
     long long boundOffset = 0;
@@ -603,7 +609,7 @@ boost::intrusive_ptr<DocumentSourceSort> DocumentSourceSort::parseBoundedSort(
     BSONElement boundBaseElem = bound.Obj()["base"];
     uassert(6460201,
             "$_internalBoundedSort bound.base must be a string",
-            boundBaseElem && boundBaseElem.type() == String);
+            boundBaseElem && boundBaseElem.type() == BSONType::string);
     StringData boundBase = boundBaseElem.valueStringData();
     uassert(6460202,
             str::stream() << "$_internalBoundedSort bound.base must be '" << kMin << "' or '"
@@ -707,8 +713,11 @@ std::pair<Value, Document> DocumentSourceSort::extractSortKey(Document&& doc) co
 }
 
 std::pair<Date_t, Document> DocumentSourceSort::extractTime(Document&& doc) const {
-    auto time = doc.getField(_sortExecutor->sortPattern().back().fieldPath->fullPath());
-    uassert(6369909, "$_internalBoundedSort only handles Date values", time.getType() == Date);
+    const auto& fullPath = _sortExecutor->sortPattern().back().fieldPath->fullPath();
+    auto time = doc.getField(StringData{fullPath});
+    uassert(6369909,
+            "$_internalBoundedSort only handles BSONType::date values",
+            time.getType() == BSONType::date);
     auto date = time.getDate();
 
     if (shouldSetSortKeyMetadata()) {

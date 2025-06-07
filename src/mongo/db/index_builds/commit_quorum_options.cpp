@@ -29,9 +29,6 @@
 
 #include "mongo/db/index_builds/commit_quorum_options.h"
 
-#include <cstddef>
-
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -40,6 +37,8 @@
 #include "mongo/db/repl/repl_set_config.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
 
 namespace mongo {
 
@@ -79,7 +78,7 @@ Status CommitQuorumOptions::parse(const BSONElement& commitQuorumElement) {
                     << repl::ReplSetConfig::kMaxMembers);
         }
         numNodes = static_cast<decltype(numNodes)>(cNumNodes);
-    } else if (commitQuorumElement.type() == String) {
+    } else if (commitQuorumElement.type() == BSONType::string) {
         mode = commitQuorumElement.str();
         if (mode.empty()) {
             return Status(ErrorCodes::FailedToParse,

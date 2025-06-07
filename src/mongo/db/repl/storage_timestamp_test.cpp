@@ -27,33 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <fmt/format.h>
-// IWYU pragma: no_include "boost/container/detail/flat_tree.hpp"
-#include <boost/container/flat_set.hpp>
-#include <boost/container/small_vector.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-// IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <cstddef>
-#include <fstream>  // IWYU pragma: keep
-#include <future>
-#include <initializer_list>
-#include <iterator>
-#include <list>
-#include <memory>
-#include <set>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -72,6 +45,8 @@
 #include "mongo/db/catalog/document_validation.h"
 #include "mongo/db/catalog/drop_database.h"
 #include "mongo/db/catalog/drop_indexes.h"
+#include "mongo/db/catalog/durable_catalog.h"
+#include "mongo/db/catalog/durable_catalog_entry_metadata.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/catalog_raii.h"
@@ -82,7 +57,6 @@
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/database_name.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/exec/mutable_bson/document.h"
@@ -137,16 +111,15 @@
 #include "mongo/db/session/session_catalog_mongod.h"
 #include "mongo/db/session/session_txn_record_gen.h"
 #include "mongo/db/shard_role.h"
-#include "mongo/db/storage/bson_collection_catalog_entry.h"
 #include "mongo/db/storage/damage_vector.h"
-#include "mongo/db/storage/durable_catalog.h"
-#include "mongo/db/storage/durable_catalog_entry.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/db/storage/snapshot_manager.h"
 #include "mongo/db/storage/storage_engine.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/db/transaction/session_catalog_mongod_transaction_interface_impl.h"
@@ -157,12 +130,10 @@
 #include "mongo/db/update/update_oplog_entry_serialization.h"
 #include "mongo/db/vector_clock.h"
 #include "mongo/db/vector_clock_mutable.h"
-#include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/executor/task_executor.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/get_status_from_command_result.h"
-#include "mongo/stdx/future.h"  // IWYU pragma: keep
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
@@ -170,14 +141,31 @@
 #include "mongo/util/concurrency/thread_pool.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/fail_point.h"
-#include "mongo/util/future.h"
-#include "mongo/util/future_impl.h"
 #include "mongo/util/interruptible.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/stacktrace.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <fstream>
+#include <initializer_list>
+#include <iterator>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -258,13 +246,33 @@ Status createIndexFromSpec(OperationContext* opCtx,
     return Status::OK();
 }
 
+CollectionAcquisition acquireCollForRead(OperationContext* opCtx, const NamespaceString& nss) {
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     AcquisitionPrerequisites::kRead),
+        MODE_IS);
+}
+
 /**
  * RAII type for operating at a timestamp. Will remove any timestamping when the object destructs.
  */
 class OneOffRead {
 public:
-    OneOffRead(OperationContext* opCtx, const Timestamp& ts) : _opCtx(opCtx) {
+    OneOffRead(OperationContext* opCtx, const Timestamp& ts, bool waitForOplog = false)
+        : _opCtx(opCtx) {
         shard_role_details::getRecoveryUnit(_opCtx)->abandonSnapshot();
+        if (waitForOplog) {
+            auto storageEngine = opCtx->getServiceContext()->getStorageEngine();
+            LocalOplogInfo* oplogInfo = LocalOplogInfo::get(opCtx);
+
+            // Oplog should be available in this test.
+            invariant(oplogInfo);
+            storageEngine->waitForAllEarlierOplogWritesToBeVisible(opCtx,
+                                                                   oplogInfo->getRecordStore());
+        }
         if (ts.isNull()) {
             shard_role_details::getRecoveryUnit(_opCtx)->setTimestampReadSource(
                 RecoveryUnit::ReadSource::kNoTimestamp);
@@ -305,14 +313,15 @@ private:
 
 const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 
-void assertIndexMetaDataMissing(std::shared_ptr<BSONCollectionCatalogEntry::MetaData> collMetaData,
+void assertIndexMetaDataMissing(std::shared_ptr<durable_catalog::CatalogEntryMetaData> collMetaData,
                                 StringData indexName) {
     const auto idxOffset = collMetaData->findIndexOffset(indexName);
-    ASSERT_EQUALS(-1, idxOffset) << indexName << ". Collection Metdata: " << collMetaData->toBSON();
+    ASSERT_EQUALS(-1, idxOffset) << indexName
+                                 << ". Collection Metadata: " << collMetaData->toBSON();
 }
 
-BSONCollectionCatalogEntry::IndexMetaData getIndexMetaData(
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData> collMetaData, StringData indexName) {
+durable_catalog::CatalogEntryMetaData::IndexMetaData getIndexMetaData(
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData> collMetaData, StringData indexName) {
     const auto idxOffset = collMetaData->findIndexOffset(indexName);
     ASSERT_GT(idxOffset, -1) << indexName;
     return collMetaData->indexes[idxOffset];
@@ -415,11 +424,11 @@ public:
     }
 
     void dumpOplog() {
-        OneOffRead oor(_opCtx, Timestamp::min());
+        OneOffRead oor(_opCtx, Timestamp::min(), true /* waitForOplog */);
         shard_role_details::getRecoveryUnit(_opCtx)->beginUnitOfWork(_opCtx->readOnly());
         LOGV2(8423335, "Dumping oplog collection");
-        AutoGetCollectionForRead oplogRaii(_opCtx, NamespaceString::kRsOplogNamespace);
-        const CollectionPtr& oplogColl = oplogRaii.getCollection();
+        const auto oplogCollAcq = acquireCollForRead(_opCtx, NamespaceString::kRsOplogNamespace);
+        const CollectionPtr& oplogColl = oplogCollAcq.getCollectionPtr();
         auto oplogRs = oplogColl->getRecordStore();
         auto oplogCursor = oplogRs->getCursor(_opCtx);
 
@@ -526,10 +535,10 @@ public:
         return optRecord.value().data.getOwned().toBson();
     }
 
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData> getMetaDataAtTime(
-        DurableCatalog* durableCatalog, RecordId catalogId, const Timestamp& ts) {
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData> getMetaDataAtTime(
+        const MDBCatalog* mdbCatalog, const RecordId& catalogId, const Timestamp& ts) {
         OneOffRead oor(_opCtx, ts);
-        auto catalogEntry = durableCatalog->getParsedCatalogEntry(_opCtx, catalogId);
+        auto catalogEntry = durable_catalog::getParsedCatalogEntry(_opCtx, catalogId, mdbCatalog);
         if (!catalogEntry) {
             return nullptr;
         }
@@ -556,18 +565,18 @@ public:
     BSONObj queryCollection(NamespaceString nss, const BSONObj& query) {
         BSONObj ret;
         ASSERT_TRUE(Helpers::findOne(
-            _opCtx, AutoGetCollectionForRead(_opCtx, nss).getCollection(), query, ret))
+            _opCtx, acquireCollForRead(_opCtx, nss).getCollectionPtr(), query, ret))
             << "Query: " << query;
         return ret;
     }
 
     BSONObj queryOplog(const BSONObj& query) {
-        OneOffRead oor(_opCtx, Timestamp::min());
+        OneOffRead oor(_opCtx, Timestamp::min(), true /* waitForOplog */);
         return queryCollection(NamespaceString::kRsOplogNamespace, query);
     }
 
     Timestamp getTopOfOplog() {
-        OneOffRead oor(_opCtx, Timestamp::min());
+        OneOffRead oor(_opCtx, Timestamp::min(), true /* waitForOplog */);
         BSONObj ret;
         ASSERT_TRUE(Helpers::getLast(_opCtx, NamespaceString::kRsOplogNamespace, ret));
         return ret["ts"].timestamp();
@@ -634,11 +643,11 @@ public:
     void assertOplogDocumentExistsAtTimestamp(const BSONObj& query,
                                               const Timestamp& ts,
                                               bool exists) {
-        OneOffRead oor(_opCtx, ts);
+        OneOffRead oor(_opCtx, ts, true);
         BSONObj ret;
         bool found = Helpers::findOne(
             _opCtx,
-            AutoGetCollectionForRead(_opCtx, NamespaceString::kRsOplogNamespace).getCollection(),
+            acquireCollForRead(_opCtx, NamespaceString::kRsOplogNamespace).getCollectionPtr(),
             query,
             ret);
         ASSERT_EQ(found, exists) << "Found " << ret << " at " << ts.toBSON();
@@ -670,23 +679,21 @@ public:
     }
 
     /**
-     * Asserts that the given collection is in (or not in) the DurableCatalog's list of idents at
+     * Asserts that the given collection is in (or not in) the MDBCatalog's list of idents at
      * the
      * provided timestamp.
      */
     void assertNamespaceInIdents(NamespaceString nss, Timestamp ts, bool shouldExpect) {
         OneOffRead oor(_opCtx, ts);
-        auto durableCatalog = DurableCatalog::get(_opCtx);
-
         AutoGetCollection autoColl(_opCtx, nss, LockMode::MODE_IS);
 
-        // getCollectionIdent() returns the ident for the given namespace in the DurableCatalog.
+        // getCollectionIdent() returns the ident for the given namespace in the MDBCatalog.
         // getAllIdents() actually looks in the RecordStore for a list of all idents, and is thus
         // versioned by timestamp. We can expect a namespace to have a consistent ident across
         // timestamps, provided the collection does not get renamed.
         auto expectedIdent =
-            durableCatalog->getEntry(autoColl.getCollection()->getCatalogId()).ident;
-        auto idents = durableCatalog->getAllIdents(_opCtx);
+            MDBCatalog::get(_opCtx)->getEntry(autoColl.getCollection()->getCatalogId()).ident;
+        auto idents = MDBCatalog::get(_opCtx)->getAllIdents(_opCtx);
         auto found = std::find(idents.begin(), idents.end(), expectedIdent);
 
         if (shouldExpect) {
@@ -701,10 +708,10 @@ public:
     /**
      * Use `ts` = Timestamp::min to observe all indexes.
      */
-    std::string getNewIndexIdentAtTime(DurableCatalog* durableCatalog,
+    std::string getNewIndexIdentAtTime(MDBCatalog* mdbCatalog,
                                        std::vector<std::string>& origIdents,
                                        Timestamp ts) {
-        auto ret = getNewIndexIdentsAtTime(durableCatalog, origIdents, ts);
+        auto ret = getNewIndexIdentsAtTime(mdbCatalog, origIdents, ts);
         ASSERT_EQ(static_cast<std::size_t>(1), ret.size()) << " Num idents: " << ret.size();
         return ret[0];
     }
@@ -712,14 +719,14 @@ public:
     /**
      * Use `ts` = Timestamp::min to observe all indexes.
      */
-    std::vector<std::string> getNewIndexIdentsAtTime(DurableCatalog* durableCatalog,
+    std::vector<std::string> getNewIndexIdentsAtTime(MDBCatalog* mdbCatalog,
                                                      std::vector<std::string>& origIdents,
                                                      Timestamp ts) {
         OneOffRead oor(_opCtx, ts);
 
         // Find the collection and index ident by performing a set difference on the original
         // idents and the current idents.
-        std::vector<std::string> identsWithColl = durableCatalog->getAllIdents(_opCtx);
+        std::vector<std::string> identsWithColl = mdbCatalog->getAllIdents(_opCtx);
         std::sort(origIdents.begin(), origIdents.end());
         std::sort(identsWithColl.begin(), identsWithColl.end());
         std::vector<std::string> idxIdents;
@@ -735,11 +742,10 @@ public:
         return idxIdents;
     }
 
-    std::string getDroppedIndexIdent(DurableCatalog* durableCatalog,
-                                     std::vector<std::string>& origIdents) {
+    std::string getDroppedIndexIdent(MDBCatalog* mdbCatalog, std::vector<std::string>& origIdents) {
         // Find the collection and index ident by performing a set difference on the original
         // idents and the current idents.
-        std::vector<std::string> identsWithColl = durableCatalog->getAllIdents(_opCtx);
+        std::vector<std::string> identsWithColl = mdbCatalog->getAllIdents(_opCtx);
         std::sort(origIdents.begin(), origIdents.end());
         std::sort(identsWithColl.begin(), identsWithColl.end());
         std::vector<std::string> collAndIdxIdents;
@@ -753,11 +759,11 @@ public:
         return collAndIdxIdents[0];
     }
 
-    std::vector<std::string> _getIdentDifference(DurableCatalog* durableCatalog,
+    std::vector<std::string> _getIdentDifference(MDBCatalog* mdbCatalog,
                                                  std::vector<std::string>& origIdents) {
         // Find the ident difference by performing a set difference on the original idents and the
         // current idents.
-        std::vector<std::string> identsWithColl = durableCatalog->getAllIdents(_opCtx);
+        std::vector<std::string> identsWithColl = mdbCatalog->getAllIdents(_opCtx);
         std::sort(origIdents.begin(), origIdents.end());
         std::sort(identsWithColl.begin(), identsWithColl.end());
         std::vector<std::string> collAndIdxIdents;
@@ -769,9 +775,9 @@ public:
         return collAndIdxIdents;
     }
     std::tuple<std::string, std::string> getNewCollectionIndexIdent(
-        DurableCatalog* durableCatalog, std::vector<std::string>& origIdents) {
+        MDBCatalog* mdbCatalog, std::vector<std::string>& origIdents) {
         // Find the collection and index ident difference.
-        auto collAndIdxIdents = _getIdentDifference(durableCatalog, origIdents);
+        auto collAndIdxIdents = _getIdentDifference(mdbCatalog, origIdents);
 
         ASSERT(collAndIdxIdents.size() == 1 || collAndIdxIdents.size() == 2);
         if (collAndIdxIdents.size() == 1) {
@@ -789,13 +795,13 @@ public:
     /**
      * Note: expectedNewIndexIdents should include the _id index.
      */
-    void assertRenamedCollectionIdentsAtTimestamp(DurableCatalog* durableCatalog,
+    void assertRenamedCollectionIdentsAtTimestamp(MDBCatalog* mdbCatalog,
                                                   std::vector<std::string>& origIdents,
                                                   size_t expectedNewIndexIdents,
                                                   Timestamp timestamp) {
         OneOffRead oor(_opCtx, timestamp);
         // Find the collection and index ident difference.
-        auto collAndIdxIdents = _getIdentDifference(durableCatalog, origIdents);
+        auto collAndIdxIdents = _getIdentDifference(mdbCatalog, origIdents);
         size_t newNssIdents, newIdxIdents;
         newNssIdents = newIdxIdents = 0;
         for (const auto& ident : collAndIdxIdents) {
@@ -814,13 +820,13 @@ public:
             << ") differ from actual new index idents (" << newIdxIdents << ")";
     }
 
-    void assertIdentsExistAtTimestamp(DurableCatalog* durableCatalog,
+    void assertIdentsExistAtTimestamp(MDBCatalog* mdbCatalog,
                                       const std::string& collIdent,
                                       const std::string& indexIdent,
                                       Timestamp timestamp) {
         OneOffRead oor(_opCtx, timestamp);
 
-        auto allIdents = durableCatalog->getAllIdents(_opCtx);
+        auto allIdents = mdbCatalog->getAllIdents(_opCtx);
         if (collIdent.size() > 0) {
             // Index build test does not pass in a collection ident.
             ASSERT(std::find(allIdents.begin(), allIdents.end(), collIdent) != allIdents.end());
@@ -832,12 +838,12 @@ public:
         }
     }
 
-    void assertIdentsMissingAtTimestamp(DurableCatalog* durableCatalog,
+    void assertIdentsMissingAtTimestamp(MDBCatalog* mdbCatalog,
                                         const std::string& collIdent,
                                         const std::string& indexIdent,
                                         Timestamp timestamp) {
         OneOffRead oor(_opCtx, timestamp);
-        auto allIdents = durableCatalog->getAllIdents(_opCtx);
+        auto allIdents = mdbCatalog->getAllIdents(_opCtx);
         if (collIdent.size() > 0) {
             // Index build test does not pass in a collection ident.
             ASSERT(std::find(allIdents.begin(), allIdents.end(), collIdent) == allIdents.end());
@@ -869,9 +875,9 @@ public:
                              Timestamp ts,
                              bool shouldBeMultikey,
                              const MultikeyPaths& expectedMultikeyPaths) {
-        DurableCatalog* durableCatalog = DurableCatalog::get(opCtx);
+        MDBCatalog* mdbCatalog = MDBCatalog::get(opCtx);
         auto indexMetaData = getIndexMetaData(
-            getMetaDataAtTime(durableCatalog, collection->getCatalogId(), ts), indexName);
+            getMetaDataAtTime(mdbCatalog, collection->getCatalogId(), ts), indexName);
         if (!shouldBeMultikey) {
             ASSERT_FALSE(indexMetaData.multikey)
                 << "index " << indexName << " should not be multikey at timestamp " << ts;
@@ -888,6 +894,16 @@ public:
                                << ", Actual: " << dumpMultikeyPaths(actualMultikeyPaths));
         }
         ASSERT_TRUE(match);
+    }
+
+    StringData indexNameOplogField() const {
+        const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
+        if (fcvSnapshot.isVersionInitialized() &&
+            feature_flags::gFeatureFlagReplicateLocalCatalogIdentifiers.isEnabled(
+                VersionContext::getDecoration(_opCtx), fcvSnapshot)) {
+            return "o.spec.name";
+        }
+        return "o.name";
     }
 
 private:
@@ -1189,9 +1205,7 @@ TEST_F(StorageTimestampTest, SecondaryCreateCollection) {
         NamespaceString::createNamespaceString_forTest("unittests.secondaryCreateCollection");
     ASSERT_OK(repl::StorageInterface::get(_opCtx)->dropCollection(_opCtx, nss));
 
-    {
-        ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss).getCollection());
-    }
+    ASSERT_FALSE(acquireCollForRead(_opCtx, nss).exists());
 
     BSONObjBuilder resultBuilder;
     auto swResult =
@@ -1204,9 +1218,7 @@ TEST_F(StorageTimestampTest, SecondaryCreateCollection) {
                    });
     ASSERT_OK(swResult);
 
-    {
-        ASSERT(AutoGetCollectionForReadCommand(_opCtx, nss).getCollection());
-    }
+    ASSERT(acquireCollForRead(_opCtx, nss).exists());
 
     assertNamespaceInIdents(nss, _pastTs, false);
     assertNamespaceInIdents(nss, _presentTs, true);
@@ -1226,12 +1238,8 @@ TEST_F(StorageTimestampTest, SecondaryCreateTwoCollections) {
     ASSERT_OK(repl::StorageInterface::get(_opCtx)->dropCollection(_opCtx, nss1));
     ASSERT_OK(repl::StorageInterface::get(_opCtx)->dropCollection(_opCtx, nss2));
 
-    {
-        ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss1).getCollection());
-    }
-    {
-        ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss2).getCollection());
-    }
+    ASSERT_FALSE(acquireCollForRead(_opCtx, nss1).exists());
+    ASSERT_FALSE(acquireCollForRead(_opCtx, nss2).exists());
 
     const LogicalTime dummyLt = const_cast<const LogicalTime&>(_futureLt).addTicks(1);
     const Timestamp dummyTs = dummyLt.asTimestamp();
@@ -1251,12 +1259,8 @@ TEST_F(StorageTimestampTest, SecondaryCreateTwoCollections) {
                    });
     ASSERT_OK(swResult);
 
-    {
-        ASSERT(AutoGetCollectionForReadCommand(_opCtx, nss1).getCollection());
-    }
-    {
-        ASSERT(AutoGetCollectionForReadCommand(_opCtx, nss2).getCollection());
-    }
+    ASSERT(acquireCollForRead(_opCtx, nss1).exists());
+    ASSERT(acquireCollForRead(_opCtx, nss2).exists());
 
     assertNamespaceInIdents(nss1, _pastTs, false);
     assertNamespaceInIdents(nss1, _presentTs, true);
@@ -1297,9 +1301,7 @@ TEST_F(StorageTimestampTest, SecondaryCreateCollectionBetweenInserts) {
         AutoGetCollection autoColl(_opCtx, nss1, LockMode::MODE_IX);
 
         ASSERT_OK(repl::StorageInterface::get(_opCtx)->dropCollection(_opCtx, nss2));
-        {
-            ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss2).getCollection());
-        }
+        ASSERT_FALSE(acquireCollForRead(_opCtx, nss2).exists());
 
         BSONObjBuilder resultBuilder;
         auto swResult = doApplyOps(
@@ -1322,11 +1324,11 @@ TEST_F(StorageTimestampTest, SecondaryCreateCollectionBetweenInserts) {
     }
 
     {
-        AutoGetCollectionForReadCommand autoColl1(_opCtx, nss1);
-        const auto& coll1 = autoColl1.getCollection();
+        auto autoColl1 = acquireCollForRead(_opCtx, nss1);
+        const auto& coll1 = autoColl1.getCollectionPtr();
         ASSERT(coll1);
-        AutoGetCollectionForReadCommand autoColl2(_opCtx, nss2);
-        const auto& coll2 = autoColl2.getCollection();
+        auto autoColl2 = acquireCollForRead(_opCtx, nss2);
+        const auto& coll2 = autoColl2.getCollectionPtr();
         ASSERT(coll2);
 
         assertDocumentAtTimestamp(coll1, _pastTs, BSONObj());
@@ -1357,9 +1359,7 @@ TEST_F(StorageTimestampTest, PrimaryCreateCollectionInApplyOps) {
         "unittests.primaryCreateCollectionInApplyOps");
     ASSERT_OK(repl::StorageInterface::get(_opCtx)->dropCollection(_opCtx, nss));
 
-    {
-        ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss).getCollection());
-    }
+    ASSERT_FALSE(acquireCollForRead(_opCtx, nss).exists());
 
     BSONObjBuilder resultBuilder;
     auto swResult =
@@ -1372,9 +1372,7 @@ TEST_F(StorageTimestampTest, PrimaryCreateCollectionInApplyOps) {
                    });
     ASSERT_OK(swResult);
 
-    {
-        ASSERT(AutoGetCollectionForReadCommand(_opCtx, nss).getCollection());
-    }
+    ASSERT(acquireCollForRead(_opCtx, nss).exists());
 
     BSONObj result;
     ASSERT(Helpers::getLast(_opCtx, NamespaceString::kRsOplogNamespace, result));
@@ -1526,11 +1524,11 @@ TEST_F(StorageTimestampTest, SecondarySetWildcardIndexMultikeyOnInsert) {
 
     uassertStatusOK(oplogApplier.applyOplogBatch(_opCtx, ops));
 
-    AutoGetCollectionForRead autoColl(_opCtx, nss);
+    const auto coll = acquireCollForRead(_opCtx, nss);
     auto wildcardIndexDescriptor =
-        autoColl.getCollection()->getIndexCatalog()->findIndexByName(_opCtx, indexName);
+        coll.getCollectionPtr()->getIndexCatalog()->findIndexByName(_opCtx, indexName);
     const IndexCatalogEntry* entry =
-        autoColl.getCollection()->getIndexCatalog()->getEntry(wildcardIndexDescriptor);
+        coll.getCollectionPtr()->getIndexCatalog()->getEntry(wildcardIndexDescriptor);
     {
         // Verify that, even though op2 was applied first, the multikey state is observed in all
         // WiredTiger transactions that can contain the data written by op1.
@@ -1619,11 +1617,11 @@ TEST_F(StorageTimestampTest, SecondarySetWildcardIndexMultikeyOnUpdate) {
 
     uassertStatusOK(oplogApplier.applyOplogBatch(_opCtx, ops));
 
-    AutoGetCollectionForRead autoColl(_opCtx, nss);
+    const auto coll = acquireCollForRead(_opCtx, nss);
     auto wildcardIndexDescriptor =
-        autoColl.getCollection()->getIndexCatalog()->findIndexByName(_opCtx, indexName);
+        coll.getCollectionPtr()->getIndexCatalog()->findIndexByName(_opCtx, indexName);
     const IndexCatalogEntry* entry =
-        autoColl.getCollection()->getIndexCatalog()->getEntry(wildcardIndexDescriptor);
+        coll.getCollectionPtr()->getIndexCatalog()->getEntry(wildcardIndexDescriptor);
     {
         // Verify that, even though op2 was applied first, the multikey state is observed in all
         // WiredTiger transactions that can contain the data written by op1.
@@ -1870,7 +1868,7 @@ private:
 public:
     void run(bool simulatePrimary) {
         auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-        auto durableCatalog = storageEngine->getDurableCatalog();
+        auto mdbCatalog = storageEngine->getMDBCatalog();
 
         // Declare the database to be in a "synced" state, i.e: in steady-state replication.
         Timestamp syncTime = _clock->tickClusterTime(1).asTimestamp();
@@ -1897,7 +1895,7 @@ public:
 
             // Save the pre-state idents so we can capture the specific idents related to collection
             // creation.
-            std::vector<std::string> origIdents = durableCatalog->getAllIdents(_opCtx);
+            std::vector<std::string> origIdents = mdbCatalog->getAllIdents(_opCtx);
             const auto& nss = std::get<0>(tuple);
 
             // Non-replicated namespaces are wrapped in an unreplicated writes block. This has the
@@ -1913,8 +1911,7 @@ public:
             // Bind the local values to the variables in the parent scope.
             auto& collIdent = std::get<1>(tuple);
             auto& indexIdent = std::get<2>(tuple);
-            std::tie(collIdent, indexIdent) =
-                getNewCollectionIndexIdent(durableCatalog, origIdents);
+            std::tie(collIdent, indexIdent) = getNewCollectionIndexIdent(mdbCatalog, origIdents);
         }
 
         {
@@ -1932,7 +1929,7 @@ public:
 
         // Because the storage engine is managing drops internally, the ident should not be visible
         // after a drop.
-        assertIdentsMissingAtTimestamp(durableCatalog, collIdent, indexIdent, postRenameTime);
+        assertIdentsMissingAtTimestamp(mdbCatalog, collIdent, indexIdent, postRenameTime);
 
         const Timestamp dropTime = _clock->tickClusterTime(1).asTimestamp();
         if (simulatePrimary) {
@@ -1945,12 +1942,12 @@ public:
 
         // Assert that the idents do not exist.
         assertIdentsMissingAtTimestamp(
-            durableCatalog, sysProfileIdent, sysProfileIndexIdent, Timestamp::max());
-        assertIdentsMissingAtTimestamp(durableCatalog, collIdent, indexIdent, Timestamp::max());
+            mdbCatalog, sysProfileIdent, sysProfileIndexIdent, Timestamp::max());
+        assertIdentsMissingAtTimestamp(mdbCatalog, collIdent, indexIdent, Timestamp::max());
 
         // dropDatabase must not timestamp the final write. The collection and index should seem
         // to have never existed.
-        assertIdentsMissingAtTimestamp(durableCatalog, collIdent, indexIdent, syncTime);
+        assertIdentsMissingAtTimestamp(mdbCatalog, collIdent, indexIdent, syncTime);
 
         // Reset initial data timestamp to avoid unintended storage engine timestamp side effects.
         storageEngine->setInitialDataTimestamp(Timestamp(0, 0));
@@ -1998,7 +1995,7 @@ public:
         }
 
         auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-        auto durableCatalog = storageEngine->getDurableCatalog();
+        auto mdbCatalog = storageEngine->getMDBCatalog();
 
         NamespaceString nss =
             NamespaceString::createNamespaceString_forTest("unittests.timestampIndexBuilds");
@@ -2022,7 +2019,7 @@ public:
 
         // Save the pre-state idents so we can capture the specific ident related to index
         // creation.
-        std::vector<std::string> origIdents = durableCatalog->getAllIdents(_opCtx);
+        std::vector<std::string> origIdents = mdbCatalog->getAllIdents(_opCtx);
 
         // Build an index on `{a: 1}`. This index will be multikey.
         MultiIndexBlock indexer;
@@ -2089,25 +2086,23 @@ public:
         const Timestamp afterIndexBuild = _clock->tickClusterTime(1).asTimestamp();
 
         const std::string indexIdent =
-            getNewIndexIdentAtTime(durableCatalog, origIdents, Timestamp::min());
-        assertIdentsMissingAtTimestamp(
-            durableCatalog, "", indexIdent, beforeIndexBuild.asTimestamp());
+            getNewIndexIdentAtTime(mdbCatalog, origIdents, Timestamp::min());
+        assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdent, beforeIndexBuild.asTimestamp());
 
         // Assert that the index entry exists after init and `ready: false`.
-        assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, afterIndexInit.asTimestamp());
+        assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, afterIndexInit.asTimestamp());
         {
             ASSERT_FALSE(
                 getIndexMetaData(
-                    getMetaDataAtTime(durableCatalog, catalogId, afterIndexInit.asTimestamp()),
-                    "a_1")
+                    getMetaDataAtTime(mdbCatalog, catalogId, afterIndexInit.asTimestamp()), "a_1")
                     .ready);
         }
 
         // After the build completes, assert that the index is `ready: true` and multikey.
-        assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, afterIndexBuild);
+        assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, afterIndexBuild);
         {
-            auto indexMetaData = getIndexMetaData(
-                getMetaDataAtTime(durableCatalog, catalogId, afterIndexBuild), "a_1");
+            auto indexMetaData =
+                getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, afterIndexBuild), "a_1");
             ASSERT(indexMetaData.ready);
             ASSERT(indexMetaData.multikey);
 
@@ -2134,8 +2129,8 @@ TEST(StorageTimestampTest, TimestampIndexBuilds) {
 }
 
 TEST_F(StorageTimestampTest, TimestampMultiIndexBuilds) {
-    auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
+    const auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
+    const auto mdbCatalog = storageEngine->getMDBCatalog();
 
     // Create config.system.indexBuilds collection to store commit quorum value during index
     // building.
@@ -2166,7 +2161,7 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuilds) {
 
         // Save the pre-state idents so we can capture the specific ident related to index
         // creation.
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
 
         // Ensure we have a committed snapshot to avoid ReadConcernMajorityNotAvailableYet
         // error at the beginning of the the collection scan phase.
@@ -2207,47 +2202,44 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuilds) {
     // The idents are created and persisted with the "ready: false" write.
     // There should be two new index idents visible at this time.
     const std::vector<std::string> indexes =
-        getNewIndexIdentsAtTime(durableCatalog, origIdents, indexCreateInitTs);
+        getNewIndexIdentsAtTime(mdbCatalog, origIdents, indexCreateInitTs);
     ASSERT_EQ(static_cast<std::size_t>(2), indexes.size()) << " Num idents: " << indexes.size();
 
     ASSERT_FALSE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, indexCreateInitTs), "a_1")
-            .ready);
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, indexCreateInitTs), "a_1").ready);
     ASSERT_FALSE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, indexCreateInitTs), "b_1")
-            .ready);
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, indexCreateInitTs), "b_1").ready);
 
     // Assert the `b_1` index becomes ready at the last oplog entry time.
     ASSERT_TRUE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, indexBComplete), "a_1")
-            .ready);
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, indexBComplete), "a_1").ready);
     ASSERT_TRUE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, indexBComplete), "b_1")
-            .ready);
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, indexBComplete), "b_1").ready);
 
     // Assert that the index build is removed from config.system.indexBuilds collection after
     // completion.
     {
-        AutoGetCollectionForRead collection(_opCtx, NamespaceString::kIndexBuildEntryNamespace);
-        ASSERT_TRUE(collection);
+        const auto collection =
+            acquireCollForRead(_opCtx, NamespaceString::kIndexBuildEntryNamespace);
+        ASSERT_TRUE(collection.exists());
 
         // At the commitIndexBuild entry time, the index build be still be present in the
         // indexBuilds collection.
         {
             OneOffRead oor(_opCtx, indexBComplete);
             // Fails if the collection is empty.
-            findOne(collection.getCollection());
+            findOne(collection.getCollectionPtr());
         }
 
         // After the index build has finished, we should not see the doc in the indexBuilds
         // collection.
-        ASSERT_EQUALS(0, itCount(collection.getCollection()));
+        ASSERT_EQUALS(0, itCount(collection.getCollectionPtr()));
     }
 }
 
 TEST_F(StorageTimestampTest, TimestampMultiIndexBuildsDuringRename) {
     auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
+    auto mdbCatalog = storageEngine->getMDBCatalog();
 
     NamespaceString nss = NamespaceString::createNamespaceString_forTest(
         "unittests.timestampMultiIndexBuildsDuringRename");
@@ -2295,7 +2287,7 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuildsDuringRename) {
 
     // Save the pre-state idents so we can capture the specific ident related to index
     // creation.
-    std::vector<std::string> origIdents = durableCatalog->getAllIdents(_opCtx);
+    std::vector<std::string> origIdents = mdbCatalog->getAllIdents(_opCtx);
 
     // Rename collection.
     BSONObj renameResult;
@@ -2312,8 +2304,7 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuildsDuringRename) {
     // supports 2 phase index build.
     const auto createIndexesDocument =
         queryOplog(BSON("ns" << renamedNss.db_forTest() + ".$cmd" << "o.createIndexes"
-                             << BSON("$exists" << true) << "o.name"
-                             << "b_1"));
+                             << BSON("$exists" << true) << indexNameOplogField() << "b_1"));
     const auto tmpCollName =
         createIndexesDocument.getObjectField("o").getStringField("createIndexes");
     tmpName = NamespaceString::createNamespaceString_forTest(renamedNss.db_forTest(), tmpCollName);
@@ -2326,23 +2317,23 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuildsDuringRename) {
     // We expect one new collection ident and one new index ident (the _id index) during this
     // rename.
     assertRenamedCollectionIdentsAtTimestamp(
-        durableCatalog, origIdents, /*expectedNewIndexIdents*/ 1, indexCreateInitTs);
+        mdbCatalog, origIdents, /*expectedNewIndexIdents*/ 1, indexCreateInitTs);
 
     // We expect one new collection ident and three new index idents (including the _id index)
     // after this rename. The a_1 and b_1 index idents are created and persisted with the
     // "ready: true" write.
     assertRenamedCollectionIdentsAtTimestamp(
-        durableCatalog, origIdents, /*expectedNewIndexIdents*/ 3, indexCommitTs);
+        mdbCatalog, origIdents, /*expectedNewIndexIdents*/ 3, indexCommitTs);
 
     // Assert the 'a_1' and `b_1` indexes becomes ready at the last oplog entry time.
     RecordId renamedCatalogId = CollectionCatalog::get(_opCtx)
                                     ->lookupCollectionByNamespace(_opCtx, renamedNss)
                                     ->getCatalogId();
     ASSERT_TRUE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, renamedCatalogId, indexCommitTs), "a_1")
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, renamedCatalogId, indexCommitTs), "a_1")
             .ready);
     ASSERT_TRUE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, renamedCatalogId, indexCommitTs), "b_1")
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, renamedCatalogId, indexCommitTs), "b_1")
             .ready);
 }
 
@@ -2354,7 +2345,7 @@ TEST_F(StorageTimestampTest, TimestampMultiIndexBuildsDuringRename) {
  */
 TEST_F(StorageTimestampTest, TimestampAbortIndexBuild) {
     auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
+    auto mdbCatalog = storageEngine->getMDBCatalog();
 
     // Create config.system.indexBuilds collection to store commit quorum value during index
     // building.
@@ -2392,7 +2383,7 @@ TEST_F(StorageTimestampTest, TimestampAbortIndexBuild) {
 
         // Save the pre-state idents so we can capture the specific ident related to index
         // creation.
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
 
         // Ensure we have a committed snapshot to avoid ReadConcernMajorityNotAvailableYet
         // error at the beginning of the the collection scan phase.
@@ -2436,38 +2427,39 @@ TEST_F(StorageTimestampTest, TimestampAbortIndexBuild) {
 
     // We expect one new one new index ident during this index build.
     assertRenamedCollectionIdentsAtTimestamp(
-        durableCatalog, origIdents, /*expectedNewIndexIdents*/ 1, indexStartTs);
+        mdbCatalog, origIdents, /*expectedNewIndexIdents*/ 1, indexStartTs);
     ASSERT_FALSE(
-        getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, indexStartTs), "a_1").ready);
+        getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, indexStartTs), "a_1").ready);
 
     // We expect all new idents to be removed after the index build has aborted.
     assertRenamedCollectionIdentsAtTimestamp(
-        durableCatalog, origIdents, /*expectedNewIndexIdents*/ 0, indexAbortTs);
-    assertIndexMetaDataMissing(getMetaDataAtTime(durableCatalog, catalogId, indexAbortTs), "a_1");
+        mdbCatalog, origIdents, /*expectedNewIndexIdents*/ 0, indexAbortTs);
+    assertIndexMetaDataMissing(getMetaDataAtTime(mdbCatalog, catalogId, indexAbortTs), "a_1");
 
     // Assert that the index build is removed from config.system.indexBuilds collection after
     // completion.
     {
-        AutoGetCollectionForRead collection(_opCtx, NamespaceString::kIndexBuildEntryNamespace);
-        ASSERT_TRUE(collection);
+        const auto collection =
+            acquireCollForRead(_opCtx, NamespaceString::kIndexBuildEntryNamespace);
+        ASSERT_TRUE(collection.exists());
 
         // At the commitIndexBuild entry time, the index build be still be present in the
         // indexBuilds collection.
         {
             OneOffRead oor(_opCtx, indexAbortTs);
             // Fails if the collection is empty.
-            findOne(collection.getCollection());
+            findOne(collection.getCollectionPtr());
         }
 
         // After the index build has finished, we should not see the doc in the indexBuilds
         // collection.
-        ASSERT_EQUALS(0, itCount(collection.getCollection()));
+        ASSERT_EQUALS(0, itCount(collection.getCollectionPtr()));
     }
 }
 
 TEST_F(StorageTimestampTest, TimestampIndexDropsWildcard) {
     auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
+    auto mdbCatalog = storageEngine->getMDBCatalog();
 
     NamespaceString nss =
         NamespaceString::createNamespaceString_forTest("unittests.timestampIndexDrops");
@@ -2492,7 +2484,7 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsWildcard) {
 
     // Save the pre-state idents so we can capture the specific ident related to index
     // creation.
-    std::vector<std::string> origIdents = durableCatalog->getAllIdents(_opCtx);
+    std::vector<std::string> origIdents = mdbCatalog->getAllIdents(_opCtx);
 
     std::vector<Timestamp> afterCreateTimestamps;
     std::vector<std::string> indexIdents;
@@ -2504,15 +2496,15 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsWildcard) {
         afterCreateTimestamps.push_back(_clock->tickClusterTime(1).asTimestamp());
 
         // Add the new ident to the vector and reset the current idents.
-        indexIdents.push_back(getNewIndexIdentAtTime(durableCatalog, origIdents, Timestamp::min()));
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        indexIdents.push_back(getNewIndexIdentAtTime(mdbCatalog, origIdents, Timestamp::min()));
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
     }
 
     // Ensure each index is visible at the correct timestamp, and not before.
     for (size_t i = 0; i < indexIdents.size(); i++) {
         auto beforeTs = (i == 0) ? beforeIndexBuild : afterCreateTimestamps[i - 1];
-        assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdents[i], beforeTs);
-        assertIdentsExistAtTimestamp(durableCatalog, "", indexIdents[i], afterCreateTimestamps[i]);
+        assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdents[i], beforeTs);
+        assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdents[i], afterCreateTimestamps[i]);
     }
 
     const auto currentTime = _clock->getTime();
@@ -2528,18 +2520,18 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsWildcard) {
     for (size_t i = 0; i < nIdents; i++) {
         OneOffRead oor(_opCtx, beforeDropTs.addTicks(i + 1).asTimestamp());
 
-        auto ident = getDroppedIndexIdent(durableCatalog, origIdents);
+        auto ident = getDroppedIndexIdent(mdbCatalog, origIdents);
         indexIdents.erase(std::remove(indexIdents.begin(), indexIdents.end(), ident),
                           indexIdents.end());
 
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
     }
     ASSERT_EQ(indexIdents.size(), 0ul) << "Dropped idents should match created idents";
 }
 
 TEST_F(StorageTimestampTest, TimestampIndexDropsListed) {
     auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
+    auto mdbCatalog = storageEngine->getMDBCatalog();
 
     NamespaceString nss =
         NamespaceString::createNamespaceString_forTest("unittests.timestampIndexDrops");
@@ -2564,7 +2556,7 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsListed) {
 
     // Save the pre-state idents so we can capture the specific ident related to index
     // creation.
-    std::vector<std::string> origIdents = durableCatalog->getAllIdents(_opCtx);
+    std::vector<std::string> origIdents = mdbCatalog->getAllIdents(_opCtx);
 
     std::vector<Timestamp> afterCreateTimestamps;
     std::vector<std::string> indexIdents;
@@ -2576,15 +2568,15 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsListed) {
         afterCreateTimestamps.push_back(_clock->tickClusterTime(1).asTimestamp());
 
         // Add the new ident to the vector and reset the current idents.
-        indexIdents.push_back(getNewIndexIdentAtTime(durableCatalog, origIdents, Timestamp::min()));
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        indexIdents.push_back(getNewIndexIdentAtTime(mdbCatalog, origIdents, Timestamp::min()));
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
     }
 
     // Ensure each index is visible at the correct timestamp, and not before.
     for (size_t i = 0; i < indexIdents.size(); i++) {
         auto beforeTs = (i == 0) ? beforeIndexBuild : afterCreateTimestamps[i - 1];
-        assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdents[i], beforeTs);
-        assertIdentsExistAtTimestamp(durableCatalog, "", indexIdents[i], afterCreateTimestamps[i]);
+        assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdents[i], beforeTs);
+        assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdents[i], afterCreateTimestamps[i]);
     }
 
     const auto currentTime = _clock->getTime();
@@ -2600,11 +2592,11 @@ TEST_F(StorageTimestampTest, TimestampIndexDropsListed) {
     for (size_t i = 0; i < nIdents; i++) {
         OneOffRead oor(_opCtx, beforeDropTs.addTicks(i + 1).asTimestamp());
 
-        auto ident = getDroppedIndexIdent(durableCatalog, origIdents);
+        auto ident = getDroppedIndexIdent(mdbCatalog, origIdents);
         indexIdents.erase(std::remove(indexIdents.begin(), indexIdents.end(), ident),
                           indexIdents.end());
 
-        origIdents = durableCatalog->getAllIdents(_opCtx);
+        origIdents = mdbCatalog->getAllIdents(_opCtx);
     }
     ASSERT_EQ(indexIdents.size(), 0ul) << "Dropped idents should match created idents";
 }
@@ -2816,12 +2808,12 @@ TEST_F(StorageTimestampTest, TimestampIndexOplogApplicationOnPrimary) {
 
     {
         // Sanity check everything exists.
-        AutoGetCollectionForReadCommand coll(_opCtx, nss);
-        ASSERT(coll);
+        auto coll = acquireCollForRead(_opCtx, nss);
+        ASSERT(coll.exists());
 
         const auto currentTime = _clock->getTime();
         const auto presentTs = currentTime.clusterTime().asTimestamp();
-        assertDocumentAtTimestamp(coll.getCollection(), presentTs, doc);
+        assertDocumentAtTimestamp(coll.getCollectionPtr(), presentTs, doc);
     }
 
     // Simulate a scenario where the node is a primary, but does not accept writes. This is
@@ -2834,11 +2826,11 @@ TEST_F(StorageTimestampTest, TimestampIndexOplogApplicationOnPrimary) {
 
         // Grab the existing idents to identify the ident created by the index build.
         auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-        auto durableCatalog = storageEngine->getDurableCatalog();
+        auto mdbCatalog = storageEngine->getMDBCatalog();
         std::vector<std::string> origIdents;
         {
             AutoGetCollection autoColl(_opCtx, nss, LockMode::MODE_IS);
-            origIdents = durableCatalog->getAllIdents(_opCtx);
+            origIdents = mdbCatalog->getAllIdents(_opCtx);
         }
 
         auto keyPattern = BSON("field" << 1);
@@ -2873,16 +2865,16 @@ TEST_F(StorageTimestampTest, TimestampIndexOplogApplicationOnPrimary) {
         {
             AutoGetCollection autoColl(_opCtx, nss, LockMode::MODE_IS);
             const std::string indexIdent =
-                getNewIndexIdentAtTime(durableCatalog, origIdents, Timestamp::min());
+                getNewIndexIdentAtTime(mdbCatalog, origIdents, Timestamp::min());
             assertIdentsMissingAtTimestamp(
-                durableCatalog, "", indexIdent, beforeBuildTime.asTimestamp());
-            assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, startBuildTs);
+                mdbCatalog, "", indexIdent, beforeBuildTime.asTimestamp());
+            assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, startBuildTs);
 
             // The index has not committed yet, so it is not ready.
             RecordId catalogId = autoColl.getCollection()->getCatalogId();
-            ASSERT_FALSE(getIndexMetaData(
-                             getMetaDataAtTime(durableCatalog, catalogId, startBuildTs), "field_1")
-                             .ready);
+            ASSERT_FALSE(
+                getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, startBuildTs), "field_1")
+                    .ready);
         }  // release read lock so commit index build oplog entry can take its own locks.
 
         auto commit = repl::makeCommitIndexBuildOplogEntry(
@@ -2897,15 +2889,12 @@ TEST_F(StorageTimestampTest, TimestampIndexOplogApplicationOnPrimary) {
         AutoGetCollection autoColl(_opCtx, nss, LockMode::MODE_IS);
         RecordId catalogId = autoColl.getCollection()->getCatalogId();
         ASSERT_TRUE(
-            getIndexMetaData(getMetaDataAtTime(durableCatalog, catalogId, startBuildTs), "field_1")
+            getIndexMetaData(getMetaDataAtTime(mdbCatalog, catalogId, startBuildTs), "field_1")
                 .ready);
     }
 }
 
 TEST_F(StorageTimestampTest, ViewCreationSeparateTransaction) {
-    auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
-
     const NamespaceString backingCollNss =
         NamespaceString::createNamespaceString_forTest("unittests.backingColl");
     create(backingCollNss);
@@ -2930,18 +2919,20 @@ TEST_F(StorageTimestampTest, ViewCreationSeparateTransaction) {
                                                         << "o._id" << viewNss.ns_forTest()))["ts"]
                                        .timestamp();
 
+    const auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
+    const auto mdbCatalog = storageEngine->getMDBCatalog();
     {
         Lock::GlobalRead read(_opCtx);
         AutoGetCollection autoColl(_opCtx, systemViewsNss, LockMode::MODE_IS);
         RecordId catalogId = autoColl.getCollection()->getCatalogId();
 
-        auto systemViewsMd = getMetaDataAtTime(
-            durableCatalog, catalogId, Timestamp(systemViewsCreateTs.asULL() - 1));
+        auto systemViewsMd =
+            getMetaDataAtTime(mdbCatalog, catalogId, Timestamp(systemViewsCreateTs.asULL() - 1));
         ASSERT(systemViewsMd == nullptr)
             << systemViewsNss.toStringForErrorMsg()
             << " incorrectly exists before creation. CreateTs: " << systemViewsCreateTs;
 
-        systemViewsMd = getMetaDataAtTime(durableCatalog, catalogId, systemViewsCreateTs);
+        systemViewsMd = getMetaDataAtTime(mdbCatalog, catalogId, systemViewsCreateTs);
         auto nss = systemViewsMd->nss;
         ASSERT_EQ(systemViewsNss, nss);
 
@@ -2957,17 +2948,15 @@ TEST_F(StorageTimestampTest, ViewCreationSeparateTransaction) {
 TEST_F(StorageTimestampTest, CreateCollectionWithSystemIndex) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("admin.system.users");
 
-    {
-        ASSERT_FALSE(AutoGetCollectionForReadCommand(_opCtx, nss).getCollection());
-    }
+    ASSERT_FALSE(acquireCollForRead(_opCtx, nss).exists());
 
     ASSERT_OK(createCollection(_opCtx, nss.dbName(), BSON("create" << nss.coll())));
 
     RecordId catalogId;
     {
-        AutoGetCollectionForReadCommand coll(_opCtx, nss);
-        ASSERT(coll.getCollection());
-        catalogId = coll.getCollection()->getCatalogId();
+        auto coll = acquireCollForRead(_opCtx, nss);
+        ASSERT(coll.getCollectionPtr());
+        catalogId = coll.getCollectionPtr()->getCatalogId();
     }
 
     BSONObj result = queryOplog(BSON("op" << "c"
@@ -3006,25 +2995,23 @@ TEST_F(StorageTimestampTest, CreateCollectionWithSystemIndex) {
 
     ASSERT_GT(indexCompleteTs, _futureTs);
     AutoGetCollection autoColl(_opCtx, nss, LockMode::MODE_IS);
-    auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
-    auto indexIdent = durableCatalog->getIndexIdent(_opCtx, catalogId, "user_1_db_1");
-    assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdent, _pastTs);
-    assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdent, _presentTs);
-    assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdent, _futureTs);
+    const auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
+    const auto mdbCatalog = storageEngine->getMDBCatalog();
+    const auto indexIdent = mdbCatalog->getIndexIdent(_opCtx, catalogId, "user_1_db_1");
+    assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdent, _pastTs);
+    assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdent, _presentTs);
+    assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdent, _futureTs);
     // This is the timestamp of the startIndexBuild oplog entry, which is timestamped before the
     // index is created as part of the createIndexes oplog entry.
-    assertIdentsMissingAtTimestamp(durableCatalog, "", indexIdent, indexStartTs);
+    assertIdentsMissingAtTimestamp(mdbCatalog, "", indexIdent, indexStartTs);
     if (!indexCreateTs.isNull()) {
-        assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, indexCreateTs);
+        assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, indexCreateTs);
     }
-    assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, indexCompleteTs);
-    assertIdentsExistAtTimestamp(durableCatalog, "", indexIdent, _nullTs);
+    assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, indexCompleteTs);
+    assertIdentsExistAtTimestamp(mdbCatalog, "", indexIdent, _nullTs);
 }
 
 TEST_F(StorageTimestampTest, MultipleTimestampsForMultikeyWrites) {
-    auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
-    auto durableCatalog = storageEngine->getDurableCatalog();
     RecordId catalogId;
 
     // Create config.system.indexBuilds collection to store commit quorum value during index
@@ -3092,13 +3079,15 @@ TEST_F(StorageTimestampTest, MultipleTimestampsForMultikeyWrites) {
 
     // By virtue of not crashing due to WT observing an out of order write, this test has
     // succeeded. For completeness, check the index metadata.
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData> mdBeforeInserts =
-        getMetaDataAtTime(durableCatalog, catalogId, tsBeforeMultikeyWrites);
+    const auto storageEngine = _opCtx->getServiceContext()->getStorageEngine();
+    const auto mdbCatalog = storageEngine->getMDBCatalog();
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData> mdBeforeInserts =
+        getMetaDataAtTime(mdbCatalog, catalogId, tsBeforeMultikeyWrites);
     ASSERT_FALSE(getIndexMetaData(mdBeforeInserts, "a_1").multikey);
     ASSERT_FALSE(getIndexMetaData(mdBeforeInserts, "b_1").multikey);
 
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData> mdAfterInserts =
-        getMetaDataAtTime(durableCatalog, catalogId, getTopOfOplog());
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData> mdAfterInserts =
+        getMetaDataAtTime(mdbCatalog, catalogId, getTopOfOplog());
     ASSERT(getIndexMetaData(mdAfterInserts, "a_1").multikey);
     ASSERT(getIndexMetaData(mdAfterInserts, "b_1").multikey);
 }

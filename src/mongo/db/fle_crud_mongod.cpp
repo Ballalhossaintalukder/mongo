@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -94,6 +84,16 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -322,7 +322,8 @@ private:
 
         incrementRead();
 
-        auto loc = _indexCursor->seekExact(kb.finishAndGetBuffer());
+        auto& ru = *shard_role_details::getRecoveryUnit(_opCtx);
+        auto loc = _indexCursor->seekExact(ru, kb.finishAndGetBuffer());
         if (!loc) {
             return boost::none;
         }
@@ -566,7 +567,8 @@ std::vector<std::vector<FLEEdgeCountInfo>> getTagsFromStorage(
             auto indexCatalogEntry = indexDescriptor->getEntry()->shared_from_this();
 
             auto sdi = indexCatalogEntry->accessMethod()->asSortedData();
-            auto indexCursor = sdi->newCursor(opCtx, true);
+            auto indexCursor =
+                sdi->newCursor(opCtx, *shard_role_details::getRecoveryUnit(opCtx), true);
 
             StorageEngineIndexCollectionReader reader(opCtx,
                                                       docCount,

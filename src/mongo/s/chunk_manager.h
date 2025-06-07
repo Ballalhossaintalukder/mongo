@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/oid.h"
@@ -58,8 +47,21 @@
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/type_collection_common_types_gen.h"
+#include "mongo/util/modules_incompletely_marked_header.h"
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -639,7 +641,7 @@ private:
           _chunkVersion(std::move(version)),
           _epochDisambiguatingSequenceNum(epochDisambiguatingSequenceNum) {}
 
-    void setChunkVersion(const ChunkVersion& version);
+    MONGO_MOD_NEEDS_REPLACEMENT void setChunkVersion(const ChunkVersion& version);
 
     uint64_t _forcedRefreshSequenceNum{0};
 
@@ -679,6 +681,8 @@ struct ShardEndpoint {
     ShardEndpoint(const ShardId& shardName,
                   boost::optional<ShardVersion> shardVersionParam,
                   boost::optional<DatabaseVersion> dbVersionParam);
+
+    bool operator==(const ShardEndpoint& other) const;
 
     ShardId shardName;
 

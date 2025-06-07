@@ -28,6 +28,26 @@
  */
 
 
+#include "mongo/db/s/resharding/resharding_oplog_batch_applier.h"
+
+#include "mongo/base/status.h"
+#include "mongo/db/client.h"
+#include "mongo/db/s/operation_sharding_state.h"
+#include "mongo/db/s/resharding/resharding_data_copy_util.h"
+#include "mongo/db/s/resharding/resharding_future_util.h"
+#include "mongo/db/s/resharding/resharding_oplog_application.h"
+#include "mongo/db/s/resharding/resharding_oplog_session_application.h"
+#include "mongo/logv2/log.h"
+#include "mongo/s/catalog_cache.h"
+#include "mongo/s/chunk_version.h"
+#include "mongo/s/database_version.h"
+#include "mongo/s/grid.h"
+#include "mongo/s/shard_version.h"
+#include "mongo/s/shard_version_factory.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/functional.h"
+#include "mongo/util/future_util.h"
+
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -36,27 +56,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/status.h"
-#include "mongo/db/client.h"
-#include "mongo/db/s/operation_sharding_state.h"
-#include "mongo/db/s/resharding/resharding_data_copy_util.h"
-#include "mongo/db/s/resharding/resharding_future_util.h"
-#include "mongo/db/s/resharding/resharding_oplog_application.h"
-#include "mongo/db/s/resharding/resharding_oplog_batch_applier.h"
-#include "mongo/db/s/resharding/resharding_oplog_session_application.h"
-#include "mongo/logv2/log.h"
-#include "mongo/s/catalog_cache.h"
-#include "mongo/s/chunk_version.h"
-#include "mongo/s/database_version.h"
-#include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
-#include "mongo/s/shard_version.h"
-#include "mongo/s/shard_version_factory.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/functional.h"
-#include "mongo/util/future_util.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
@@ -113,7 +112,7 @@ SemiFuture<void> ReshardingOplogBatchApplier::applyBatch(
                                ScopedSetShardRole scopedSetShardRole(
                                    opCtx.get(),
                                    _crudApplication.getOutputNss(),
-                                   ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
+                                   ShardVersionFactory::make(ChunkVersion::IGNORED()),
                                    boost::none /* databaseVersion */);
                                uassertStatusOK(
                                    _crudApplication.applyOperation(opCtx.get(), oplogEntry));

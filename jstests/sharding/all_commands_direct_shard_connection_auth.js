@@ -45,14 +45,12 @@ const allCommands = {
     _configsvrCommitChunksMerge: {skip: isAnInternalCommand},
     _configsvrCommitChunkMigration: {skip: isAnInternalCommand},
     _configsvrCommitChunkSplit: {skip: isAnInternalCommand},
-    _configsvrCommitIndex: {skip: isAnInternalCommand},
     _configsvrCommitMergeAllChunksOnShard: {skip: isAnInternalCommand},
     _configsvrCommitMovePrimary: {skip: isAnInternalCommand},
     _configsvrCommitRefineCollectionShardKey: {skip: isAnInternalCommand},
     _configsvrCommitReshardCollection: {skip: isAnInternalCommand},
     _configsvrConfigureCollectionBalancing: {skip: isAnInternalCommand},
     _configsvrCreateDatabase: {skip: isAnInternalCommand},
-    _configsvrDropIndexCatalogEntry: {skip: isAnInternalCommand},
     _configsvrEnsureChunkVersionIsGreaterThan: {skip: isAnInternalCommand},
     _configsvrGetHistoricalPlacement: {skip: isAnInternalCommand},  // TODO SERVER-73029 remove
     _configsvrMoveRange: {skip: isAnInternalCommand},
@@ -99,16 +97,13 @@ const allCommands = {
     _shardsvrCloneCatalogData: {skip: isAnInternalCommand},
     _shardsvrCompactStructuredEncryptionData: {skip: isAnInternalCommand},
     _shardsvrConvertToCapped: {skip: isAnInternalCommand},
-    _shardsvrRegisterIndex: {skip: isAnInternalCommand},
     _shardsvrCommitCreateDatabaseMetadata: {skip: isAnInternalCommand},
     _shardsvrCommitDropDatabaseMetadata: {skip: isAnInternalCommand},
-    _shardsvrCommitIndexParticipant: {skip: isAnInternalCommand},
     _shardsvrCommitReshardCollection: {skip: isAnInternalCommand},
     _shardsvrDropCollection: {skip: isAnInternalCommand},
     _shardsvrCreateCollection: {skip: isAnInternalCommand},
     _shardsvrDropCollectionIfUUIDNotMatchingWithWriteConcern: {skip: isAnInternalCommand},
     _shardsvrDropCollectionParticipant: {skip: isAnInternalCommand},
-    _shardsvrDropIndexCatalogEntryParticipant: {skip: isAnInternalCommand},
     _shardsvrDropIndexes: {skip: isAnInternalCommand},
     _shardsvrCreateCollectionParticipant: {skip: isAnInternalCommand},
     _shardsvrCoordinateMultiUpdate: {skip: isAnInternalCommand},
@@ -140,7 +135,6 @@ const allCommands = {
     _shardsvrSetAllowMigrations: {skip: isAnInternalCommand},
     _shardsvrSetClusterParameter: {skip: isAnInternalCommand},
     _shardsvrSetUserWriteBlockMode: {skip: isAnInternalCommand},
-    _shardsvrUnregisterIndex: {skip: isAnInternalCommand},
     _shardsvrValidateShardKeyCandidate: {skip: isAnInternalCommand},
     _shardsvrCollMod: {skip: isAnInternalCommand},
     _shardsvrCollModParticipant: {skip: isAnInternalCommand},
@@ -678,7 +672,7 @@ const allCommands = {
     getDatabaseVersion: {
         isAdminCommand: true,
         command: {getDatabaseVersion: dbName},
-        shouldFail: true,
+        shouldFail: false,
     },
     getDefaultRWConcern: {skip: requiresMongoS},
     getDiagnosticData: {
@@ -712,6 +706,11 @@ const allCommands = {
             assert.commandWorked(mongoS.getDB(dbName).runCommand({drop: collName}));
         },
         isAdminCommand: true,
+    },
+    getTrafficRecordingStatus: {
+        isAdminCommand: true,
+        command: {getTrafficRecordingStatus: 1},
+        shouldFail: false,
     },
     godinsert: {
         setUp: function(mongoS) {
@@ -1128,7 +1127,9 @@ const allCommands = {
     split: {skip: requiresMongoS},
     splitChunk: {skip: isAnInternalCommand},
     splitVector: {skip: isAnInternalCommand},
-    startRecordingTraffic: {
+    startRecordingTraffic: {skip: "Renamed to startTrafficRecording"},
+    stopRecordingTraffic: {skip: "Renamed to stopTrafficRecording"},
+    startTrafficRecording: {
         // Skipping command because it requires an actual file path for recording traffic to.
         skip: "requires an actual file path to record traffic to",
     },
@@ -1139,7 +1140,7 @@ const allCommands = {
             assert.commandWorked(withoutDirectConnections.adminCommand({endSessions: [res.id]}));
         }
     },
-    stopRecordingTraffic: {
+    stopTrafficRecording: {
         // Skipping command because it requires an actual file path for recording traffic to.
         skip: "requires an actual file path to record traffic to",
     },

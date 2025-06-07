@@ -28,7 +28,7 @@
  */
 
 
-#include "mongo/platform/basic.h"
+#include "mongo/util/net/sockaddr.h"
 
 #include <iterator>
 #include <memory>
@@ -36,12 +36,12 @@
 #include <utility>
 #include <vector>
 
-#include "mongo/util/net/sockaddr.h"
-
 #if !defined(_WIN32)
-#include <arpa/inet.h>
 #include <cerrno>
+
 #include <netdb.h>
+
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>

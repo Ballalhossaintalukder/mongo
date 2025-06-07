@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <absl/numeric/int128.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <span>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -54,6 +41,20 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/bson/util/bsonobj_traversal.h"
 #include "mongo/platform/int128.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <span>
+#include <variant>
+#include <vector>
+
+#include <absl/numeric/int128.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 namespace mongo {
 
@@ -487,7 +488,7 @@ public:
      */
     template <class Buffer>
     requires Appendable<Buffer>
-    void decompress(Buffer& buffer) const;
+    inline void decompress(Buffer& buffer) const;
 
     /**
      * Wrapper that expects the caller to define a Materializer and
@@ -616,7 +617,7 @@ void BSONColumnBlockBased::decompress(boost::intrusive_ptr<BSONElementStorage> a
 
     while (ptr < end) {
         control = *ptr;
-        if (control == EOO) {
+        if (control == stdx::to_underlying(BSONType::eoo)) {
             uassert(
                 8517800, "BSONColumn data ended without reaching end of buffer", ptr + 1 == end);
             break;
@@ -628,7 +629,7 @@ void BSONColumnBlockBased::decompress(boost::intrusive_ptr<BSONElementStorage> a
             BSONType type = literal.type();
             ptr += literal.size();
             switch (type) {
-                case Object: {
+                case BSONType::object: {
                     const auto obj = literal.Obj();
                     // TODO(SERVER-88217) Remove when we can evaluate paths in arbitrary objects.
                     invariant(obj.isEmpty() ||

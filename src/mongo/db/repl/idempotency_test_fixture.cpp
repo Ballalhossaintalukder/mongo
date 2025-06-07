@@ -27,7 +27,33 @@
  *    it in the license file.
  */
 
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/idempotency_test_fixture.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/util/builder.h"
+#include "mongo/db/catalog/index_catalog.h"
+#include "mongo/db/concurrency/d_concurrency.h"
+#include "mongo/db/concurrency/lock_manager_defs.h"
+#include "mongo/db/database_name.h"
+#include "mongo/db/index_builds/index_builds_coordinator.h"
+#include "mongo/db/query/index_bounds.h"
+#include "mongo/db/query/internal_plans.h"
+#include "mongo/db/query/plan_executor.h"
+#include "mongo/db/query/plan_yield_policy.h"
+#include "mongo/db/repl/oplog_entry_gen.h"
+#include "mongo/db/repl/oplog_entry_test_helpers.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/session/logical_session_id.h"
+#include "mongo/db/shard_role.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
+#include "mongo/db/validate/collection_validation.h"
+#include "mongo/db/validate/validate_results.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/md5.h"
+#include "mongo/util/time_support.h"
+
 #include <cstddef>
 #include <memory>
 #include <set>
@@ -35,35 +61,7 @@
 #include <utility>
 #include <vector>
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/util/builder.h"
-#include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/collection_catalog.h"
-#include "mongo/db/catalog/index_catalog.h"
-#include "mongo/db/concurrency/d_concurrency.h"
-#include "mongo/db/concurrency/lock_manager_defs.h"
-#include "mongo/db/database_name.h"
-#include "mongo/db/db_raii.h"
-#include "mongo/db/index_builds/index_builds_coordinator.h"
-#include "mongo/db/query/index_bounds.h"
-#include "mongo/db/query/internal_plans.h"
-#include "mongo/db/query/plan_executor.h"
-#include "mongo/db/query/plan_yield_policy.h"
-#include "mongo/db/repl/idempotency_test_fixture.h"
-#include "mongo/db/repl/oplog_entry_gen.h"
-#include "mongo/db/repl/oplog_entry_test_helpers.h"
-#include "mongo/db/service_context.h"
-#include "mongo/db/session/logical_session_id.h"
-#include "mongo/db/validate/collection_validation.h"
-#include "mongo/db/validate/validate_results.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/md5.h"
-#include "mongo/util/time_support.h"
+#include <boost/optional.hpp>
 
 namespace mongo {
 namespace repl {
@@ -140,7 +138,7 @@ CollectionState::CollectionState(CollectionOptions collectionOptions_,
     : collectionOptions(std::move(collectionOptions_)),
       indexSpecs(std::move(indexSpecs_)),
       dataHash(std::move(dataHash_)),
-      exists(true) {};
+      exists(true) {}
 
 bool operator==(const CollectionState& lhs, const CollectionState& rhs) {
     if (!lhs.exists || !rhs.exists) {
@@ -242,12 +240,22 @@ OplogEntry IdempotencyTest::update(IdType _id, const BSONObj& obj) {
 OplogEntry IdempotencyTest::buildIndex(const BSONObj& indexSpec,
                                        const BSONObj& options,
                                        const UUID& uuid) {
+    BSONObjBuilder spec;
+    spec.append("v", 2);
+    spec.append("key", indexSpec);
+    spec.append("name", std::string(indexSpec.firstElementFieldName()) + "_index");
+    spec.appendElementsUnique(options);
+
     BSONObjBuilder bob;
     bob.append("createIndexes", _nss.coll());
-    bob.append("v", 2);
-    bob.append("key", indexSpec);
-    bob.append("name", std::string(indexSpec.firstElementFieldName()) + "_index");
-    bob.appendElementsUnique(options);
+    const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
+    if (fcvSnapshot.isVersionInitialized() &&
+        mongo::feature_flags::gFeatureFlagReplicateLocalCatalogIdentifiers.isEnabled(
+            VersionContext::getDecoration(_opCtx.get()), fcvSnapshot)) {
+        bob.append("spec", spec.obj());
+    } else {
+        bob.appendElements(spec.obj());
+    }
     return makeCommandOplogEntry(nextOpTime(), _nss, bob.obj(), uuid);
 }
 
@@ -378,13 +386,20 @@ std::vector<CollectionState> IdempotencyTest::validateAllCollections() {
     return collStates;
 }
 
+CollectionAcquisition getCollectionForRead(OperationContext* opCtx, const NamespaceString& nss) {
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     mongo::AcquisitionPrerequisites::kRead),
+        MODE_IS);
+}
+
 CollectionState IdempotencyTest::validate(const NamespaceString& nss) {
     auto collUUID = [&]() -> boost::optional<UUID> {
-        AutoGetCollectionForReadCommand autoColl(_opCtx.get(), _nss);
-        if (const auto& collection = autoColl.getCollection()) {
-            return collection->uuid();
-        }
-        return boost::none;
+        auto coll = getCollectionForRead(_opCtx.get(), _nss);
+        return coll.exists() ? boost::make_optional(coll.uuid()) : boost::none;
     }();
 
     if (collUUID) {
@@ -394,9 +409,9 @@ CollectionState IdempotencyTest::validate(const NamespaceString& nss) {
     }
 
     {
-        AutoGetCollectionForReadCommand collection(_opCtx.get(), _nss);
+        auto collection = getCollectionForRead(_opCtx.get(), _nss);
 
-        if (!collection) {
+        if (!collection.exists()) {
             // Return a mostly default initialized CollectionState struct with exists set to false
             // to indicate an unfound Collection (or a view).
             return kCollectionDoesNotExist;
@@ -417,16 +432,17 @@ CollectionState IdempotencyTest::validate(const NamespaceString& nss) {
         ASSERT_TRUE(validateResults.isValid());
     }
 
-    AutoGetCollectionForReadCommand collection(_opCtx.get(), _nss);
+    auto collection = getCollectionForRead(_opCtx.get(), _nss);
+    const auto& collectionPtr = collection.getCollectionPtr();
 
-    std::string dataHash = computeDataHash(collection.getCollection());
+    std::string dataHash = computeDataHash(collectionPtr);
 
-    auto collectionOptions = collection->getCollectionOptions();
+    auto collectionOptions = collectionPtr->getCollectionOptions();
     std::vector<std::string> allIndexes;
     BSONObjSet indexSpecs = SimpleBSONObjComparator::kInstance.makeBSONObjSet();
-    collection->getAllIndexes(&allIndexes);
+    collectionPtr->getAllIndexes(&allIndexes);
     for (auto const& index : allIndexes) {
-        indexSpecs.insert(collection->getIndexSpec(index));
+        indexSpecs.insert(collectionPtr->getIndexSpec(index));
     }
     ASSERT_EQUALS(indexSpecs.size(), allIndexes.size());
 

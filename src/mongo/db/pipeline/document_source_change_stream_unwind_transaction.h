@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <stack>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -61,6 +51,17 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <stack>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -97,7 +98,13 @@ public:
     }
 
     const char* getSourceName() const override {
-        return DocumentSourceChangeStreamUnwindTransaction::kStageName.rawData();
+        return DocumentSourceChangeStreamUnwindTransaction::kStageName.data();
+    }
+
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
     }
 
 protected:

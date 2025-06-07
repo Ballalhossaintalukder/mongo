@@ -29,19 +29,17 @@
 
 #pragma once
 
-#include <cstddef>
-#include <string>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/util/options_parser/environment.h"
+
+#include <cstddef>
+#include <string>
 
 namespace mongo {
 
 class WiredTigerGlobalOptions {
 public:
-    static constexpr auto kDefaultTimeseriesCollectionCompressor = "zstd"_sd;
-
     WiredTigerGlobalOptions()
         : cacheSizeGB(0),
           statisticsLogDelaySecs(0),
@@ -59,6 +57,7 @@ public:
     int32_t sessionMax{0};
     double evictionDirtyTargetGB{0};
     double evictionDirtyTriggerGB{0};
+    double evictionUpdatesTriggerGB{0};
     std::string journalCompressor;
     int zstdCompressorLevel;
     bool directoryForIndexes;
@@ -86,6 +85,11 @@ public:
     }
 };
 
+struct SpillWiredTigerGlobalOptions {
+    double cacheSizeGB = 0;
+};
+
 extern WiredTigerGlobalOptions wiredTigerGlobalOptions;
+extern SpillWiredTigerGlobalOptions spillWiredTigerGlobalOptions;
 
 }  // namespace mongo

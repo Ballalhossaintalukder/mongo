@@ -47,6 +47,7 @@
 #include "mongo/logv2/log.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/stacktrace.h"
+
 #include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
@@ -351,7 +352,8 @@ inline void _replicateSearchIndexCommandOnAllMongodsForTesting(OperationContext*
             idxCmdType.compare(kUpdateCommand.toString()) == 0) {
             listSearchIndexesCmd = createWrappedListSearchIndexesCmd(resolvedNss, userCmd, view);
             if (idxCmdType.compare(kUpdateCommand.toString()) == 0) {
-                if (userCmd.hasField("definition") && userCmd["definition"].type() == Object) {
+                if (userCmd.hasField("definition") &&
+                    userCmd["definition"].type() == BSONType::object) {
                     searchIdxLatestDefinition = boost::make_optional(userCmd["definition"].Obj());
                 }
             }

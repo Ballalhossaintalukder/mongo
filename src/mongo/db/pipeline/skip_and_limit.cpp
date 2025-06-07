@@ -27,24 +27,26 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/skip_and_limit.h"
+
+#include "mongo/base/exact_cast.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
+#include "mongo/db/pipeline/document_source.h"
+#include "mongo/db/pipeline/document_source_limit.h"
+#include "mongo/db/pipeline/document_source_skip.h"
+#include "mongo/db/pipeline/stage_constraints.h"
+#include "mongo/platform/overflow_arithmetic.h"
+
 #include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <cstdint>
 #include <iterator>
 #include <limits>
 #include <list>
 
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/exact_cast.h"
-#include "mongo/db/pipeline/document_source.h"
-#include "mongo/db/pipeline/document_source_limit.h"
-#include "mongo/db/pipeline/document_source_skip.h"
-#include "mongo/db/pipeline/skip_and_limit.h"
-#include "mongo/db/pipeline/stage_constraints.h"
-#include "mongo/platform/overflow_arithmetic.h"
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -86,7 +88,10 @@ Pipeline::SourceContainer::iterator eraseAndStich(Pipeline::SourceContainer::ite
     // If the removed stage wasn't the last in the pipeline, make sure that the stage followed the
     // erased stage has a valid pointer to the previous document source.
     if (itr != container->end()) {
-        (*itr)->setSource(itr != container->begin() ? std::prev(itr)->get() : nullptr);
+        auto source = itr != container->begin()
+            ? dynamic_cast<exec::agg::Stage*>(std::prev(itr)->get())
+            : nullptr;
+        dynamic_cast<exec::agg::Stage*>(itr->get())->setSource(source);
     }
     return itr;
 }

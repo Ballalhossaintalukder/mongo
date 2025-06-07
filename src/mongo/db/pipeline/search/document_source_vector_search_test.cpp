@@ -27,12 +27,14 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/search/document_source_vector_search.h"
+
 #include "mongo/bson/json.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/db/pipeline/search/document_source_internal_search_id_lookup.h"
-#include "mongo/db/pipeline/search/document_source_vector_search.h"
 #include "mongo/db/query/search/mongot_options.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/unittest/death_test.h"
@@ -172,8 +174,9 @@ TEST_F(DocumentSourceVectorSearchTest, EOFWhenCollDoesNotExist) {
         }
     })");
 
-    auto vectorStage = DocumentSourceVectorSearch::createFromBson(spec.firstElement(), expCtx);
-    ASSERT_TRUE(vectorStage.front()->getNext().isEOF());
+    auto vectorSearch = DocumentSourceVectorSearch::createFromBson(spec.firstElement(), expCtx);
+    auto vectorSearchStage = exec::agg::buildStage(vectorSearch.front());
+    ASSERT_TRUE(vectorSearchStage->getNext().isEOF());
 }
 
 TEST_F(DocumentSourceVectorSearchTest, HasTheCorrectStagesWhenCreated) {

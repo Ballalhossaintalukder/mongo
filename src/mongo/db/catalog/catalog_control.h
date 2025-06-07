@@ -27,11 +27,13 @@
  *    it in the license file.
  */
 
-#include <map>
+#pragma once
 
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/util/uuid.h"
+
+#include <map>
 
 namespace mongo {
 namespace catalog {

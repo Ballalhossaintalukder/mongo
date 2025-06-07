@@ -29,6 +29,9 @@
 
 #include "mongo/bson/column/simple8b_type_util.h"
 
+#include "mongo/stdx/type_traits.h"
+#include "mongo/unittest/unittest.h"
+
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -36,9 +39,6 @@
 
 #include <absl/numeric/int128.h>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/stdx/type_traits.h"
-#include "mongo/unittest/unittest.h"
 
 using namespace mongo;
 
@@ -81,7 +81,7 @@ void assertStringEqual(StringData val, int128_t expected) {
 
     Simple8bTypeUtil::SmallString decodeResult = Simple8bTypeUtil::decodeString(*encodeResult);
     ASSERT_EQUALS(val.size(), decodeResult.size);
-    ASSERT_EQUALS(std::memcmp(val.rawData(), decodeResult.str.data(), val.size()), 0);
+    ASSERT_EQUALS(std::memcmp(val.data(), decodeResult.str.data(), val.size()), 0);
 }
 
 TEST(Simple8bTypeUtil, EncodeAndDecodePositiveSignedInt) {

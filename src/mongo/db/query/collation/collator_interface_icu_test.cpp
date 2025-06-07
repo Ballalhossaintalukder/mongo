@@ -27,18 +27,19 @@
  *    it in the license file.
  */
 
-#include <string>
-#include <unicode/coll.h>
-#include <utility>
-
-#include <unicode/locid.h>
-#include <unicode/utypes.h>
-
 #include "mongo/db/query/collation/collator_interface_icu.h"
+
 #include "mongo/stdx/type_traits.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <string>
+#include <utility>
+
+#include <unicode/coll.h>
+#include <unicode/locid.h>
+#include <unicode/utypes.h>
 
 namespace {
 
@@ -220,7 +221,7 @@ TEST(CollatorInterfaceICUTest, EmptyNullTerminatedStringComparesCorrectly) {
     ASSERT(U_SUCCESS(status));
 
     StringData emptyString("");
-    ASSERT(emptyString.rawData());
+    ASSERT(emptyString.data());
     ASSERT_EQ(emptyString.size(), 0u);
 
     CollatorInterfaceICU icuCollator(collationSpec, std::move(coll));
@@ -239,7 +240,7 @@ TEST(CollatorInterfaceICUTest, EmptyNullTerminatedStringComparesCorrectlyUsingCo
     ASSERT(U_SUCCESS(status));
 
     StringData emptyString("");
-    ASSERT(emptyString.rawData());
+    ASSERT(emptyString.data());
     ASSERT_EQ(emptyString.size(), 0u);
 
     CollatorInterfaceICU icuCollator(collationSpec, std::move(coll));
@@ -260,7 +261,7 @@ TEST(CollatorInterfaceICUTest, LengthOneStringWithNullByteComparesCorrectly) {
     ASSERT(U_SUCCESS(status));
 
     const auto nullByte = "\0"_sd;
-    ASSERT_EQ(nullByte.rawData()[0], '\0');
+    ASSERT_EQ(nullByte.data()[0], '\0');
     ASSERT_EQ(nullByte.size(), 1u);
 
     CollatorInterfaceICU icuCollator(collationSpec, std::move(coll));
@@ -279,7 +280,7 @@ TEST(CollatorInterfaceICUTest, LengthOneStringWithNullByteComparesCorrectlyUsing
     ASSERT(U_SUCCESS(status));
 
     const auto nullByte = "\0"_sd;
-    ASSERT_EQ(nullByte.rawData()[0], '\0');
+    ASSERT_EQ(nullByte.data()[0], '\0');
     ASSERT_EQ(nullByte.size(), 1u);
 
     CollatorInterfaceICU icuCollator(collationSpec, std::move(coll));

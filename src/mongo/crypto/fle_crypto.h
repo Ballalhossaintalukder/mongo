@@ -29,20 +29,6 @@
 
 #pragma once
 
-#include <array>
-#include <boost/move/utility_core.hpp>
-#include <boost/multiprecision/cpp_int.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <compare>
-#include <cstdint>
-#include <cstring>
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/data_range.h"
 #include "mongo/base/data_range_cursor.h"
 #include "mongo/base/data_type_validated.h"
@@ -72,6 +58,21 @@
 #include "mongo/platform/decimal128.h"
 #include "mongo/rpc/object_check.h"  // IWYU pragma: keep
 #include "mongo/util/uuid.h"
+
+#include <array>
+#include <compare>
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -616,6 +617,15 @@ struct ECOCCompactionDocumentV2 {
 // TODO SERVER-96973 Refactor this into a full wrapper class around
 // mc_FLE2TagAndEncryptedMetadataBlock_t
 struct FLE2TagAndEncryptedMetadataBlockView {
+    /**
+     * Create a view from a 96-byte serialized metadata block buffer
+     */
+    FLE2TagAndEncryptedMetadataBlockView(ConstDataRange serializedBlock);
+
+    FLE2TagAndEncryptedMetadataBlockView(ConstDataRange counts,
+                                         ConstDataRange tag,
+                                         ConstDataRange zeros);
+
     ConstDataRange encryptedCounts;
     ConstDataRange tag;
     ConstDataRange encryptedZeros;
@@ -667,19 +677,13 @@ struct FLE2TagAndEncryptedMetadataBlock {
     StatusWith<std::vector<uint8_t>> serialize(ServerDerivedFromDataToken token);
 
     static StatusWith<FLE2TagAndEncryptedMetadataBlock> decryptAndParse(
-        ServerDerivedFromDataToken token, ConstDataRange serializedBlock);
-
-    static StatusWith<FLE2TagAndEncryptedMetadataBlock> decryptAndParse(
         ServerDerivedFromDataToken token, const FLE2TagAndEncryptedMetadataBlockView& block);
 
-    static StatusWith<PrfBlock> parseTag(ConstDataRange serializedBlock);
-
     /*
-     * Decrypts and returns only the zeros blob from the serialized
-     * FLE2TagAndEncryptedMetadataBlock in serializedBlock.
+     * Decrypts and returns the zeros blob from the FLE2TagAndEncryptedMetadataBlockView.
      */
-    static StatusWith<ZerosBlob> decryptZerosBlob(ServerZerosEncryptionToken token,
-                                                  ConstDataRange serializedBlock);
+    static StatusWith<ZerosBlob> decryptZerosBlob(
+        ServerZerosEncryptionToken token, const FLE2TagAndEncryptedMetadataBlockView& block);
 
     static bool isValidZerosBlob(const ZerosBlob& blob);
 
@@ -732,7 +736,7 @@ public:
     StatusWith<std::vector<uint8_t>> serialize() const;
 
     ConstDataRange getServerEncryptedValue() const;
-    ConstDataRange getRawMetadataBlock() const;
+    FLE2TagAndEncryptedMetadataBlockView getRawMetadataBlock() const;
     PrfBlock getMetadataBlockTag() const;
     UUID getKeyId() const;
     BSONType getBsonType() const;
@@ -743,7 +747,6 @@ private:
     // Cached parsed values
     mutable boost::optional<UUID> _cachedKeyId;
     mutable boost::optional<ConstDataRange> _cachedServerEncryptedValue;
-    mutable boost::optional<std::vector<uint8_t>> _cachedRawMetadata;
     mutable boost::optional<PrfBlock> _cachedMetadataBlockTag;
     mutable boost::optional<std::vector<uint8_t>> _cachedSerializedPayload;
 };
@@ -826,7 +829,7 @@ struct FLE2IndexedRangeEncryptedValueV2 {
         BSONType bsonType;
         uint8_t edgeCount;
         ConstDataRange ciphertext;
-        std::vector<ConstDataRange> metadataBlocks;
+        std::vector<FLE2TagAndEncryptedMetadataBlockView> metadataBlocks;
     };
     static StatusWith<ParsedFields> parseAndValidateFields(ConstDataRange serializedServerValue);
 
@@ -892,10 +895,10 @@ public:
     UUID getKeyId() const;
     BSONType getBsonType() const;
     ConstDataRange getServerEncryptedValue() const;
-    uint8_t getTagCount() const;
-    uint8_t getSubstringTagCount() const;
-    uint8_t getSuffixTagCount() const;
-    uint8_t getPrefixTagCount() const;
+    uint32_t getTagCount() const;
+    uint32_t getSubstringTagCount() const;
+    uint32_t getSuffixTagCount() const;
+    uint32_t getPrefixTagCount() const;
     FLE2TagAndEncryptedMetadataBlockView getExactStringMetadataBlock() const;
     std::vector<FLE2TagAndEncryptedMetadataBlockView> getSubstringMetadataBlocks() const;
     std::vector<FLE2TagAndEncryptedMetadataBlockView> getSuffixMetadataBlocks() const;
@@ -1091,6 +1094,13 @@ public:
      */
     static EncryptedFieldConfig getAndValidateSchema(const NamespaceString& nss,
                                                      const EncryptionInformation& ei);
+
+    /**
+     * Throws if there exists an indexed-encrypted field in the EncryptedFieldConfig, whose
+     * worst case tag count exceeds the per-field tag limit.
+     */
+    static constexpr uint32_t kFLE2PerFieldTagLimit = 84000;
+    static void checkPerFieldTagLimitNotExceeded(const EncryptedFieldConfig& ef);
 };
 
 /**
@@ -1187,6 +1197,24 @@ struct ParsedFindRangePayload {
     }
 };
 
+struct ParsedFindTextSearchPayload {
+    boost::optional<mongo::TextExactFindTokenSet> exactTokens;
+    boost::optional<mongo::TextSubstringFindTokenSet> substringTokens;
+    boost::optional<mongo::TextSuffixFindTokenSet> suffixTokens;
+    boost::optional<mongo::TextPrefixFindTokenSet> prefixTokens;
+
+    explicit ParsedFindTextSearchPayload(BSONElement fleFindPayload);
+    explicit ParsedFindTextSearchPayload(const Value& fleFindPayload);
+    explicit ParsedFindTextSearchPayload(ConstDataRange cdr);
+
+    std::int64_t maxCounter{};
+
+    EDCDerivedFromDataToken edc;
+    ESCDerivedFromDataToken esc;
+
+    ServerDerivedFromDataToken server;
+};
+
 
 /**
  * Edges calculator
@@ -1278,6 +1306,18 @@ std::vector<std::string> minCoverDecimal128(Decimal128 lowerBound,
                                             boost::optional<uint32_t> precision,
                                             int sparsity,
                                             const boost::optional<int>& trimFactor);
+
+/**
+ * msize (i.e. tag count) calculators for substring/suffix/prefix
+ */
+uint32_t msizeForSubstring(int32_t strLen, int32_t lb, int32_t ub, int32_t mlen);
+uint32_t msizeForSuffixOrPrefix(int32_t strLen, int32_t lb, int32_t ub);
+/**
+ * Max tags calculators for substring/suffix/prefix.
+ * Note that the returned count does not include the tag for exact string match.
+ */
+uint32_t maxTagsForSubstring(int32_t lb, int32_t ub, int32_t mlen);
+uint32_t maxTagsForSuffixOrPrefix(int32_t lb, int32_t ub);
 
 class FLEUtil {
 public:

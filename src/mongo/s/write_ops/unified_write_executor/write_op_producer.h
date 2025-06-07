@@ -27,11 +27,13 @@
  *    it in the license file.
  */
 
-#include <absl/container/btree_set.h>
-#include <boost/optional.hpp>
+#pragma once
 
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/s/write_ops/unified_write_executor/write_op.h"
+
+#include <absl/container/btree_set.h>
+#include <boost/optional.hpp>
 
 namespace mongo {
 namespace unified_write_executor {
@@ -42,6 +44,7 @@ namespace unified_write_executor {
  * time.
  */
 class WriteOpProducer {
+public:
     /**
      * Peek the current active write op without advancing the internal pointer. Repeated calls
      * return the same write op. When no active write op is left, return empty.

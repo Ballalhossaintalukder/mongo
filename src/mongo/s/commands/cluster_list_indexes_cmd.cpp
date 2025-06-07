@@ -28,13 +28,6 @@
  */
 
 
-#include <memory>
-#include <set>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -57,15 +50,22 @@
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/async_requests_sender.h"
-#include "mongo/s/catalog_cache.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/cluster_commands_helpers.h"
 #include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/query/exec/store_possible_cursor.h"
+#include "mongo/s/router_role.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <set>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -75,13 +75,13 @@ namespace {
 
 ListIndexesReply cursorCommandPassthroughShardWithMinKeyChunk(OperationContext* opCtx,
                                                               const NamespaceString& nss,
-                                                              const CollectionRoutingInfo& cri,
+                                                              RoutingContext& routingCtx,
                                                               const BSONObj& cmdObj,
                                                               const PrivilegeVector& privileges) {
     auto response = executeCommandAgainstShardWithMinKeyChunk(
         opCtx,
         nss,
-        cri,
+        routingCtx,
         CommandHelpers::filterCommandRequestForPassthrough(cmdObj),
         ReadPreferenceSetting::get(opCtx),
         Shard::RetryPolicy::kIdempotent);
@@ -125,6 +125,10 @@ public:
             return false;
         }
 
+        bool supportsRawData() const final {
+            return true;
+        }
+
         NamespaceString ns() const final {
             uassert(ErrorCodes::BadValue,
                     "Mongos requires a namespace for listIndexes command",
@@ -147,24 +151,27 @@ public:
             // The command's IDL definition permits namespace or UUID, but mongos requires a
             // namespace.
             auto targeter = CollectionRoutingInfoTargeter(opCtx, ns());
-            auto cri = targeter.getRoutingInfo();
-            auto& cmd = request();
-            setReadWriteConcern(opCtx, cmd, this);
-            auto cmdToBeSent = cmd.toBSON();
-            if (targeter.timeseriesNamespaceNeedsRewrite(ns())) {
-                cmdToBeSent =
-                    timeseries::makeTimeseriesCommand(cmdToBeSent,
-                                                      ns(),
-                                                      ListIndexes::kCommandName,
-                                                      ListIndexes::kIsTimeseriesNamespaceFieldName);
-            }
+            return routing_context_utils::runAndValidate(
+                targeter.getRoutingCtx(), [&](RoutingContext& routingCtx) {
+                    auto& cmd = request();
+                    setReadWriteConcern(opCtx, cmd, this);
+                    auto cmdToBeSent = cmd.toBSON();
+                    if (targeter.timeseriesNamespaceNeedsRewrite(ns())) {
+                        cmdToBeSent = timeseries::makeTimeseriesCommand(
+                            cmdToBeSent,
+                            ns(),
+                            ListIndexes::kCommandName,
+                            ListIndexes::kIsTimeseriesNamespaceFieldName);
+                    }
 
-            return cursorCommandPassthroughShardWithMinKeyChunk(
-                opCtx,
-                targeter.getNS(),
-                cri,
-                cmdToBeSent,
-                {Privilege(ResourcePattern::forExactNamespace(ns()), ActionType::listIndexes)});
+                    return cursorCommandPassthroughShardWithMinKeyChunk(
+                        opCtx,
+                        targeter.getNS(),
+                        routingCtx,
+                        cmdToBeSent,
+                        {Privilege(ResourcePattern::forExactNamespace(ns()),
+                                   ActionType::listIndexes)});
+                });
         }
     };
 };

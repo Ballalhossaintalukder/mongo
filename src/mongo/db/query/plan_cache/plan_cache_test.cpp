@@ -31,13 +31,7 @@
  * This file contains tests for mongo/db/query/plan_cache/plan_cache.h
  */
 
-#include <fmt/format.h>
-#include <memory>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/query/plan_cache/plan_cache.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -61,7 +55,6 @@
 #include "mongo/db/query/find_command.h"
 #include "mongo/db/query/index_entry.h"
 #include "mongo/db/query/plan_cache/classic_plan_cache.h"
-#include "mongo/db/query/plan_cache/plan_cache.h"
 #include "mongo/db/query/plan_cache/plan_cache_indexability.h"
 #include "mongo/db/query/plan_cache/plan_cache_key_factory.h"
 #include "mongo/db/query/plan_cache/plan_cache_key_info.h"
@@ -80,6 +73,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -2163,7 +2164,7 @@ TEST_F(CachePlanSelectionTest, RecoveredSolutionWithMatchExpressionHasTaggedMatc
     // Ensure that the taggedMatchExpressionHash is set. Since the index order can change, we cannot
     // assert that bestSoln->taggedMatchExpressionHash == planSoln->taggedMatchExpressionHash, just
     // that planSoln->taggedMatchExpressionHash is set to something.
-    ASSERT_NE(0, planSoln->taggedMatchExpressionHash);
+    ASSERT_EQ(bestSoln->taggedMatchExpressionHash, planSoln->taggedMatchExpressionHash);
 }
 
 /**
@@ -2174,14 +2175,15 @@ protected:
     void setUp() override {
         _queryTestServiceContext = std::make_unique<QueryTestServiceContext>();
         _operationContext = _queryTestServiceContext->makeOperationContext();
-        _collection = std::make_unique<CollectionMock>(_nss);
-        // TODO(SERVER-103405): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
-        _collectionPtr = CollectionPtr::CollectionPtr_UNSAFE(_collection.get());
+        auto collection = std::make_shared<CollectionMock>(_nss);
+        auto catalog = CollectionCatalog::get(_operationContext.get());
+        catalog->onCreateCollection(_operationContext.get(), collection);
+        _collectionPtr = CollectionPtr(catalog->establishConsistentCollection(
+            _operationContext.get(), _nss, boost::none /* readTimestamp */));
     }
 
     void tearDown() override {
         _collectionPtr.reset();
-        _collection.reset();
         _operationContext.reset();
         _queryTestServiceContext.reset();
     }
@@ -2260,7 +2262,6 @@ private:
     std::unique_ptr<QueryTestServiceContext> _queryTestServiceContext;
 
     ServiceContext::UniqueOperationContext _operationContext;
-    std::unique_ptr<Collection> _collection;
     CollectionPtr _collectionPtr;
 };
 

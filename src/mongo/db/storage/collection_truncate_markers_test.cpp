@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/storage/collection_truncate_markers.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/timestamp.h"
@@ -40,13 +36,18 @@
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/service_context_d_test_fixture.h"
-#include "mongo/db/storage/collection_truncate_markers.h"
 #include "mongo/db/storage/storage_engine_test_fixture.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -190,7 +191,7 @@ void normalTest(CollectionMarkersTest* fixture, std::string collectionName) {
     auto opCtx = fixture->getClient()->makeOperationContext();
 
     auto collNs = NamespaceString::createNamespaceString_forTest("test", collectionName);
-    ASSERT_OK(fixture->createCollection(opCtx.get(), collNs));
+    fixture->createCollection(opCtx.get(), collNs);
 
     static constexpr auto dataLength = 4;
     auto [insertedRecordId, now] = fixture->insertElementWithCollectionMarkerUpdate(
@@ -219,7 +220,7 @@ TEST_F(CollectionMarkersTest, NormalCollectionPartialMarkerUsage) {
     auto opCtx = getClient()->makeOperationContext();
 
     auto collNs = NamespaceString::createNamespaceString_forTest("test", "coll");
-    ASSERT_OK(createCollection(opCtx.get(), collNs));
+    createCollection(opCtx.get(), collNs);
 
     static constexpr auto dataLength = 4;
     auto [insertedRecordId, now] =
@@ -250,7 +251,7 @@ void createNewMarkerTest(CollectionMarkersTest* fixture, std::string collectionN
     auto collNs = NamespaceString::createNamespaceString_forTest("test", collectionName);
     {
         auto opCtx = fixture->getClient()->makeOperationContext();
-        ASSERT_OK(fixture->createCollection(opCtx.get(), collNs));
+        fixture->createCollection(opCtx.get(), collNs);
     }
 
     {
@@ -320,7 +321,7 @@ void ascendingOrderTest(CollectionMarkersTest* fixture, std::string collectionNa
     auto collNs = NamespaceString::createNamespaceString_forTest("test", collectionName);
     {
         auto opCtx = fixture->getClient()->makeOperationContext();
-        ASSERT_OK(fixture->createCollection(opCtx.get(), collNs));
+        fixture->createCollection(opCtx.get(), collNs);
     }
 
     {
@@ -378,7 +379,7 @@ TEST_F(CollectionMarkersTest, ScanningMarkerCreation) {
     auto collNs = NamespaceString::createNamespaceString_forTest("test", "coll");
     {
         auto opCtx = getClient()->makeOperationContext();
-        ASSERT_OK(createCollection(opCtx.get(), collNs));
+        createCollection(opCtx.get(), collNs);
         insertElements(opCtx.get(), collNs, kElementSize, kNumElements, Timestamp(1, 0));
     }
 
@@ -415,7 +416,7 @@ TEST_F(CollectionMarkersTest, SamplingMarkerCreation) {
     auto collNs = NamespaceString::createNamespaceString_forTest("test", "coll");
     {
         auto opCtx = getClient()->makeOperationContext();
-        ASSERT_OK(createCollection(opCtx.get(), collNs));
+        createCollection(opCtx.get(), collNs);
         // Add documents of various sizes
         for (int round = 0; round < kNumRounds; round++) {
             for (int numBytes = kElementSize; numBytes < kElementSize * 2; numBytes++) {
@@ -473,7 +474,7 @@ TEST_F(CollectionMarkersTest, OplogSamplingLogging) {
     // Create a collection and insert records into it.
     {
         auto opCtx = getClient()->makeOperationContext();
-        ASSERT_OK(createCollection(opCtx.get(), collNs));
+        createCollection(opCtx.get(), collNs);
         // Add documents of various sizes
         for (int round = 0; round < kNumRounds; round++) {
             for (int numBytes = kElementSize; numBytes < kElementSize * 2; numBytes++) {

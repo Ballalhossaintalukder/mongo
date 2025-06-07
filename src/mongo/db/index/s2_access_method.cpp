@@ -30,14 +30,6 @@
 
 #include "mongo/db/index/s2_access_method.h"
 
-#include <boost/move/utility_core.hpp>
-#include <cmath>
-#include <s2cellid.h>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -51,6 +43,15 @@
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cmath>
+#include <string>
+#include <utility>
+
+#include <s2cellid.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -74,7 +75,7 @@ S2AccessMethod::S2AccessMethod(IndexCatalogEntry* btreeState,
     BSONObjIterator i(descriptor->keyPattern());
     while (i.more()) {
         BSONElement e = i.next();
-        if (e.type() == String && indexName == e.String()) {
+        if (e.type() == BSONType::string && indexName == e.String()) {
             ++geoFields;
         } else {
             // We check for numeric in 2d, so that's the check here
@@ -125,7 +126,7 @@ StatusWith<BSONObj> S2AccessMethod::_fixSpecHelper(const BSONObj& specObj,
         return cannotCreateIndexStatus(indexVersionElt, "Invalid type for geo index version");
     }
 
-    if (indexVersionElt.type() == BSONType::NumberDouble &&
+    if (indexVersionElt.type() == BSONType::numberDouble &&
         !std::isnormal(indexVersionElt.numberDouble())) {
         return cannotCreateIndexStatus(indexVersionElt, "Invalid value for geo index version");
     }

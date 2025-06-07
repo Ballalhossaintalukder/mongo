@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <set>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -47,13 +42,20 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/db/update/update_driver.h"
 
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * This is an internal stage that takes an oplog update description and applies the update to the
  * input Document.
  */
-class DocumentSourceInternalApplyOplogUpdate final : public DocumentSource {
+class DocumentSourceInternalApplyOplogUpdate final : public DocumentSource,
+                                                     public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalApplyOplogUpdate"_sd;
     static constexpr StringData kOplogUpdateFieldName = "oplogUpdate"_sd;
@@ -65,7 +67,7 @@ public:
                                            const BSONObj& oplogUpdate);
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

@@ -29,15 +29,16 @@
 
 #include "testfile.h"
 
+#include "mongo/base/error_codes.h"
+#include "mongo/db/query/util/jparse_util.h"
+#include "mongo/util/shell_exec.h"
+
 #include <algorithm>
 #include <ostream>
 #include <regex>
 #include <vector>
 
 #include "command_helpers.h"
-#include "mongo/base/error_codes.h"
-#include "mongo/db/query/util/jparse_util.h"
-#include "mongo/util/shell_exec.h"
 
 namespace mongo::query_tester {
 namespace {
@@ -62,7 +63,7 @@ void dropCollections(DBClientConnection* const conn,
 std::string formatResultSet(const BSONObj& obj) {
     auto oss = std::ostringstream{};
     const auto arrayElt = obj.hasField("res") ? obj.getField("res") : obj.firstElement();
-    if (arrayElt.type() == Array) {
+    if (arrayElt.type() == BSONType::array) {
         oss << ArrayResult<BSONElement>{arrayElt.Array()};
     } else {
         uasserted(9670433,

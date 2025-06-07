@@ -795,11 +795,11 @@ T decodeLastSlot(uint64_t encoded) {
 
 // Decodes and visits all slots in simple8b block.
 template <typename T, typename Visit, typename VisitZero, typename VisitMissing>
-inline size_t decodeAndVisit(uint64_t encoded,
-                             uint64_t* prevNonRLE,
-                             const Visit& visit,
-                             const VisitZero& visitZero,
-                             const VisitMissing& visitMissing) {
+MONGO_COMPILER_ALWAYS_INLINE_GCC14 inline size_t decodeAndVisit(uint64_t encoded,
+                                                                uint64_t* prevNonRLE,
+                                                                const Visit& visit,
+                                                                const VisitZero& visitZero,
+                                                                const VisitMissing& visitMissing) {
     auto selector = encoded & simple8b_internal::kBaseSelectorMask;
     if (selector != simple8b_internal::kRleSelector) {
         *prevNonRLE = encoded;
@@ -1060,8 +1060,16 @@ T decodeAndSum(uint64_t encoded, uint64_t* prevNonRLE) {
         case 14:
             return decoder60.sum<T>(encoded);
         case simple8b_internal::kRleSelector:
-            return decodeLastSlotIgnoreSkip<T>(*prevNonRLE) * ((encoded & 0xf) + 1) *
-                simple8b_internal::kRleMultiplier;
+            // We cast to unsigned and back to avoid undefined behavior.  In C++,
+            // overflow of an unsigned integer is defined to exhibit wrap-around
+            // behavior which is what we want to preserve large deltas that may
+            // sum to smaller deltas, whereas overflow of a signed integer is
+            // undefined (although commonly the same in many implementations).
+            // This casting will enforce wrap-around behavior for
+            // signed values, and will be treated the same by the compiler.
+            return static_cast<T>(
+                static_cast<make_unsigned_t<T>>(decodeLastSlotIgnoreSkip<T>(*prevNonRLE)) *
+                ((encoded & 0xf) + 1) * simple8b_internal::kRleMultiplier);
         default:
             break;
     }
@@ -1178,8 +1186,18 @@ T decodeAndPrefixSum(uint64_t encoded, T& prefix, uint64_t* prevNonRLE) {
             auto num = ((encoded & 0xf) + 1) * simple8b_internal::kRleMultiplier;
             // We can calculate prefix sum like this because num is always even and value is always
             // the same for RLE.
-            T sum = add(prefix * num, last * (num + 1) * (num / 2));
-            prefix = add(prefix, last * num);
+            // We cast to unsigned and back to avoid undefined behavior.  In C++,
+            // overflow of an unsigned integer is defined to exhibit wrap-around
+            // behavior which is what we want to preserve large deltas that may
+            // sum to smaller deltas, whereas overflow of a signed integer is
+            // undefined (although commonly the same in many implementations).
+            // This casting will enforce wrap-around behavior for
+            // signed values, and will be treated the same by the compiler.
+
+            T sum = static_cast<T>((static_cast<make_unsigned_t<T>>(prefix) * num) +
+                                   (static_cast<make_unsigned_t<T>>(last) * (num + 1) * (num / 2)));
+            prefix = static_cast<T>(static_cast<make_unsigned_t<T>>(prefix) +
+                                    static_cast<make_unsigned_t<T>>(last) * num);
             return sum;
         }
         default:
@@ -1192,12 +1210,12 @@ T decodeAndPrefixSum(uint64_t encoded, T& prefix, uint64_t* prevNonRLE) {
 }  // namespace
 
 template <typename T, typename Visit, typename VisitZero, typename VisitMissing>
-inline size_t visitAll(const char* buffer,
-                       size_t size,
-                       uint64_t& prevNonRLE,
-                       const Visit& visit,
-                       const VisitZero& visitZero,
-                       const VisitMissing& visitMissing) {
+MONGO_COMPILER_ALWAYS_INLINE_GCC14 size_t visitAll(const char* buffer,
+                                                   size_t size,
+                                                   uint64_t& prevNonRLE,
+                                                   const Visit& visit,
+                                                   const VisitZero& visitZero,
+                                                   const VisitMissing& visitMissing) {
     size_t numVisited = 0;
     invariant(size % 8 == 0);
     const char* end = buffer + size;

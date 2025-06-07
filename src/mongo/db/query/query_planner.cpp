@@ -28,6 +28,10 @@
  */
 
 
+#include <cstring>
+
+#include <s2cellid.h>
+
 #include <absl/container/node_hash_map.h>
 #include <absl/container/node_hash_set.h>
 #include <boost/move/utility_core.hpp>
@@ -35,14 +39,7 @@
 #include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstring>
-#include <s2cellid.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <deque>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -97,6 +94,11 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <deque>
+#include <string>
+#include <utility>
+#include <vector>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
@@ -140,8 +142,9 @@ Status tagOrChildAccordingToCache(const SolutionCacheData* branchCacheData,
     return Status::OK();
 }
 
-size_t hashTaggedMatchExpression(MatchExpression* expr) {
-    const MatchExpressionHasher hash{MatchExpressionHashParams{HashValuesOrParams::kHashIndexTags}};
+size_t hashTaggedMatchExpression(MatchExpression* expr, const std::vector<IndexEntry>& indexes) {
+    const MatchExpressionHasher hash{
+        MatchExpression::HashParam{HashValuesOrParams::kHashIndexTags, &indexes}};
     return hash(expr);
 }
 
@@ -156,7 +159,7 @@ bool hintMatchesNameOrPattern(const BSONObj& hintObj,
 
     BSONElement firstHintElt = hintObj.firstElement();
     if (firstHintElt.fieldNameStringData() == "$hint"_sd &&
-        firstHintElt.type() == BSONType::String) {
+        firstHintElt.type() == BSONType::string) {
         // An index name is provided by the hint.
         return indexName == firstHintElt.valueStringData();
     }
@@ -270,7 +273,7 @@ static bool is2DIndex(const BSONObj& pattern) {
     BSONObjIterator it(pattern);
     while (it.more()) {
         BSONElement e = it.next();
-        if (String == e.type() && (e.valueStringData() == "2d")) {
+        if (BSONType::string == e.type() && (e.valueStringData() == "2d")) {
             return true;
         }
     }
@@ -778,7 +781,7 @@ StatusWith<std::unique_ptr<QuerySolution>> QueryPlanner::planFromCache(
 
     // Must be performed before nodes are sorted in prepareForAccessPlanning(). See
     // QueryPlanner::plan() for details.
-    const auto taggedMatchExpressionHash = hashTaggedMatchExpression(clone.get());
+    const auto taggedMatchExpressionHash = hashTaggedMatchExpression(clone.get(), expandedIndexes);
 
     // The MatchExpression tree is in canonical order. We must order the nodes for access
     // planning.
@@ -1266,7 +1269,7 @@ StatusWith<std::vector<std::unique_ptr<QuerySolution>>> QueryPlanner::plan(
             // both comparisons have the same type and are on the same path, {(tag)a: 1, a: 2} and
             // {(tag)a: 2, a: 1} will get the same hash when constants are ignored.
             const size_t taggedMatchExpressionHash =
-                hashTaggedMatchExpression(nextTaggedTree.get());
+                hashTaggedMatchExpression(nextTaggedTree.get(), relevantIndices);
 
             // We have already cached the tree in canonical order, so now we can order the nodes
             // for access planning.
@@ -1603,7 +1606,7 @@ StatusWith<QueryPlanner::CostBasedRankerResult> QueryPlanner::planWithCostBasedR
         return statusWithMultiPlanSolns.getStatus();
     }
 
-    auto cbrMode = query.getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode();
+    auto cbrMode = params.planRankerMode;
     EstimateMap estimates;
     const auto& collInfo = params.mainCollectionInfo;
     tassert(9969001, "CBR received incomplete catalog statistics", collInfo.collStats != nullptr);
@@ -1759,10 +1762,11 @@ std::unique_ptr<QuerySolution> QueryPlanner::extendWithAggPipeline(
 
         auto unwindStage = dynamic_cast<DocumentSourceUnwind*>(innerStage);
         if (unwindStage) {
-            solnForAgg = std::make_unique<UnwindNode>(std::move(solnForAgg) /* child */,
-                                                      unwindStage->getUnwindPath() /* fieldPath */,
-                                                      unwindStage->preserveNullAndEmptyArrays(),
-                                                      unwindStage->indexPath());
+            solnForAgg = std::make_unique<UnwindNode>(
+                std::move(solnForAgg) /* child */,
+                UnwindNode::UnwindSpec{unwindStage->getUnwindPath() /* fieldPath */,
+                                       unwindStage->preserveNullAndEmptyArrays(),
+                                       unwindStage->indexPath()});
             continue;
         }
 
@@ -1940,8 +1944,8 @@ StatusWith<std::unique_ptr<QuerySolution>> QueryPlanner::choosePlanForSubqueries
 
     // We must hash the tagged MatchExpression tree before sorting it in
     // 'prepareForAccessPlanning()' to be able to distinguish some plans.
-    const size_t taggedMatchExpressionHash =
-        hashTaggedMatchExpression(planningResult.orExpression.get());
+    const size_t taggedMatchExpressionHash = hashTaggedMatchExpression(
+        planningResult.orExpression.get(), params.mainCollectionInfo.indexes);
 
     // Must do this before using the planner functionality.
     prepareForAccessPlanning(planningResult.orExpression.get());
@@ -2049,8 +2053,8 @@ StatusWith<QueryPlanner::SubqueriesPlanningResult> QueryPlanner::planSubqueries(
             // considering any plan that's a collscan.
             invariant(branchResult->solutions.empty());
 
-            if (query.getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode() !=
-                QueryPlanRankerModeEnum::kMultiPlanning) {
+            auto cbrMode = params.planRankerMode;
+            if (cbrMode != QueryPlanRankerModeEnum::kMultiPlanning) {
                 auto statusWithCBRSolns = QueryPlanner::planWithCostBasedRanking(
                     *branchResult->canonicalQuery, params, samplingEstimator);
                 if (!statusWithCBRSolns.isOK()) {

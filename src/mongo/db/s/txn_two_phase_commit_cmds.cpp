@@ -28,17 +28,6 @@
  */
 
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/timestamp.h"
@@ -59,6 +48,7 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/replication_coordinator.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
 #include "mongo/db/s/transaction_coordinator_structures.h"
 #include "mongo/db/server_feature_flags_gen.h"
@@ -75,7 +65,6 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/transaction_router.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
@@ -83,6 +72,18 @@
 #include "mongo/util/future.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTransaction
 

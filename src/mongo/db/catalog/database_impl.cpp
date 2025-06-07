@@ -30,6 +30,11 @@
 #include "mongo/db/catalog/database_impl.h"
 
 #include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/move/utility_core.hpp>
@@ -38,10 +43,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
 
 #include "mongo/base/error_codes.h"
@@ -55,13 +56,13 @@
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_options_gen.h"
 #include "mongo/db/catalog/drop_collection.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/uncommitted_catalog_updates.h"
 #include "mongo/db/catalog/virtual_collection_impl.h"
 #include "mongo/db/catalog/virtual_collection_options.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/concurrency/d_concurrency.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/matcher/extensions_callback_noop.h"
@@ -79,8 +80,8 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/top.h"
-#include "mongo/db/storage/durable_catalog.h"
-#include "mongo/db/storage/durable_catalog_entry.h"
+#include "mongo/db/storage/exceptions.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
@@ -114,6 +115,7 @@ namespace {
 
 MONGO_FAIL_POINT_DEFINE(throwWCEDuringTxnCollCreate);
 MONGO_FAIL_POINT_DEFINE(hangBeforeLoggingCreateCollection);
+MONGO_FAIL_POINT_DEFINE(hangAfterParsingValidator);
 MONGO_FAIL_POINT_DEFINE(overrideRecordIdsReplicatedDefault);
 MONGO_FAIL_POINT_DEFINE(hangAndFailAfterCreateCollectionReservesOpTime);
 MONGO_FAIL_POINT_DEFINE(openCreateCollectionWindowFp);
@@ -138,8 +140,7 @@ Status validateDBNameForWindows(StringData dbname) {
 }
 
 void assertNoMovePrimaryInProgress(OperationContext* opCtx, NamespaceString const& nss) {
-    const auto scopedDss =
-        DatabaseShardingState::assertDbLockedAndAcquireShared(opCtx, nss.dbName());
+    const auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquire(opCtx, nss.dbName());
     if (scopedDss->isMovePrimaryInProgress()) {
         LOGV2(4909100, "assertNoMovePrimaryInProgress", logAttrs(nss));
 
@@ -148,7 +149,7 @@ void assertNoMovePrimaryInProgress(OperationContext* opCtx, NamespaceString cons
     }
 }
 
-// Utilizes the DurableCatalog to allocate and track storage resources for the new collection.
+// Utilizes the durable_catalog to allocate and track storage resources for the new collection.
 std::pair<RecordId, std::unique_ptr<RecordStore>> durablyTrackNewCollection(
     OperationContext* opCtx,
     const NamespaceString& nss,
@@ -159,8 +160,8 @@ std::pair<RecordId, std::unique_ptr<RecordStore>> durablyTrackNewCollection(
 
     const auto ident =
         ident::generateNewCollectionIdent(nss.dbName(), directoryPerDB, directoryPerIndexes);
-    auto createResult =
-        storageEngine->getDurableCatalog()->createCollection(opCtx, nss, ident, collectionOptions);
+    auto createResult = durable_catalog::createCollection(
+        opCtx, nss, ident, collectionOptions, storageEngine->getMDBCatalog());
     if (createResult == ErrorCodes::ObjectAlreadyExists) {
         // Each new ident must uniquely identify the collection's underlying table in the storage
         // engine. A scenario where the ident collides with a pre-existing ident should never happen
@@ -768,14 +769,15 @@ Collection* DatabaseImpl::_createCollection(
                 durablyTrackNewCollection(opCtx, nss, optionsWithUUID);
             auto& catalogId = catalogIdRecordStorePair.first;
 
-            auto catalogEntry = DurableCatalog::get(opCtx)->getParsedCatalogEntry(opCtx, catalogId);
+            auto catalogEntry =
+                durable_catalog::getParsedCatalogEntry(opCtx, catalogId, MDBCatalog::get(opCtx));
             auto metadata = catalogEntry->metadata;
 
             return Collection::Factory::get(opCtx)->make(
                 opCtx, nss, catalogId, metadata, std::move(catalogIdRecordStorePair.second));
         } else {
             // Virtual collection stays only in memory and its metadata need not persist on disk and
-            // therefore we bypass DurableCatalog.
+            // therefore we bypass durable_catalog.
             return VirtualCollectionImpl::make(opCtx, nss, optionsWithUUID, *vopts);
         }
     }();
@@ -902,16 +904,6 @@ Status DatabaseImpl::userCreateNS(OperationContext* opCtx,
                           // expression for a validator to apply some additional checks.
                           .isParsingCollectionValidator(true)
                           .build();
-        // If the feature compatibility version is not kLatest, and we are validating features as
-        // primary, ban the use of new agg features introduced in kLatest to prevent them from being
-        // persisted in the catalog.
-        // (Generic FCV reference): This FCV check should exist across LTS binary versions.
-        multiversion::FeatureCompatibilityVersion fcv;
-        if (serverGlobalParams.validateFeaturesAsPrimary.load() &&
-            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().isLessThan(
-                multiversion::GenericFCV::kLatest, &fcv)) {
-            expCtx->setMaxFeatureCompatibilityVersion(fcv);
-        }
 
         // If the validation action is printing logs or the level is "moderate", or if the user has
         // defined some encrypted fields in the collection options, then disallow any encryption
@@ -938,6 +930,8 @@ Status DatabaseImpl::userCreateNS(OperationContext* opCtx,
         if (!statusWithMatcher.isOK()) {
             return statusWithMatcher.getStatus();
         }
+
+        hangAfterParsingValidator.pauseWhileSet();
     }
 
     Status status = validateStorageOptions(

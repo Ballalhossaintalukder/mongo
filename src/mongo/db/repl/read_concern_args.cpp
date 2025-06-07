@@ -29,12 +29,6 @@
 
 #include "mongo/db/repl/read_concern_args.h"
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
@@ -45,6 +39,12 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -195,7 +195,7 @@ Status ReadConcernArgs::initialize(const BSONElement& readConcernElem) {
 
     dassert(readConcernElem.fieldNameStringData() == kReadConcernFieldName);
 
-    if (readConcernElem.type() != Object) {
+    if (readConcernElem.type() != BSONType::object) {
         return Status(ErrorCodes::FailedToParse,
                       str::stream() << kReadConcernFieldName << " field should be an object");
     }

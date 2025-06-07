@@ -27,16 +27,12 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <utility>
-
+#include "mongo/db/exec/idhack.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
-#include "mongo/db/exec/idhack.h"
 #include "mongo/db/exec/working_set_common.h"
 #include "mongo/db/index/index_access_method.h"
 #include "mongo/db/query/find_command.h"
@@ -45,6 +41,10 @@
 #include "mongo/db/storage/index_entry_comparison.h"
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace mongo {
 
@@ -95,7 +95,11 @@ PlanStage::StageState IDHackStage::doWork(WorkingSetID* out) {
         [&] {
             // Look up the key by going directly to the index.
             auto recordId = indexAccessMethod()->asSortedData()->findSingle(
-                opCtx(), collectionPtr(), indexDescriptor()->getEntry(), _key);
+                opCtx(),
+                *shard_role_details::getRecoveryUnit(opCtx()),
+                collectionPtr(),
+                indexDescriptor()->getEntry(),
+                _key);
 
             // Key not found.
             if (recordId.isNull()) {

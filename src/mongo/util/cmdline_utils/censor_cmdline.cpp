@@ -30,11 +30,6 @@
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstring>
-#include <set>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -47,6 +42,11 @@
 #include "mongo/util/options_parser/option_section.h"
 #include "mongo/util/options_parser/startup_options.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstring>
+#include <set>
+#include <string>
 
 namespace mongo {
 namespace cmdline_utils {
@@ -154,15 +154,15 @@ void censorBSONObjRecursive(const BSONObj& params,          // Object we are cen
         std::string dottedName = (parentPath.empty() ? param.fieldName()
                                       : isArray      ? parentPath
                                                      : parentPath + '.' + param.fieldName());
-        if (param.type() == Array) {
+        if (param.type() == BSONType::array) {
             BSONObjBuilder subArray(result->subarrayStart(param.fieldName()));
             censorBSONObjRecursive(param.Obj(), dottedName, true, &subArray);
             subArray.done();
-        } else if (param.type() == Object) {
+        } else if (param.type() == BSONType::object) {
             BSONObjBuilder subObj(result->subobjStart(param.fieldName()));
             censorBSONObjRecursive(param.Obj(), dottedName, false, &subObj);
             subObj.done();
-        } else if (param.type() == String) {
+        } else if (param.type() == BSONType::string) {
             if (_isPasswordArgument(dottedName.c_str())) {
                 result->append(param.fieldName(), "<password>");
             } else {

@@ -29,19 +29,20 @@
 
 #pragma once
 
-#include <array>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/bson/column/simple8b_helpers.h"
 #include "mongo/util/assert_util.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -368,11 +369,11 @@ inline size_t visitAll(const char* buffer,
                        const VisitMissing& visitMissing);
 
 template <typename T, typename Visit, typename VisitMissing>
-inline size_t visitAll(const char* buffer,
-                       size_t size,
-                       uint64_t& prevNonRLE,
-                       const Visit& visit,
-                       const VisitMissing& visitMissing) {
+MONGO_COMPILER_ALWAYS_INLINE_GCC14 inline size_t visitAll(const char* buffer,
+                                                          size_t size,
+                                                          uint64_t& prevNonRLE,
+                                                          const Visit& visit,
+                                                          const VisitMissing& visitMissing) {
     return visitAll<T>(buffer, size, prevNonRLE, visit, [&visit]() { visit(0); }, visitMissing);
 }
 

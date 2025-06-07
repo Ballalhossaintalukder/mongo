@@ -30,14 +30,6 @@
 // IWYU pragma: no_include "ext/alloc_traits.h"
 #include <boost/smart_ptr.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cmath>
-#include <cstddef>
-#include <string>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
@@ -52,6 +44,15 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cmath>
+#include <cstddef>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -72,10 +73,10 @@ boost::intrusive_ptr<Expression> parseGroupByExpression(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     const BSONElement& groupByField,
     const VariablesParseState& vps) {
-    if (groupByField.type() == BSONType::Object &&
+    if (groupByField.type() == BSONType::object &&
         groupByField.embeddedObject().firstElementFieldName()[0] == '$') {
         return Expression::parseObject(expCtx.get(), groupByField.embeddedObject(), vps);
-    } else if (groupByField.type() == BSONType::String &&
+    } else if (groupByField.type() == BSONType::string &&
                // Lager than 2 because we need a '$', at least one char for the field name and
                // the final terminating 0.
                groupByField.valuestrsize() > 2 && groupByField.valueStringData()[0] == '$') {
@@ -90,7 +91,7 @@ boost::intrusive_ptr<Expression> parseGroupByExpression(
 }  // namespace
 
 const char* DocumentSourceBucketAuto::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 DocumentSource::GetNextResult DocumentSourceBucketAuto::doGetNext() {
@@ -497,6 +498,7 @@ DocumentSourceBucketAuto::DocumentSourceBucketAuto(
     const boost::intrusive_ptr<GranularityRounder>& granularityRounder,
     uint64_t maxMemoryUsageBytes)
     : DocumentSource(kStageName, pExpCtx),
+      exec::agg::Stage(kStageName, pExpCtx),
       _sorterFileStats(nullptr /*sorterTracker*/),
       _maxMemoryUsageBytes(maxMemoryUsageBytes),
       _groupByExpression(groupByExpression),
@@ -537,7 +539,7 @@ intrusive_ptr<DocumentSource> DocumentSourceBucketAuto::createFromBson(
     uassert(40240,
             str::stream() << "The argument to $bucketAuto must be an object, but found type: "
                           << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     VariablesParseState vps = pExpCtx->variablesParseState;
     vector<AccumulationStatement> accumulationStatements;
@@ -572,7 +574,7 @@ intrusive_ptr<DocumentSource> DocumentSourceBucketAuto::createFromBson(
                     str::stream()
                         << "The $bucketAuto 'output' field must be an object, but found type: "
                         << typeName(argument.type()),
-                    argument.type() == BSONType::Object);
+                    argument.type() == BSONType::object);
 
             for (auto&& outputField : argument.embeddedObject()) {
                 auto parsedStmt = AccumulationStatement::parseAccumulationStatement(
@@ -590,7 +592,7 @@ intrusive_ptr<DocumentSource> DocumentSourceBucketAuto::createFromBson(
                     str::stream()
                         << "The $bucketAuto 'granularity' field must be a string, but found type: "
                         << typeName(argument.type()),
-                    argument.type() == BSONType::String);
+                    argument.type() == BSONType::string);
             granularityRounder = GranularityRounder::getGranularityRounder(pExpCtx, argument.str());
         } else {
             uasserted(40245, str::stream() << "Unrecognized option to $bucketAuto: " << argName);

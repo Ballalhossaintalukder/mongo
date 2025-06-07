@@ -29,13 +29,6 @@
 
 #include "mongo/db/ftdc/collector.h"
 
-#include <algorithm>
-#include <array>
-#include <memory>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -59,6 +52,13 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/future.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <array>
+#include <memory>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kFTDC
 
@@ -363,13 +363,21 @@ void SyncFTDCCollectorCollection::_collect(OperationContext* opCtx,
             continue;
         }
 
-        BSONObjBuilder subObjBuilder(builder->subobjStart(collector->name()));
+        try {
+            BSONObjBuilder subObjBuilder(builder->subobjStart(collector->name()));
 
-        // Add a Date_t before and after each BSON is collected so that we can track timing of
-        // the collector.
-        subObjBuilder.appendDate(kFTDCCollectStartField, getCurrentDate(opCtx));
-        collector->collect(opCtx, subObjBuilder);
-        subObjBuilder.appendDate(kFTDCCollectEndField, getCurrentDate(opCtx));
+            // Add a Date_t before and after each BSON is collected so that we can track timing of
+            // the collector.
+            subObjBuilder.appendDate(kFTDCCollectStartField, getCurrentDate(opCtx));
+            collector->collect(opCtx, subObjBuilder);
+            subObjBuilder.appendDate(kFTDCCollectEndField, getCurrentDate(opCtx));
+        } catch (...) {
+            LOGV2_ERROR(9761500,
+                        "Collector threw an error",
+                        "error"_attr = exceptionToStatus(),
+                        "collector"_attr = collector->name());
+            throw;
+        }
 
         // Ensure the collector did not set a read timestamp.
         invariant(shard_role_details::getRecoveryUnit(opCtx)->getTimestampReadSource() ==

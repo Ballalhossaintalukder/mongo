@@ -29,8 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_sharded_data_distribution.h"
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/json.h"
@@ -43,6 +41,8 @@
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -58,7 +58,7 @@ list<intrusive_ptr<DocumentSource>> DocumentSourceShardedDataDistribution::creat
     BSONElement elem, const intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(6789100,
             "The $shardedDataDistribution stage specification must be an empty object",
-            elem.type() == Object && elem.Obj().isEmpty());
+            elem.type() == BSONType::object && elem.Obj().isEmpty());
 
     uassert(6789101,
             "The $shardedDataDistribution stage can only be run on router",

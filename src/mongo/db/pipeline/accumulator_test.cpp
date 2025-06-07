@@ -28,20 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <cmath>
-#include <initializer_list>
-#include <iterator>
-#include <limits>
-#include <memory>
-#include <queue>
-#include <string>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/accumulator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -51,7 +38,6 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
-#include "mongo/db/pipeline/accumulator.h"
 #include "mongo/db/pipeline/accumulator_for_window_functions.h"
 #include "mongo/db/pipeline/accumulator_js_reduce.h"
 #include "mongo/db/pipeline/accumulator_multi.h"
@@ -67,6 +53,21 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cmath>
+#include <initializer_list>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <queue>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -2009,11 +2010,11 @@ TEST(Accumulators, AccumulatorExpMovingAvg) {
     AccumulatorExpMovingAvg acc{expCtx.get(), Decimal128{0.75}};  // alpha (decay factor) == 0.75
 
     // The constructor arg does not "initialize" 'acc', it just sets its decaying avg multiplier.
-    ASSERT_EQ(jstNULL, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::null, acc.getValue(false /* toBeMerged */).getType());
 
     // Process a non-numeric input. Still not initialized.
     acc.processInternal(Value("string"_sd), false /* merging */);
-    ASSERT_EQ(jstNULL, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::null, acc.getValue(false /* toBeMerged */).getType());
 
     // Process integer input 1. This will initialize the accumulator to the value of the input,
     // but it will not be internally stored as a decimal as this is not needed to maintain the
@@ -2032,7 +2033,7 @@ TEST(Accumulators, AccumulatorExpMovingAvg) {
 
     // Back to uninitialized after reset().
     acc.reset();
-    ASSERT_EQ(jstNULL, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::null, acc.getValue(false /* toBeMerged */).getType());
 }
 
 /* ------------------------- AccumulatorPercentile ---------------------------------------------- */
@@ -2049,7 +2050,7 @@ void accumulatorPercentileHelper(PercentileMethodEnum method,
     // Processing a non-numeric input when not merging does not accumulate anything, so the current
     // value should be an array of [null, null].
     acc.processInternal(Value("string"_sd), false /* merging */);
-    ASSERT_EQ(Array, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::array, acc.getValue(false /* toBeMerged */).getType());
     std::ostringstream oss;
     oss << acc.getValue(false /* toBeMerged */);  // final value
     ASSERT_EQ("[null, null]", oss.str());
@@ -2059,16 +2060,16 @@ void accumulatorPercentileHelper(PercentileMethodEnum method,
         double val = 0.1 * i;
         acc.processInternal(Value(val), false /* merging */);
     }
-    ASSERT_EQ(Array, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::array, acc.getValue(false /* toBeMerged */).getType());
     oss.str("");
     oss << acc.getValue(false /* toBeMerged */);  // final value
     ASSERT_EQ(mergeFalseExpected, oss.str());
-    ASSERT_EQ(Array, acc.getValue(true /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::array, acc.getValue(true /* toBeMerged */).getType());
     // We cannot easily test the getValue(true) values as they differ on different platforms.
 
     // Verify reset() clears the accumulator.
     acc.reset();
-    ASSERT_EQ(Array, acc.getValue(false /* toBeMerged */).getType());
+    ASSERT_EQ(BSONType::array, acc.getValue(false /* toBeMerged */).getType());
     oss.str("");
     oss << acc.getValue(false /* toBeMerged */);  // final value
     ASSERT_EQ("[null, null]", oss.str());

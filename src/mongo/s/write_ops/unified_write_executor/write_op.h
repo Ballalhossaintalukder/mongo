@@ -29,10 +29,11 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
+#include "mongo/s/write_ops/batched_command_request.h"
+
 #include <variant>
 
-#include "mongo/s/write_ops/batched_command_request.h"
+#include <boost/optional.hpp>
 
 
 namespace mongo {
@@ -44,32 +45,56 @@ enum WriteType {
     kFindAndMod,  // TODO SERVER-103949 will use this type or remove it.
 };
 
+using WriteOpId = size_t;
+
 class WriteOp {
 public:
-    WriteOp(const BulkWriteCommandRequest& request, int index) : _op(&request, index) {}
+    WriteOp(const BulkWriteCommandRequest& request, int index) : _request(request), _index(index) {}
 
-    int getId() const {
-        return _op.getItemIndex();
+    // copy/move constructor/operators so that _request can only be modified via by changing which
+    // op this is referencing or making a new reference to the same op.
+    WriteOp(const WriteOp& other) : _request(other._request), _index(other._index) {}
+    WriteOp(WriteOp&& other) : _request(other._request), _index(other._index) {}
+    WriteOp& operator=(const WriteOp& other) {
+        const_cast<BulkWriteCommandRequest&>(_request) = other._request;
+        _index = other._index;
+        return *this;
+    }
+    WriteOp& operator=(WriteOp&& other) {
+        const_cast<BulkWriteCommandRequest&>(_request) =
+            const_cast<BulkWriteCommandRequest&>(other._request);
+        _index = other._index;
+        return *this;
+    }
+    ~WriteOp() = default;
+
+    WriteOpId getId() const {
+        return _index;
     }
 
     const NamespaceString& getNss() const {
-        return _op.getNss();
+        return BatchItemRef(&_request, _index).getNss();
     }
 
     WriteType getType() const {
-        return WriteType(_op.getOpType());
+        return WriteType(BatchItemRef(&_request, _index).getOpType());
     }
 
     BatchItemRef getRef() const {
-        return _op;
+        return BatchItemRef(&_request, _index);
+    }
+
+    BulkWriteOpVariant getBulkWriteOp() const {
+        return _request.getOps()[_index];
     }
 
     bool isMulti() const {
-        return _op.isMulti();
+        return BatchItemRef(&_request, _index).isMulti();
     }
 
 private:
-    BatchItemRef _op;
+    const BulkWriteCommandRequest& _request;
+    int _index;
 };
 
 }  // namespace unified_write_executor

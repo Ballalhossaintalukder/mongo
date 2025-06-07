@@ -29,17 +29,17 @@
 
 #include "mongo/db/fts/unicode/string.h"
 
-#include <algorithm>
-#include <boost/algorithm/searching/boyer_moore.hpp>
-#include <boost/version.hpp>
-#include <utility>
-
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/fts/unicode/byte_vector.h"
 #include "mongo/platform/bits.h"
 #include "mongo/shell/linenoise_utf8.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <utility>
+
+#include <boost/algorithm/searching/boyer_moore.hpp>
+#include <boost/version.hpp>
 
 namespace mongo {
 namespace unicode {
@@ -89,11 +89,11 @@ void String::setData(const StringData utf8_src) {
     int result = 0;
     size_t resultSize = 0;
 
-    // Although utf8_src.rawData() is not guaranteed to be null-terminated, copyString8to32 won't
+    // Although utf8_src.data() is not guaranteed to be null-terminated, copyString8to32 won't
     // access bad memory because it is limited by the size of its output buffer, which is set to the
     // size of utf8_src.
     copyString8to32(&_data[0],
-                    reinterpret_cast<const unsigned char*>(&utf8_src.rawData()[0]),
+                    reinterpret_cast<const unsigned char*>(&utf8_src.data()[0]),
                     _data.size(),
                     resultSize,
                     result);
@@ -161,7 +161,7 @@ StringData String::caseFoldAndStripDiacritics(StackBufBuilder* buffer,
                                               SubstrMatchOptions options,
                                               CaseFoldMode mode) {
     // This fires if your input buffer the same as your output buffer.
-    invariant(buffer->buf() != utf8.rawData());
+    invariant(buffer->buf() != utf8.data());
 
     if ((options & kCaseSensitive) && (options & kDiacriticSensitive)) {
         // No transformation needed. Just return the input data unmodified.

@@ -28,6 +28,11 @@
  */
 
 
+#include <jsapi.h>
+#include <jscustomallocator.h>
+#include <jsfriendapi.h>
+#include <jspubtd.h>
+
 #include <absl/container/node_hash_map.h>
 #include <absl/meta/type_traits.h>
 #include <boost/move/utility_core.hpp>
@@ -55,17 +60,8 @@
 #include <js/TypeDecls.h>
 #include <js/Value.h>
 #include <js/friend/ErrorMessages.h>
-#include <jsapi.h>
-#include <jscustomallocator.h>
-#include <jsfriendapi.h>
-#include <jspubtd.h>
 #include <mozilla/Utf8.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <iostream>
-#include <memory>
-#include <mutex>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/config.h"  // IWYU pragma: keep
@@ -86,6 +82,11 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <algorithm>
+#include <iostream>
+#include <memory>
+#include <mutex>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
@@ -94,6 +95,7 @@ namespace mongo {
 namespace JSFiles {
 extern const JSFile types;
 extern const JSFile assert;
+extern const JSFile assert_global;
 }  // namespace JSFiles
 
 namespace mozjs {
@@ -588,6 +590,7 @@ MozJSImplScope::MozJSImplScope(MozJSScriptEngine* engine, boost::optional<int> j
         JS_FireOnNewGlobalObject(_context, _global);
 
         execSetup(JSFiles::assert);
+        execSetup(JSFiles::assert_global);
         execSetup(JSFiles::types);
 
         if (_engine->executionEnvironment() == ExecutionEnvironment::Server) {
@@ -840,7 +843,7 @@ BSONObj MozJSImplScope::callThreadArgs(const BSONObj& args) {
     auto firstElem = args.firstElement();
 
     // The first argument must be the thread start function
-    if (firstElem.type() != mongo::Code)
+    if (firstElem.type() != BSONType::code)
         uasserted(ErrorCodes::BadValue, "first thread argument must be a function");
 
     getScope(_context)->newFunction(firstElem.valueStringData(), &function);
@@ -1039,7 +1042,7 @@ bool MozJSImplScope::exec(StringData code,
 
         JS::SourceText<mozilla::Utf8Unit> srcBuf;
         bool success =
-            srcBuf.init(_context, code.rawData(), code.size(), JS::SourceOwnership::Borrowed);
+            srcBuf.init(_context, code.data(), code.size(), JS::SourceOwnership::Borrowed);
         if (_checkErrorState(success, reportError, assertOnError)) {
             return false;
         }

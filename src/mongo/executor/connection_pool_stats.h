@@ -29,19 +29,20 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <map>
-#include <string>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/executor/task_executor.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/histogram.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace executor {
@@ -75,7 +76,9 @@ struct ConnectionStatsPer {
                        size_t nRefreshed,
                        size_t nWasNeverUsed,
                        size_t nWasUsedOnce,
-                       Milliseconds nConnUsageTime);
+                       Milliseconds nConnUsageTime,
+                       size_t nRejectedConnectionsCount,
+                       size_t nPendingRequestsCount);
 
     ConnectionStatsPer();
 
@@ -92,6 +95,8 @@ struct ConnectionStatsPer {
     size_t wasNeverUsed = 0u;
     size_t wasUsedOnce = 0u;
     Milliseconds connUsageTime{0};
+    size_t rejectedRequests = 0u;
+    size_t pendingRequests = 0u;
     ConnectionWaitTimeHistogram acquisitionWaitTimes{};
 };
 
@@ -115,6 +120,8 @@ struct ConnectionPoolStats {
     size_t totalWasNeverUsed = 0u;
     size_t totalWasUsedOnce = 0u;
     Milliseconds totalConnUsageTime{0};
+    size_t totalRejectedRequests = 0u;
+    size_t totalPendingRequests = 0u;
 
     // The ShardingTaskExecutorPoolController::MatchingStrategy in use by this pool, if any.
     boost::optional<std::string> matchingStrategy;

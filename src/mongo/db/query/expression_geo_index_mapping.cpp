@@ -30,17 +30,6 @@
 
 #include "mongo/db/query/expression_geo_index_mapping.h"
 
-#include <algorithm>
-#include <memory>
-#include <s2cellid.h>
-#include <s2region.h>
-#include <s2regioncoverer.h>
-#include <set>
-#include <string>
-#include <unordered_set>
-#include <utility>
-
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/geo/r2_region_coverer.h"
@@ -50,7 +39,18 @@
 #include "mongo/db/query/interval.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
+#include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <s2cellid.h>
+#include <s2region.h>
+#include <s2regioncoverer.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -200,7 +200,7 @@ void ExpressionMapping::S2CellIdsToIntervalsWithParents(const std::vector<S2Cell
                                                         const S2IndexingParams& indexParams,
                                                         OrderedIntervalList* oilOut) {
     // There may be duplicates when going up parent cells if two cells share a parent
-    std::unordered_set<S2CellId> exactSet;  // NOLINT
+    stdx::unordered_set<S2CellId> exactSet;
     for (const S2CellId& interval : intervalSet) {
         S2CellId coveredCell = interval;
         // Look at the cells that cover us.  We want to look at every cell that contains the
