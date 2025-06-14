@@ -28,14 +28,7 @@
  */
 
 
-#include <boost/cstdint.hpp>
-#include <initializer_list>
-#include <ostream>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/resharding/resharding_donor_service.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -59,7 +52,6 @@
 #include "mongo/db/repl/storage_interface_mock.h"
 #include "mongo/db/s/resharding/resharding_change_event_o2_field_gen.h"
 #include "mongo/db/s/resharding/resharding_data_copy_util.h"
-#include "mongo/db/s/resharding/resharding_donor_service.h"
 #include "mongo/db/s/resharding/resharding_service_test_helpers.h"
 #include "mongo/db/s/resharding/resharding_test_util.h"
 #include "mongo/db/s/resharding/resharding_util.h"
@@ -77,6 +69,15 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <initializer_list>
+#include <ostream>
+#include <string>
+#include <utility>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -459,7 +460,7 @@ TEST_F(ReshardingDonorServiceTest, WritesNoOpOplogEntryOnReshardingBegin) {
     ASSERT_EQ(OpType_serializer(op.getOpType()), OpType_serializer(repl::OpTypeEnum::kNoop))
         << op.getEntry();
     ASSERT_EQ(*op.getUuid(), doc.getSourceUUID()) << op.getEntry();
-    ASSERT_EQ(op.getObject()["msg"].type(), BSONType::String) << op.getEntry();
+    ASSERT_EQ(op.getObject()["msg"].type(), BSONType::string) << op.getEntry();
     ASSERT_EQ(receivedChangeEvent, expectedChangeEvent);
     ASSERT_TRUE(op.getFromMigrate());
     ASSERT_FALSE(bool(op.getDestinedRecipient())) << op.getEntry();
@@ -495,7 +496,7 @@ TEST_F(ReshardingDonorServiceTest, WritesNoOpOplogEntryToGenerateMinFetchTimesta
     ASSERT_EQ(OpType_serializer(op.getOpType()), OpType_serializer(repl::OpTypeEnum::kNoop))
         << op.getEntry();
     ASSERT_FALSE(op.getUuid()) << op.getEntry();
-    ASSERT_EQ(op.getObject()["msg"].type(), BSONType::String) << op.getEntry();
+    ASSERT_EQ(op.getObject()["msg"].type(), BSONType::string) << op.getEntry();
     ASSERT_FALSE(bool(op.getObject2())) << op.getEntry();
     ASSERT_FALSE(bool(op.getDestinedRecipient())) << op.getEntry();
 }
@@ -530,7 +531,7 @@ TEST_F(ReshardingDonorServiceTest, WritesFinalReshardOpOplogEntriesWhileWritesBl
     ReshardBlockingWritesChangeEventO2Field expectedChangeEvent{
         doc.getSourceNss(),
         doc.getReshardingUUID(),
-        resharding::kReshardFinalOpLogType.toString(),
+        std::string{resharding::kReshardFinalOpLogType},
     };
 
     for (const auto& recipientShardId : doc.getRecipientShards()) {
@@ -544,7 +545,7 @@ TEST_F(ReshardingDonorServiceTest, WritesFinalReshardOpOplogEntriesWhileWritesBl
             << op.getEntry();
         ASSERT_EQ(op.getUuid(), doc.getSourceUUID()) << op.getEntry();
         ASSERT_EQ(op.getDestinedRecipient(), recipientShardId) << op.getEntry();
-        ASSERT_EQ(op.getObject()["msg"].type(), BSONType::String) << op.getEntry();
+        ASSERT_EQ(op.getObject()["msg"].type(), BSONType::string) << op.getEntry();
         ASSERT_TRUE(bool(op.getObject2())) << op.getEntry();
         ASSERT_EQ(receivedChangeEvent, expectedChangeEvent);
     }
@@ -1113,7 +1114,7 @@ TEST_F(ReshardingDonorServiceTest, AbortAfterStepUpWithAbortReasonFromCoordinato
             auto abortReason = persistedDonorDocument.getMutableState().getAbortReason();
             ASSERT(abortReason);
             ASSERT_EQ(abortReason->getIntField("code"), ErrorCodes::ReshardCollectionAborted);
-            ASSERT_EQ(abortReason->getStringField("errmsg").toString(), abortErrMsg);
+            ASSERT_EQ(abortReason->getStringField("errmsg"), abortErrMsg);
         }
 
         stepDown();
@@ -1179,13 +1180,118 @@ TEST_F(ReshardingDonorServiceTest, FailoverAfterDonorErrorsPriorToObtainingTimes
             auto abortReason = persistedDonorDocument.getMutableState().getAbortReason();
             ASSERT(abortReason);
             ASSERT_EQ(abortReason->getIntField("code"), ErrorCodes::InternalError);
-            ASSERT_EQ(abortReason->getStringField("errmsg").toString(),
+            ASSERT_EQ(abortReason->getStringField("errmsg"),
                       "Simulating an unrecoverable error for testing");
         }
 
         donor->abort(false);
         ASSERT_OK(donor->getCompletionFuture().getNoThrow());
     }
+}
+
+MONGO_FAIL_POINT_DEFINE(failFinishOpWithWCE);
+
+class ExternalStateForTestWCEOnRefresh : public ExternalStateForTest {
+public:
+    void refreshCollectionPlacementInfo(OperationContext* opCtx,
+                                        const NamespaceString& sourceNss) override {
+        if (MONGO_unlikely(failFinishOpWithWCE.shouldFail())) {
+            failFinishOpWithWCE.pauseWhileSet(opCtx);
+            uasserted(ErrorCodes::WriteConcernTimeout, "mock WCE");
+        }
+
+        uassertStatusOK(Status::OK());
+    }
+};
+
+class ReshardingDonorServiceWithWCEForTest : public ReshardingDonorServiceForTest {
+public:
+    explicit ReshardingDonorServiceWithWCEForTest(ServiceContext* serviceContext)
+        : ReshardingDonorServiceForTest(serviceContext), _serviceContext(serviceContext) {}
+
+    std::shared_ptr<PrimaryOnlyService::Instance> constructInstance(BSONObj initialState) override {
+        return std::make_shared<DonorStateMachine>(
+            this,
+            ReshardingDonorDocument::parse(IDLParserContext{"ReshardingDonorServiceForTest"},
+                                           initialState),
+            std::make_unique<ExternalStateForTestWCEOnRefresh>(),
+            _serviceContext);
+    }
+
+private:
+    ServiceContext* _serviceContext;
+};
+
+class ReshardingDonorServiceTestWithWCE : public ReshardingDonorServiceTest {
+public:
+    std::unique_ptr<repl::PrimaryOnlyService> makeService(ServiceContext* serviceContext) override {
+        return std::make_unique<ReshardingDonorServiceWithWCEForTest>(serviceContext);
+    }
+
+    void setUp() override {
+        ReshardingDonorServiceTest::setUp();
+    }
+};
+
+TEST_F(ReshardingDonorServiceTestWithWCE,
+       RetryOnWCEAfterCriticalSectionDoesNotResetCriticalSectionTime) {
+    // No need to test this with all options
+    auto testOptions = makeAllTestOptions()[0];
+
+    auto doc = makeStateDocument(testOptions);
+    auto opCtx = makeOperationContext();
+
+    createSourceCollection(opCtx.get(), doc);
+
+    DonorStateMachine::insertStateDocument(opCtx.get(), doc);
+
+    auto donor = DonorStateMachine::getOrCreate(opCtx.get(), _service, doc.toBSON());
+
+    notifyToStartChangeStreamsMonitor(opCtx.get(), *donor, doc);
+    notifyRecipientsDoneCloning(opCtx.get(), *donor, doc);
+    notifyToStartBlockingWrites(opCtx.get(), *donor, doc);
+    awaitDonorState(opCtx.get(), doc.getReshardingUUID(), DonorStateEnum::kBlockingWrites);
+
+    // At this point we've entered the critical section. Turn on the failpoint to force a
+    // WriteConcernError on the refresh that occurs after transitioning to "done".
+    auto timesEntered = failFinishOpWithWCE.setMode(FailPoint::alwaysOn);
+
+    // We'll compare the critical section elapsed time to ensure that the end time for the critical
+    // section will not be reset on the retry due to the WriteConcernError. Sleep for 1 second now
+    // to ensure the critical section elapsed time is greater than 0 (since nothing is really
+    // happening in this unit test this would otherwise happen nearly instantaneously).
+    sleepsecs(1);
+
+    awaitChangeStreamsMonitorCompleted(opCtx.get(), *donor, doc);
+    notifyReshardingCommitting(opCtx.get(), *donor, doc);
+    awaitDonorState(opCtx.get(), doc.getReshardingUUID(), DonorStateEnum::kDone);
+
+    // Wait until we're in the refresh function to ensure we've set the critical section end time.
+    // Then, run currentOp and get the elapsed time.
+    failFinishOpWithWCE.waitForTimesEntered(timesEntered + 1);
+    auto currOp =
+        donor->reportForCurrentOp(MongoProcessInterface::CurrentOpConnectionsMode::kExcludeIdle,
+                                  MongoProcessInterface::CurrentOpSessionsMode::kExcludeIdle);
+    auto elapsedCritSecTime = currOp->getIntField("totalCriticalSectionTimeElapsedSecs");
+
+    // Sleep for 1 more second before turning off the failpoint and throwing the WriteConcernError.
+    // This will allow us to assert that despite the extra time (the faked 1 second) that the retry
+    // causes, that the critical section elapsed time remains the same.
+    sleepsecs(1);
+    failFinishOpWithWCE.setMode(FailPoint::off);
+
+    // Assert the operation successfully completes despite the WriteConcernError.
+    ASSERT_OK(donor->getCompletionFuture().getNoThrow());
+    checkStateDocumentRemoved(opCtx.get());
+
+    auto currOpAfterFinish =
+        donor->reportForCurrentOp(MongoProcessInterface::CurrentOpConnectionsMode::kExcludeIdle,
+                                  MongoProcessInterface::CurrentOpSessionsMode::kExcludeIdle);
+    auto elapsedCritSecTimeAfterFinish =
+        currOpAfterFinish->getIntField("totalCriticalSectionTimeElapsedSecs");
+
+    // Assert the critical section elapsed time is unchanged even after the retry.
+    ASSERT_EQ(elapsedCritSecTime, elapsedCritSecTimeAfterFinish);
 }
 
 }  // namespace

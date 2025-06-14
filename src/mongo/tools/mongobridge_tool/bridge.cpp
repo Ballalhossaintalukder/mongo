@@ -28,18 +28,6 @@
  */
 
 
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
@@ -87,6 +75,18 @@
 #include "mongo/util/text.h"  // IWYU pragma: keep
 #include "mongo/util/time_support.h"
 
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kBridge
 
 
@@ -103,7 +103,7 @@ boost::optional<HostAndPort> extractHostInfo(const OpMsgRequest& request) {
     }
 
     if (auto hostInfoElem = request.body["hostInfo"]) {
-        if (hostInfoElem.type() == String) {
+        if (hostInfoElem.type() == BSONType::string) {
             return HostAndPort{hostInfoElem.valueStringData()};
         }
     }
@@ -224,7 +224,7 @@ public:
         }
 
         if (auto hostInfoElem = request.body["hostInfo"]) {
-            if (hostInfoElem.type() == String) {
+            if (hostInfoElem.type() == BSONType::string) {
                 _host = HostAndPort{hostInfoElem.valueStringData()};
             }
         }

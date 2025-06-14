@@ -27,6 +27,8 @@
  *    it in the license file.
  */
 
+#include "mongo/db/s/resharding/resharding_change_streams_monitor.h"
+
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/create_collection.h"
@@ -41,7 +43,6 @@
 #include "mongo/db/repl/oplog_entry.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
 #include "mongo/db/s/resharding/resharding_change_event_o2_field_gen.h"
-#include "mongo/db/s/resharding/resharding_change_streams_monitor.h"
 #include "mongo/db/s/resharding/resharding_test_util.h"
 #include "mongo/db/s/resharding/resharding_util.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
@@ -70,6 +71,9 @@ const StringData kDefaultExecutorDescriptionSuffix = "Default";
 
 class ReshardingChangeStreamsMonitorTest : public ShardServerTestFixtureWithCatalogCacheMock {
 public:
+    ReshardingChangeStreamsMonitorTest()
+        : ShardServerTestFixtureWithCatalogCacheMock(Options{}.useReplSettings(true)) {}
+
     void setUp() override {
         ShardServerTestFixtureWithCatalogCacheMock::setUp();
 
@@ -311,7 +315,7 @@ public:
     void insertDonorFinalEventNoopOplogEntry(const NamespaceString& sourceNss) {
         auto msg = BSON("msg" << "Writes to {} are temporarily blocked for resharding");
         ReshardBlockingWritesChangeEventO2Field o2Field{
-            sourceNss, UUID::gen(), resharding::kReshardFinalOpLogType.toString()};
+            sourceNss, UUID::gen(), std::string{resharding::kReshardFinalOpLogType}};
         insertNoopOplogEntry(sourceNss, msg, o2Field.toBSON());
     }
 

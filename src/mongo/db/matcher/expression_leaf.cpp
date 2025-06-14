@@ -31,10 +31,6 @@
 #include <boost/numeric/conversion/converter_policies.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cmath>
-#include <memory>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement_comparator.h"
 #include "mongo/bson/bsonmisc.h"
@@ -51,6 +47,10 @@
 #include "mongo/util/pcre.h"
 #include "mongo/util/pcre_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
 
 namespace mongo {
 
@@ -130,7 +130,7 @@ ComparisonMatchExpression::ComparisonMatchExpression(MatchType type,
                                     std::move(annotation),
                                     collator) {
     uassert(
-        ErrorCodes::BadValue, "cannot compare to undefined", _rhs.type() != BSONType::Undefined);
+        ErrorCodes::BadValue, "cannot compare to undefined", _rhs.type() != BSONType::undefined);
 
     switch (matchType()) {
         case LT:
@@ -174,8 +174,8 @@ RegexMatchExpression::RegexMatchExpression(boost::optional<StringData> path,
                                            StringData options,
                                            clonable_ptr<ErrorAnnotation> annotation)
     : LeafMatchExpression(REGEX, path, std::move(annotation)),
-      _regex(regex.toString()),
-      _flags(options.toString()),
+      _regex(std::string{regex}),
+      _flags(std::string{options}),
       _re(makeRegex(_regex, _flags)) {
 
     uassert(ErrorCodes::BadValue,

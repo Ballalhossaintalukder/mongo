@@ -28,6 +28,7 @@
  */
 #include "mongo/db/pipeline/search/document_source_internal_search_id_lookup.h"
 
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/document_source_internal_shard_filter.h"
 #include "mongo/db/pipeline/document_source_limit.h"
@@ -50,6 +51,7 @@ DocumentSourceInternalSearchIdLookUp::DocumentSourceInternalSearchIdLookUp(
     ExecShardFilterPolicy shardFilterPolicy,
     boost::optional<std::vector<BSONObj>> viewPipeline)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _limit(limit),
       _shardFilterPolicy(shardFilterPolicy),
       _viewPipeline(viewPipeline ? Pipeline::parse(*viewPipeline, pExpCtx) : nullptr) {
@@ -67,7 +69,7 @@ intrusive_ptr<DocumentSource> DocumentSourceInternalSearchIdLookUp::createFromBs
             str::stream() << "The " << kStageName
                           << " stage specification must be an object, found "
                           << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     auto searchIdLookupSpec =
         DocumentSourceIdLookupSpec::parse(IDLParserContext(kStageName), elem.embeddedObject());
@@ -157,16 +159,17 @@ DocumentSource::GetNextResult DocumentSourceInternalSearchIdLookUp::doGetNext() 
             pipeline =
                 pExpCtx->getMongoProcessInterface()->attachCursorSourceToPipelineForLocalRead(
                     pipeline.release(), boost::none, false, _shardFilterPolicy);
-
-            result = pipeline->getNext();
-            if (auto next = pipeline->getNext()) {
+            auto execPipeline =
+                exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+            result = execPipeline->getNext();
+            if (auto next = execPipeline->getNext()) {
                 uasserted(ErrorCodes::TooManyMatchingDocuments,
                           str::stream() << "found more than one document with document key "
                                         << documentKey.toString() << ": [" << result->toString()
                                         << ", " << next->toString() << "]");
             }
 
-            pipeline->accumulatePipelinePlanSummaryStats(_stats.planSummaryStats);
+            execPipeline->accumulatePlanSummaryStats(_stats.planSummaryStats);
         }
     }
 
@@ -181,7 +184,7 @@ DocumentSource::GetNextResult DocumentSourceInternalSearchIdLookUp::doGetNext() 
 }
 
 const char* DocumentSourceInternalSearchIdLookUp::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Pipeline::SourceContainer::iterator DocumentSourceInternalSearchIdLookUp::doOptimizeAt(

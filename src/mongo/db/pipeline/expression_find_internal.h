@@ -33,9 +33,6 @@
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -47,6 +44,9 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+#include <utility>
 
 namespace mongo {
 /**
@@ -84,7 +84,7 @@ public:
                                    Variables::Id renamingVar = Variables::kRootId) const final {
         // The positional projection can change any field within the path it's applied to, so we'll
         // treat the first component in '_positionalInfo.path' as the computed path.
-        return {{_path.front().toString()}, {}};
+        return {{std::string{_path.front()}}, {}};
     }
 
     boost::intrusive_ptr<Expression> optimize() final {
@@ -152,7 +152,7 @@ public:
                                    Variables::Id renamingVar = Variables::kRootId) const final {
         // The $slice projection can change any field within the path it's applied to, so we'll
         // treat the first component in '_sliceInfo.path' as the computed path.
-        return {{_path.front().toString()}, {}};
+        return {{std::string{_path.front()}}, {}};
     }
 
     boost::intrusive_ptr<Expression> optimize() final {

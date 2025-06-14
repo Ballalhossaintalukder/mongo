@@ -29,15 +29,6 @@
 
 #include "mongo/db/repl/storage_interface_impl.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <limits>
-#include <mutex>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -111,6 +102,15 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <limits>
+#include <mutex>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -261,78 +261,45 @@ StorageInterfaceImpl::createCollectionForBulkLoading(
         .setFlags(DocumentValidationSettings::kDisableSchemaValidation |
                   DocumentValidationSettings::kDisableInternalValidation);
 
-    std::unique_ptr<CollectionBulkLoader> loader;
     // Retry if WCE.
-    Status status = writeConflictRetry(opCtx.get(), "beginCollectionClone", nss, [&] {
-        UnreplicatedWritesBlock uwb(opCtx.get());
+    auto loader = writeConflictRetry(
+        opCtx.get(),
+        "beginCollectionClone",
+        nss,
+        [&]() -> StatusWith<std::unique_ptr<CollectionBulkLoaderImpl>> {
+            UnreplicatedWritesBlock uwb(opCtx.get());
 
-        // Get locks and create the collection.
-        AutoGetDb autoDb(opCtx.get(), nss.dbName(), MODE_IX);
-        AutoGetCollection coll(opCtx.get(), nss, MODE_X);
-        if (coll) {
-            return Status(ErrorCodes::NamespaceExists,
-                          str::stream()
-                              << "Collection " << nss.toStringForErrorMsg() << " already exists.");
-        }
-        {
-            // Create the collection.
-            WriteUnitOfWork wunit(opCtx.get());
-            auto db = autoDb.ensureDbExists(opCtx.get());
-            fassert(40332, db->createCollection(opCtx.get(), nss, options, false));
-            wunit.commit();
-        }
-
-        // Build empty capped indexes.  Capped indexes cannot be built by the MultiIndexBlock
-        // because the cap might delete documents off the back while we are inserting them into
-        // the front.
-        if (options.capped) {
-            WriteUnitOfWork wunit(opCtx.get());
-            CollectionWriter collWriter{opCtx.get(), coll};
-            if (!idIndexSpec.isEmpty()) {
-                auto status = collWriter.getWritableCollection(opCtx.get())
-                                  ->getIndexCatalog()
-                                  ->createIndexOnEmptyCollection(
-                                      opCtx.get(),
-                                      collWriter.getWritableCollection(opCtx.get()),
-                                      idIndexSpec);
-                if (!status.getStatus().isOK()) {
-                    return status.getStatus();
-                }
+            // Get locks and create the collection.
+            AutoGetDb autoDb(opCtx.get(), nss.dbName(), MODE_IX);
+            AutoGetCollection coll(opCtx.get(), nss, MODE_X);
+            if (coll) {
+                return Status(ErrorCodes::NamespaceExists,
+                              str::stream() << "Collection " << nss.toStringForErrorMsg()
+                                            << " already exists.");
             }
-            for (auto&& spec : secondaryIndexSpecs) {
-                auto status =
-                    collWriter.getWritableCollection(opCtx.get())
-                        ->getIndexCatalog()
-                        ->createIndexOnEmptyCollection(
-                            opCtx.get(), collWriter.getWritableCollection(opCtx.get()), spec);
-                if (!status.getStatus().isOK()) {
-                    return status.getStatus();
-                }
+            {
+                // Create the collection.
+                WriteUnitOfWork wunit(opCtx.get());
+                auto db = autoDb.ensureDbExists(opCtx.get());
+                fassert(40332, db->createCollection(opCtx.get(), nss, options, false));
+                wunit.commit();
             }
-            wunit.commit();
+
+            // Instantiate the CollectionBulkLoader here so that it acquires the same MODE_X lock
+            // we've used in this scope. The BulkLoader will manage an AutoGet of its own to control
+            // the lifetime of the lock. This is safe to do as we're in the initial sync phase and
+            // the node isn't yet available to users.
+            return std::make_unique<CollectionBulkLoaderImpl>(
+                Client::releaseCurrent(), std::move(opCtx), nss);
+        });
+
+    if (loader.isOK()) {
+        if (auto status = loader.getValue()->init(idIndexSpec, secondaryIndexSpecs);
+            !status.isOK()) {
+            return status;
         }
-
-        // Instantiate the CollectionBulkLoader here so that it acquires the same MODE_X lock we've
-        // used in this scope. The BulkLoader will manage an AutoGet of its own to control the
-        // lifetime of the lock. This is safe to do as we're in the initial sync phase and the node
-        // isn't yet available to users.
-        loader =
-            std::make_unique<CollectionBulkLoaderImpl>(Client::releaseCurrent(),
-                                                       std::move(opCtx),
-                                                       nss,
-                                                       options.capped ? BSONObj() : idIndexSpec);
-        return Status::OK();
-    });
-
-    if (!status.isOK()) {
-        return status;
     }
-
-    status = loader->init(options.capped ? std::vector<BSONObj>() : secondaryIndexSpecs);
-    if (!status.isOK()) {
-        return status;
-    }
-    return {std::move(loader)};
+    return loader;
 }
 
 Status StorageInterfaceImpl::insertDocument(OperationContext* opCtx,
@@ -1380,30 +1347,41 @@ Timestamp StorageInterfaceImpl::getLatestOplogTimestamp(OperationContext* opCtx)
 
 StatusWith<StorageInterface::CollectionSize> StorageInterfaceImpl::getCollectionSize(
     OperationContext* opCtx, const NamespaceString& nss) {
-    AutoGetCollectionForRead autoColl(opCtx, nss);
+    const auto coll =
+        acquireCollection(opCtx,
+                          CollectionAcquisitionRequest(nss,
+                                                       PlacementConcern::kPretendUnsharded,
+                                                       repl::ReadConcernArgs::get(opCtx),
+                                                       AcquisitionPrerequisites::kRead),
+                          MODE_IS);
 
-    auto collectionResult =
-        getCollection(autoColl, nss, "Unable to get total size of documents in collection.");
-    if (!collectionResult.isOK()) {
-        return collectionResult.getStatus();
+    if (!coll.exists()) {
+        return {
+            ErrorCodes::NamespaceNotFound,
+            str::stream() << "Collection [" << nss.toStringForErrorMsg()
+                          << "] not found. Unable to get total size of documents in collection."};
     }
-    const auto& collection = *collectionResult.getValue();
 
-    return collection->dataSize(opCtx);
+    return coll.getCollectionPtr()->dataSize(opCtx);
 }
 
 StatusWith<StorageInterface::CollectionCount> StorageInterfaceImpl::getCollectionCount(
     OperationContext* opCtx, const NamespaceStringOrUUID& nsOrUUID) {
-    AutoGetCollectionForRead autoColl(opCtx, nsOrUUID);
+    const auto coll =
+        acquireCollection(opCtx,
+                          CollectionAcquisitionRequest(nsOrUUID,
+                                                       PlacementConcern::kPretendUnsharded,
+                                                       repl::ReadConcernArgs::get(opCtx),
+                                                       AcquisitionPrerequisites::kRead),
+                          MODE_IS);
 
-    auto collectionResult =
-        getCollection(autoColl, nsOrUUID, "Unable to get number of documents in collection.");
-    if (!collectionResult.isOK()) {
-        return collectionResult.getStatus();
+    if (!coll.exists()) {
+        return {ErrorCodes::NamespaceNotFound,
+                str::stream() << "Collection [" << nsOrUUID.toStringForErrorMsg()
+                              << "] not found. Unable to get number of documents in collection."};
     }
-    const auto& collection = *collectionResult.getValue();
 
-    return collection->numRecords(opCtx);
+    return coll.getCollectionPtr()->numRecords(opCtx);
 }
 
 Status StorageInterfaceImpl::setCollectionCount(OperationContext* opCtx,
@@ -1428,17 +1406,22 @@ Status StorageInterfaceImpl::setCollectionCount(OperationContext* opCtx,
 
 StatusWith<UUID> StorageInterfaceImpl::getCollectionUUID(OperationContext* opCtx,
                                                          const NamespaceString& nss) {
-    AutoGetCollectionForRead autoColl(opCtx, nss);
+    const auto coll =
+        acquireCollection(opCtx,
+                          CollectionAcquisitionRequest(nss,
+                                                       PlacementConcern::kPretendUnsharded,
+                                                       repl::ReadConcernArgs::get(opCtx),
+                                                       AcquisitionPrerequisites::kRead),
+                          MODE_IS);
 
-    auto collectionResult = getCollection(
-        autoColl,
-        nss,
-        str::stream() << "Unable to get UUID of " << nss.toStringForErrorMsg() << " collection.");
-    if (!collectionResult.isOK()) {
-        return collectionResult.getStatus();
+    if (!coll.exists()) {
+        return {ErrorCodes::NamespaceNotFound,
+                str::stream() << "Collection [" << nss.toStringForErrorMsg()
+                              << "] not found. Unable to get UUID of " << nss.toStringForErrorMsg()
+                              << " collection."};
     }
-    const auto& collection = *collectionResult.getValue();
-    return collection->uuid();
+
+    return coll.uuid();
 }
 
 void StorageInterfaceImpl::setStableTimestamp(ServiceContext* serviceCtx,
@@ -1518,8 +1501,7 @@ void StorageInterfaceImpl::initializeStorageControlsForReplication(
     // oplog history deletion, in which case we need to start the thread to
     // periodically execute deletion via oplog truncate markers. OplogTruncateMarkers are a
     // replacement for capped collection deletion of the oplog collection history.
-    if (serviceCtx->getStorageEngine()->supportsOplogTruncateMarkers() &&
-        !ReplSettings::shouldSkipOplogSampling()) {
+    if (!ReplSettings::shouldSkipOplogSampling()) {
         auto maintainerThread = OplogCapMaintainerThread::get(serviceCtx);
         maintainerThread->start();
     }

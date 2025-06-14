@@ -146,18 +146,6 @@ const internalCommandsMap = {
         testname: "_configsvrCommitChunkSplit",
         command: {_configsvrCommitChunkSplit: "x.y"},
     },
-    _configsvrCommitIndex: {
-        testname: "_configsvrCommitIndex",
-        command: {
-            _configsvrCommitIndex: "x.y",
-            keyPattern: {x: 1},
-            name: 'x_1',
-            options: {},
-            collectionUUID: UUID(),
-            collectionIndexUUID: UUID(),
-            lastmod: Timestamp(1, 0),
-        },
-    },
     _configsvrCommitRefineCollectionShardKey: {
         testname: "_configsvrCommitRefineCollectionShardKey",
         command: {
@@ -183,15 +171,6 @@ const internalCommandsMap = {
     _configsvrCreateDatabase: {
         testname: "_configsvrCreateDatabase",
         command: {_configsvrCreateDatabase: "test.x", primaryShardId: ""},
-    },
-    _configsvrDropIndexCatalogEntry: {
-        testname: "_configsvrDropIndexCatalogEntry",
-        command: {
-            _configsvrDropIndexCatalogEntry: "x.y",
-            name: 'x_1',
-            collectionUUID: UUID(),
-            lastmod: Timestamp(1, 0),
-        },
     },
     _configsvrCheckClusterMetadataConsistency: {
         testname: "_configsvrCheckClusterMetadataConsistency",
@@ -417,6 +396,16 @@ const internalCommandsMap = {
         command:
             {_refreshQueryAnalyzerConfiguration: 1, name: "test", numQueriesExecutedPerSecond: 1},
     },
+    internalRenameIfOptionsAndIndexesMatch: {
+        testname: "internalRenameIfOptionsAndIndexesMatch",
+        command: {
+            internalRenameIfOptionsAndIndexesMatch: 1,
+            from: "test.collection",
+            to: "db.collection_renamed",
+            collectionOptions: {},
+            indexes: [],
+        },
+    },
     _shardsvrAbortReshardCollection: {
         testname: "_shardsvrAbortReshardCollection",
         command: {_shardsvrAbortReshardCollection: UUID(), userCanceled: true},
@@ -479,30 +468,6 @@ const internalCommandsMap = {
         testname: "_shardsvrConvertToCapped",
         command: {_shardsvrConvertToCapped: 'test', size: 0},
     },
-    _shardsvrRegisterIndex: {
-        testname: "_shardsvrRegisterIndex",
-        command: {
-            _shardsvrRegisterIndex: ns,
-            keyPattern: {x: 1},
-            options: {},
-            name: 'x_1',
-            collectionUUID: UUID(),
-            indexCollectionUUID: UUID(),
-            lastmod: Timestamp(0, 0),
-            writeConcern: {w: 'majority'}
-        },
-    },
-    _shardsvrCommitIndexParticipant: {
-        testname: "_shardsvrCommitIndexParticipant",
-        command: {
-            _shardsvrCommitIndexParticipant: "x.y",
-            name: 'x_1',
-            keyPattern: {x: 1},
-            options: {},
-            collectionUUID: UUID(),
-            lastmod: Timestamp(1, 0),
-        },
-    },
     _shardsvrCommitReshardCollection: {
         testname: "_shardsvrCommitReshardCollection",
         command: {
@@ -560,15 +525,6 @@ const internalCommandsMap = {
         testname: "_shardsvrDropCollectionParticipant",
         command: {
             _shardsvrDropCollectionParticipant: "x.y",
-        },
-    },
-    _shardsvrDropIndexCatalogEntryParticipant: {
-        testname: "_shardsvrDropIndexCatalogEntryParticipant",
-        command: {
-            _shardsvrDropIndexCatalogEntryParticipant: "x.y",
-            name: 'x_1',
-            collectionUUID: UUID(),
-            lastmod: Timestamp(1, 0),
         },
     },
     _shardsvrDropIndexes: {
@@ -653,6 +609,7 @@ const internalCommandsMap = {
         testname: "_shardsvrMoveRange",
         command: {
             _shardsvrMoveRange: "test.view",
+            collectionTimestamp: Timestamp(1, 0),
             fromShard: shard0name,
             toShard: "shard0001",
             maxChunkSizeBytes: NumberInt(100)
@@ -687,8 +644,6 @@ const internalCommandsMap = {
         testname: "_shardsvrRenameIndexMetadata",
         command: {
             _shardsvrRenameIndexMetadata: "test.collection",
-            toNss: ns,
-            indexVersion: {uuid: UUID(), version: Timestamp()},
         },
     },
     _shardsvrDropDatabase: {
@@ -782,15 +737,6 @@ const internalCommandsMap = {
         testname: "_shardsvrParticipantBlock",
         command: {
             _shardsvrParticipantBlock: "x.y",
-        },
-    },
-    _shardsvrUnregisterIndex: {
-        testname: "_shardsvrUnregisterIndex",
-        command: {
-            _shardsvrUnregisterIndex: "x.y",
-            name: 'x_1',
-            collectionUUID: UUID(),
-            lastmod: Timestamp(1, 0),
         },
     },
     _shardsvrUntrackUnsplittableCollection: {
@@ -913,6 +859,11 @@ function runAuthorizationTestsOnAllInternalCommands(conn, firstDb, secondDb, col
     let fails = [];
     const availableCommandsList =
         AllCommandsTest.checkCommandCoverage(conn, internalCommandsMap, function(cmdName) {
+            // TODO(SERVER-104891): Remove this once this command is _renameIfOptionsAndIndexesMatch
+            if (cmdName == "internalRenameIfOptionsAndIndexesMatch") {
+                return false;
+            }
+
             return !cmdName.startsWith('_') || testOnlyCommandsSet.hasOwnProperty(cmdName);
         });
     for (const commandName of availableCommandsList) {

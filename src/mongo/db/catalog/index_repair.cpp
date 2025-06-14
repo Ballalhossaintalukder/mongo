@@ -29,13 +29,6 @@
 
 #include "mongo/db/catalog/index_repair.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <string>
-
-#include <boost/none.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -63,6 +56,13 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace index_repair {
@@ -163,12 +163,14 @@ int repairMissingIndexEntry(OperationContext* opCtx,
     InsertDeleteOptions options;
     options.dupsAllowed = !index->descriptor()->unique();
     int64_t numInserted = 0;
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
 
     Status insertStatus = Status::OK();
     writeConflictRetry(opCtx, "insertingMissingIndexEntries", nss, [&] {
         WriteUnitOfWork wunit(opCtx);
         insertStatus =
             accessMethod->insertKeysAndUpdateMultikeyPaths(opCtx,
+                                                           ru,
                                                            coll,
                                                            index,
                                                            {ks},
@@ -228,7 +230,7 @@ int repairMissingIndexEntry(OperationContext* opCtx,
                     writeConflictRetry(opCtx, "insertingMissingIndexEntries", nss, [&] {
                         WriteUnitOfWork wunit(opCtx);
                         insertStatus = accessMethod->insertKeysAndUpdateMultikeyPaths(
-                            opCtx, coll, index, {ks}, {}, {}, options, nullptr, nullptr);
+                            opCtx, ru, coll, index, {ks}, {}, {}, options, nullptr, nullptr);
                         wunit.commit();
                     });
                     if (!insertStatus.isOK()) {

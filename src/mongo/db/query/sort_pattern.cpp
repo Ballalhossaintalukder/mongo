@@ -28,11 +28,7 @@
  */
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <string>
+#include "mongo/db/query/sort_pattern.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -43,7 +39,14 @@
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_dependencies.h"
 #include "mongo/db/pipeline/variables.h"
-#include "mongo/db/query/sort_pattern.h"
+#include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -55,15 +58,6 @@ static const StringDataSet kValidMetaSorts{"textScore"_sd,
                                            "searchScore"_sd,
                                            "vectorSearchScore"_sd,
                                            "score"_sd};
-
-bool isSupportedMetaSort(const boost::intrusive_ptr<ExpressionContext>& expCtx, StringData name) {
-    if (name == "searchScore"_sd || name == "vectorSearchScore"_sd || name == "score"_sd) {
-        expCtx->throwIfFeatureFlagIsNotEnabledOnFCV(
-            "sorting by searchScore, vectorSearchScore, or score",
-            feature_flags::gFeatureFlagRankFusionFull);
-    }
-    return kValidMetaSorts.contains(name);
-}
 
 boost::intrusive_ptr<ExpressionMeta> parseMetaExpression(
     const BSONObj& metaDoc, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
@@ -80,9 +74,15 @@ boost::intrusive_ptr<ExpressionMeta> parseMetaExpression(
 
     const auto metaName = metaElem.valueStringDataSafe();
 
-    if (!isSupportedMetaSort(expCtx, metaName)) {
-        uasserted(31138, str::stream() << "Illegal $meta sort: " << metaElem);
+    if (metaName == "searchScore"_sd || metaName == "vectorSearchScore"_sd ||
+        metaName == "score"_sd) {
+        expCtx->ignoreFeatureInParserOrRejectAndThrow(
+            "Sorting by searchScore, vectorSearchScore, or score",
+            feature_flags::gFeatureFlagRankFusionFull);
     }
+    uassert(31138,
+            str::stream() << "Illegal $meta sort: " << metaElem,
+            kValidMetaSorts.contains(metaName));
 
     VariablesParseState vps = expCtx->variablesParseState;
     return static_cast<ExpressionMeta*>(ExpressionMeta::parse(expCtx.get(), metaElem, vps).get());
@@ -96,7 +96,7 @@ SortPattern::SortPattern(const BSONObj& obj,
 
         SortPatternPart patternPart;
 
-        if (keyField.type() == BSONType::Object) {
+        if (keyField.type() == BSONType::object) {
             patternPart.expression = parseMetaExpression(keyField.Obj(), expCtx);
 
             // If sorting by any metadata, sort highest scores first. Note this is weird for

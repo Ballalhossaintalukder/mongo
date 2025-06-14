@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <sstream>
-#include <string>
-#include <wiredtiger.h>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -42,7 +36,7 @@
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_event_handler.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_global_options_gen.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/logv2/log_severity.h"
 #include "mongo/unittest/death_test.h"
@@ -50,7 +44,17 @@
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/clock_source.h"
+#include "mongo/util/processinfo.h"
 #include "mongo/util/system_clock_source.h"
+
+#include <memory>
+#include <sstream>
+#include <string>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -68,7 +72,8 @@ public:
         ss << extraStrings;
         std::string config = ss.str();
         _fastClockSource = std::make_unique<SystemClockSource>();
-        int ret = wiredtiger_open(dbpath.toString().c_str(), eventHandler, config.c_str(), &_conn);
+        int ret =
+            wiredtiger_open(std::string{dbpath}.c_str(), eventHandler, config.c_str(), &_conn);
         ASSERT_OK(wtRCToStatus(ret, nullptr));
         ASSERT(_conn);
     }
@@ -94,7 +99,9 @@ public:
         : _connectionTest(_dbpath.path(),
                           extraStrings,
                           eventHandler == nullptr ? nullptr : eventHandler->getWtEventHandler()),
-          _connection(_connectionTest.getConnection(), _connectionTest.getClockSource()) {}
+          _connection(_connectionTest.getConnection(),
+                      _connectionTest.getClockSource(),
+                      /*sessionCacheMax=*/33000) {}
 
     WiredTigerConnection* getConnection() {
         return &_connection;
@@ -225,7 +232,7 @@ TEST_F(WiredTigerUtilMetadataTest, GetApplicationMetadataTypes) {
     const BSONObj& obj = result.getValue();
 
     BSONElement stringElement = obj.getField("stringkey");
-    ASSERT_EQUALS(mongo::String, stringElement.type());
+    ASSERT_EQUALS(BSONType::string, stringElement.type());
     ASSERT_EQUALS("abc", stringElement.String());
 
     BSONElement boolElement1 = obj.getField("boolkey1");
@@ -237,7 +244,7 @@ TEST_F(WiredTigerUtilMetadataTest, GetApplicationMetadataTypes) {
     ASSERT_FALSE(boolElement2.boolean());
 
     BSONElement identifierElement = obj.getField("idkey");
-    ASSERT_EQUALS(mongo::String, identifierElement.type());
+    ASSERT_EQUALS(BSONType::string, identifierElement.type());
     ASSERT_EQUALS("def", identifierElement.String());
 
     BSONElement numberElement = obj.getField("numkey");
@@ -245,7 +252,7 @@ TEST_F(WiredTigerUtilMetadataTest, GetApplicationMetadataTypes) {
     ASSERT_EQUALS(123, numberElement.numberInt());
 
     BSONElement structElement = obj.getField("structkey");
-    ASSERT_EQUALS(mongo::String, structElement.type());
+    ASSERT_EQUALS(BSONType::string, structElement.type());
     ASSERT_EQUALS("(k1=v2,k2=v2)", structElement.String());
 }
 
@@ -741,110 +748,6 @@ TEST(WiredTigerConfigParserTest, IsTableLoggingEnabled) {
         assertGetEnabled("log=(enabled=false,enabled=true),log=(enabled=true,enabled=false)"));
 }
 
-TEST(WiredTigerConfigParserTest, IsTableLoggingSettingValid) {
-    ASSERT(WiredTigerConfigParser("log=(enabled=true)").isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false)").isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("a=123,log=(enabled=true)").isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("a=123,log=(enabled=false)").isTableLoggingSettingValid());
-
-    // Ignore non-struct "log" values.
-    ASSERT(WiredTigerConfigParser("log=123").isTableLoggingSettingValid());
-
-    // No "log" key.
-    ASSERT(WiredTigerConfigParser("x=y").isTableLoggingSettingValid());
-
-    // Every "log" key only honors the last "enabled" subkey.
-    ASSERT(WiredTigerConfigParser("log=(enabled=true),log=(enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("a=123,log=(enabled=true),log=(enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=true),log=(enabled=true),log=(enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser(
-               "log=(enabled=true),log=(enabled=true),log=(,remove=false,enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false),log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("a=123,log=(enabled=false),log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false),log=(enabled=false),log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser(
-               "log=(enabled=false),log=(remove=false,enabled=false),log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false,enabled=true),log=(remove=false,enabled="
-                                  "false,enabled=true),log=(enabled=false,enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=true,enabled=false),log=(remove=false,enabled=true,"
-                                  "enabled=false),log=(enabled=true,enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT_FALSE(
-        WiredTigerConfigParser("log=(enabled=true,enabled=false),log=(remove=false,enabled=false,"
-                               "enabled=true),log=(enabled=false,enabled=true)")
-            .isTableLoggingSettingValid());
-    ASSERT_FALSE(
-        WiredTigerConfigParser("log=(enabled=false,enabled=true),log=(remove=false,enabled=true,"
-                               "enabled=false),log=(enabled=true,enabled=false)")
-            .isTableLoggingSettingValid());
-
-    // Keys with "log" suffixes should be ignored.
-    ASSERT(WiredTigerConfigParser("log=(enabled=true),some_other_log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("some_other_log=(enabled=true),log=(enabled=false)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false),some_other_log=(enabled=true)")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("some_other_log=(enabled=false),log=(enabled=true)")
-               .isTableLoggingSettingValid());
-
-    // Keys with nested "log" fields should be ignored as we are only interested in top level "log"
-    // keys
-    ASSERT(WiredTigerConfigParser("log=(enabled=true),mystruct=(log=(enabled=false))")
-               .isTableLoggingSettingValid());
-    ASSERT(WiredTigerConfigParser("log=(enabled=false),mystruct=(log=(enabled=false))")
-               .isTableLoggingSettingValid());
-
-    // Multiple "log" keys with different "enabled" values should be rejected.
-    ASSERT_FALSE(WiredTigerConfigParser("log=(enabled=true),log=(enabled=false)")
-                     .isTableLoggingSettingValid());
-    ASSERT_FALSE(WiredTigerConfigParser("log=(enabled=false),log=(enabled=true)")
-                     .isTableLoggingSettingValid());
-    ASSERT_FALSE(WiredTigerConfigParser("log=(enabled=true),log=(remove=false,enabled=false)")
-                     .isTableLoggingSettingValid());
-    ASSERT_FALSE(WiredTigerConfigParser("log=(enabled=false),log=(remove=false,enabled=true)")
-                     .isTableLoggingSettingValid());
-    ASSERT_FALSE(WiredTigerConfigParser("a=123,log=(enabled=true),log=(enabled=false)")
-                     .isTableLoggingSettingValid());
-    ASSERT_FALSE(WiredTigerConfigParser("a=123,log=(enabled=false),log=(enabled=true)")
-                     .isTableLoggingSettingValid());
-}
-
-DEATH_TEST_REGEX(WiredTigerConfigParserTest,
-                 DoesNotSupportMultipleCalls,
-                 "Invariant failure.*!_nextCalled") {
-    WiredTigerConfigParser parser("log=(enabled=true)");
-
-    ASSERT(parser.isTableLoggingSettingValid());
-
-    parser.isTableLoggingSettingValid();
-}
-
-DEATH_TEST_REGEX(WiredTigerConfigParserTest,
-                 IterationAlreadyStarted,
-                 "Invariant failure.*!_nextCalled") {
-    WiredTigerConfigParser parser("a=123,log=(enabled=true)");
-
-    WT_CONFIG_ITEM key;
-    WT_CONFIG_ITEM value;
-    ASSERT_EQUALS(parser.next(&key, &value), 0);
-    ASSERT_EQUALS(key.type, WT_CONFIG_ITEM::WT_CONFIG_ITEM_ID);
-    ASSERT_EQUALS(StringData(key.str, key.len), "a"_sd);
-    ASSERT_EQUALS(value.type, WT_CONFIG_ITEM::WT_CONFIG_ITEM_NUM);
-    ASSERT_EQUALS(value.val, 123);
-
-    parser.isTableLoggingSettingValid();
-}
-
 TEST_F(WiredTigerUtilTest, ReconfigureBackgroundCompaction) {
     WiredTigerEventHandler eventHandler;
 
@@ -1229,6 +1132,44 @@ TEST_F(WiredTigerUtilTest, DropWithDirtyData) {
     // If we tried more times than the limit, then we were not able to successfully recreate the
     // error and should fail.
     ASSERT(tryCount <= kRetryLimit);
+}
+
+TEST(WiredTigerUtilTest, WTMainCacheSizeCalculation) {
+    ProcessInfo pi;
+    const double memSizeMB = pi.getMemSizeMB();
+    const auto tooLargeCacheMB = 100 * 1000 * 1000;
+    const auto tooLargeCachePct = 1;
+    const size_t defaultCacheSizeMB = std::max((memSizeMB - 1024) * 0.5, 256.0);
+    const auto maxCacheSizeMB = 10 * 1000 * 1000;
+
+    // Testing cacheSizeGB
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(-10, 0), defaultCacheSizeMB);
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(0),
+                  defaultCacheSizeMB); /* requestedCachePct = 0 */
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(10, 0), 10 * 1024);
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(tooLargeCacheMB, 0), maxCacheSizeMB);
+
+    // Testing cacheSizePct
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(0, -0.1), defaultCacheSizeMB);
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(0, 0.1), std::floor(0.1 * memSizeMB));
+    ASSERT_EQUALS(WiredTigerUtil::getMainCacheSizeMB(0, tooLargeCachePct),
+                  std::floor(0.8 * memSizeMB));
+}
+
+DEATH_TEST_F(WiredTigerUtilTest, WTMainCacheSizeInvalidValues, "invariant") {
+    WiredTigerUtil::getMainCacheSizeMB(10, 0.1);
+}
+
+TEST(WiredTigerUtilTest, WTSpillCacheSizeCalculation) {
+    const auto defaultCacheSizeMB = static_cast<int32_t>(
+        std::floor(kStorage_spillWiredTiger_engineConfig_cacheSizeGBDefault * 1024));
+    const auto tooLargeCacheMB = 100 * 1000 * 1000;
+    const auto maxCacheSizeMB = 10 * 1000 * 1000;
+
+    ASSERT_EQUALS(WiredTigerUtil::getSpillCacheSizeMB(-10), defaultCacheSizeMB);
+    ASSERT_EQUALS(WiredTigerUtil::getSpillCacheSizeMB(0), defaultCacheSizeMB);
+    ASSERT_EQUALS(WiredTigerUtil::getSpillCacheSizeMB(10), 10 * 1024);
+    ASSERT_EQUALS(WiredTigerUtil::getSpillCacheSizeMB(tooLargeCacheMB), maxCacheSizeMB);
 }
 
 }  // namespace

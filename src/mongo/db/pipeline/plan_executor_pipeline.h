@@ -29,17 +29,11 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <queue>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/plan_stats.h"
@@ -57,6 +51,14 @@
 #include "mongo/db/record_id.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <memory>
+#include <queue>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -108,11 +110,11 @@ public:
     void restoreState(const RestoreContext&) override {}
 
     void detachFromOperationContext() override {
-        _pipeline->detachFromOperationContext();
+        _execPipeline->detachFromOperationContext();
     }
 
     void reattachToOperationContext(OperationContext* opCtx) override {
-        _pipeline->reattachToOperationContext(opCtx);
+        _execPipeline->reattachToOperationContext(opCtx);
     }
 
     ExecState getNext(BSONObj* objOut, RecordId* recordIdOut) override;
@@ -139,7 +141,10 @@ public:
         _pipeline->dispose(opCtx);
     }
 
-    void forceSpill() override {
+    void forceSpill(PlanYieldPolicy* yieldPolicy) override {
+        tassert(10450600,
+                "Pipelines acquire locks internally, so yieldPolicy must be nullptr",
+                yieldPolicy == nullptr);
         _pipeline->forceSpill();
     }
 
@@ -185,11 +190,6 @@ public:
     std::vector<Value> writeExplainOps(ExplainOptions::Verbosity verbosity) const {
         auto opts = SerializationOptions{.verbosity = verbosity};
         return _pipeline->writeExplainOps(opts);
-    }
-
-    void enableSaveRecoveryUnitAcrossCommandsIfSupported() override {}
-    bool isSaveRecoveryUnitAcrossCommandsEnabled() const override {
-        return false;
     }
 
     boost::optional<StringData> getExecutorType() const override {
@@ -264,6 +264,7 @@ private:
     boost::intrusive_ptr<ExpressionContext> _expCtx;
 
     std::unique_ptr<Pipeline, PipelineDeleter> _pipeline;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
 
     PlanExplainerPipeline _planExplainer;
 

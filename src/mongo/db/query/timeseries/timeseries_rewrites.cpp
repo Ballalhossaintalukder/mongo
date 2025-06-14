@@ -28,10 +28,12 @@
  */
 
 #include "mongo/db/query/timeseries/timeseries_rewrites.h"
+
 #include "mongo/db/pipeline/document_source_coll_stats.h"
 #include "mongo/db/pipeline/document_source_index_stats.h"
 #include "mongo/db/pipeline/document_source_internal_convert_bucket_index_stats.h"
 #include "mongo/db/pipeline/document_source_internal_unpack_bucket.h"
+#include "mongo/db/pipeline/document_source_list_catalog.h"
 #include "mongo/db/raw_data_operation.h"
 #include "mongo/s/grid.h"
 
@@ -70,7 +72,8 @@ std::vector<BSONObj> rewritePipelineForTimeseriesCollectionImpl(
     if (!pipeline.empty()) {
         const auto& firstStage = *pipeline.begin();
         if (const auto firstStageName = firstStage.firstElementFieldName();
-            firstStageName == DocumentSourceCollStats::kStageName) {
+            firstStageName == DocumentSourceCollStats::kStageName ||
+            firstStageName == DocumentSourceListCatalog::kStageName) {
             // Don't insert the $_internalUnpackBucket stage.
             return pipeline;
         } else if (firstStageName == DocumentSourceIndexStats::kStageName) {

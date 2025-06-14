@@ -27,15 +27,6 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -79,6 +70,16 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -170,7 +171,7 @@ void checkCollectionOptions(OperationContext* opCtx,
         uassertStatusOK(originalStatus);
         // The assertion above should always fail, as this function should only ever be called
         // if the original attempt to create the collection failed.
-        MONGO_UNREACHABLE;
+        MONGO_UNREACHABLE_TASSERT(10083507);
     }
 
     auto fullNewNamespace = NamespaceStringUtil::deserialize(ns.dbName(), options.viewOn);
@@ -279,7 +280,7 @@ public:
     }
 
     std::string help() const final {
-        return kCreateCommandHelp.toString();
+        return std::string{kCreateCommandHelp};
     }
 
     bool allowedInTransactions() const final {
@@ -376,6 +377,7 @@ public:
                                       QueryTypeEnum::RangePreviewDeprecated));
 
                 if (!gFeatureFlagQETextSearchPreview.isEnabledUseLastLTSFCVWhenUninitialized(
+                        VersionContext::getDecoration(opCtx),
                         serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
                     uassert(9783415,
                             "Cannot create a collection with an encrypted field with query type "
@@ -397,6 +399,8 @@ public:
                             "featureFlagQETextSearchPreview is enabled",
                             !cmd.getEncryptedFields()->getStrEncodeVersion());
                 }
+                EncryptionInformationHelpers::checkPerFieldTagLimitNotExceeded(
+                    cmd.getEncryptedFields().get());
             }
 
             if (auto timeseries = cmd.getTimeseries()) {

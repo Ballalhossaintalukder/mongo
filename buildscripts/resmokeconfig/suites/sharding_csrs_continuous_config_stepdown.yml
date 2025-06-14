@@ -206,10 +206,14 @@ selector:
     - jstests/sharding/conversion_of_replica_set_to_sharded_cluster.js
 
     # Expects same CSRS primary and shard primary throughout the test
-    - jstests/sharding/query/api_version/api_params_nontransaction_sharded.js
-    - jstests/sharding/query/api_version/api_params_nontransaction_unsharded.js
-    - jstests/sharding/query/api_version/api_params_transaction_sharded.js
-    - jstests/sharding/query/api_version/api_params_transaction_unsharded.js
+    - jstests/sharding/query/api_version/api_params_nontransaction_sharded_first_half.js
+    - jstests/sharding/query/api_version/api_params_nontransaction_sharded_second_half.js
+    - jstests/sharding/query/api_version/api_params_nontransaction_unsharded_first_half.js
+    - jstests/sharding/query/api_version/api_params_nontransaction_unsharded_second_half.js
+    - jstests/sharding/query/api_version/api_params_transaction_sharded_first_half.js
+    - jstests/sharding/query/api_version/api_params_transaction_sharded_second_half.js
+    - jstests/sharding/query/api_version/api_params_transaction_unsharded_first_half.js
+    - jstests/sharding/query/api_version/api_params_transaction_unsharded_second_half.js
 
     # These tests use the resharding test fixture, which performs its own addShard. Config server stepdowns can
     # interrupt the addShard operation resulting in the test cluster not being initalized properly.
@@ -247,10 +251,6 @@ selector:
     # Expect the configureQueryAnalyzer command to execute without config server stepdown.
     - jstests/sharding/analyze_shard_key/configure_query_analyzer_persistence.js
 
-    # TODO (SERVER-64128): Re-enable this test once queries that execute concurrently with
-    # shardCollection+moveChunk don't miss documents that get deleted by the range deleter.
-    - jstests/sharding/query/lookup/lookup_targeting.js
-
     # Commands may fail with HostUnreachable error due to having consecutive step downs on the
     # config server, which is more likely to happen on slow variants.
     # We'll consider re-enabling this test under SPM-3835.
@@ -261,7 +261,7 @@ selector:
     - jstests/sharding/list_cluster_catalog.js
     # The following tests are excluded because they use changestreams, but do not handle
     # resumable changestream errors right now.
-    # TODO (SERVER-97414): we could make these tests use the ChangeStreamTest fixture and
+    # TODO (SERVER-106192): we could make these tests use the ChangeStreamTest fixture and
     # then remove them from the exclusion list.
     - jstests/sharding/query/api_version/api_version_stage_allowance_checks.js
     - jstests/sharding/query/log_remote_op_wait.js
@@ -277,9 +277,6 @@ selector:
     - jstests/sharding/query/change_streams/change_stream_no_orphans.js
     - jstests/sharding/query/change_streams/change_stream_no_shards.js
     - jstests/sharding/query/change_streams/change_stream_on_system_collection.js
-    - jstests/sharding/query/change_streams/change_stream_read_preference.js
-    - jstests/sharding/query/change_streams/change_stream_resume_shard_key_change.js
-    - jstests/sharding/query/change_streams/change_stream_show_migration_events.js
     - jstests/sharding/query/change_streams/change_stream_transaction_sharded.js
     - jstests/sharding/query/change_streams/change_stream_update_lookup_collation.js
     - jstests/sharding/query/change_streams/change_stream_update_lookup_read_concern.js
@@ -290,10 +287,7 @@ selector:
     - jstests/sharding/query/change_streams/change_streams_update_lookup_shard_metadata_missing.js
     - jstests/sharding/query/change_streams/lookup_change_stream_post_image_compound_shard_key.js
     - jstests/sharding/query/change_streams/lookup_change_stream_post_image_id_shard_key.js
-    - jstests/sharding/query/change_streams/resume_change_stream_from_stale_mongos.js
-    - jstests/sharding/query/change_streams/resume_change_stream_on_subset_of_shards.js
     - jstests/sharding/query/agg/agg_write_stages_cannot_run_on_mongos.js
-    - jstests/sharding/query/explain/explain_cmd.js
     - jstests/sharding/resharding_change_stream_namespace_filtering.js
     - jstests/sharding/resharding_oplog_sync_agg_resume_token.js
     - jstests/sharding/timeseries/timeseries_change_stream_no_orphans.js

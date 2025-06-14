@@ -27,16 +27,14 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
-
-#include "mongo/platform/shared_library.h"
-
-#include <boost/filesystem.hpp>
 
 #include "mongo/logv2/log.h"
+#include "mongo/platform/shared_library.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/text.h"
+
+#include <boost/filesystem.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -76,7 +74,7 @@ StatusWith<std::unique_ptr<SharedLibrary>> SharedLibrary::create(
 
 StatusWith<void*> SharedLibrary::getSymbol(StringData name) {
     // StringData is not assued to be null-terminated
-    std::string symbolName = name.toString();
+    std::string symbolName{name};
 
     void* function = GetProcAddress(static_cast<HMODULE>(_handle), symbolName.c_str());
 

@@ -29,10 +29,13 @@
 
 #include "mongo/base/dependency_graph.h"
 
+#include "mongo/base/error_codes.h"
+#include "mongo/base/string_data.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/string_map.h"
+
 #include <algorithm>
 #include <compare>
-#include <fmt/format.h>
-#include <fmt/ranges.h>  // IWYU pragma: keep
 #include <iterator>
 #include <random>
 #include <utility>
@@ -40,17 +43,14 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/container/node_hash_set.h>
 #include <absl/meta/type_traits.h>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/base/string_data.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/string_map.h"
+#include <fmt/format.h>
+#include <fmt/ranges.h>  // IWYU pragma: keep
 
 namespace mongo {
 
-void DependencyGraph::addNode(std::string name,
-                              std::vector<std::string> prerequisites,
-                              std::vector<std::string> dependents,
+void DependencyGraph::addNode(const std::string& name,
+                              const std::vector<std::string>& prerequisites,
+                              const std::vector<std::string>& dependents,
                               std::unique_ptr<Payload> payload) {
     if (!payload) {
         struct DummyPayload : Payload {};
@@ -72,8 +72,8 @@ template <typename Seq>
 void strAppendJoin(std::string& out, StringData separator, const Seq& sequence) {
     StringData currSep;
     for (StringData str : sequence) {
-        out.append(currSep.rawData(), currSep.size());
-        out.append(str.rawData(), str.size());
+        out.append(currSep.data(), currSep.size());
+        out.append(str.data(), str.size());
         currSep = separator;
     }
 }

@@ -29,21 +29,21 @@
 
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <utility>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
-#include "mongo/db/query/allowed_contexts.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/s/query/exec/cluster_query_result.h"
 #include "mongo/s/resource_yielders.h"
 #include "mongo/util/assert_util.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -60,6 +60,7 @@ DocumentSourceMergeCursors::DocumentSourceMergeCursors(
     AsyncResultsMergerParams armParams,
     boost::optional<BSONObj> ownedParamsSpec)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _armParamsObj(std::move(ownedParamsSpec)),
       _armParams(std::move(armParams)) {
 
@@ -157,6 +158,18 @@ void DocumentSourceMergeCursors::doForceSpill() {
     uassertStatusOK(status);
 }
 
+void DocumentSourceMergeCursors::setInitialHighWaterMark(const BSONObj& highWaterMark) {
+    tassert(
+        10359100, "setInitialHighWaterMark requires BlockingResultsMerger", _blockingResultsMerger);
+    _blockingResultsMerger->setInitialHighWaterMark(highWaterMark);
+}
+
+void DocumentSourceMergeCursors::setNextHighWaterMarkDeterminingStrategy(
+    NextHighWaterMarkDeterminingStrategyPtr nextHighWaterMarkDeterminer) {
+    _blockingResultsMerger->setNextHighWaterMarkDeterminingStrategy(
+        std::move(nextHighWaterMarkDeterminer));
+}
+
 Value DocumentSourceMergeCursors::serialize(const SerializationOptions& opts) const {
     if (_blockingResultsMerger) {
         return Value(Document{
@@ -170,7 +183,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceMergeCursors::createFromBson(
     BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(17026,
             "$mergeCursors stage expected an object as argument",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     auto ownedObj = elem.embeddedObject().getOwned();
     auto armParams = AsyncResultsMergerParams::parse(
         IDLParserContext(kStageName,
@@ -212,7 +225,7 @@ void DocumentSourceMergeCursors::recordRemoteCursorShardIds(
     const std::vector<RemoteCursor>& remoteCursors) {
     for (const auto& remoteCursor : remoteCursors) {
         tassert(5549103, "Encountered invalid shard ID", !remoteCursor.getShardId().empty());
-        _shardsWithCursors.emplace(remoteCursor.getShardId().toString());
+        _shardsWithCursors.emplace(std::string{remoteCursor.getShardId()});
     }
 }
 

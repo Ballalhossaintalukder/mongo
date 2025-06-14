@@ -29,15 +29,16 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <queue>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/s/query/exec/cluster_query_result.h"
 #include "mongo/s/query/exec/router_exec_stage.h"
+
+#include <cstddef>
+#include <queue>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -56,7 +57,6 @@ public:
         // It has no children. It cannot do anything to release memory.
         return Status::OK();
     }
-
 
     void kill(OperationContext* opCtx) final;
 

@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/smart_ptr.hpp>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/client/read_preference.h"
 #include "mongo/client/remote_command_targeter.h"
@@ -44,6 +37,13 @@
 #include "mongo/util/cancellation.h"
 #include "mongo/util/future.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 namespace async_rpc {
@@ -55,9 +55,9 @@ namespace async_rpc {
  */
 class AsyncRemoteCommandTargeterAdapter : public Targeter {
 public:
-    AsyncRemoteCommandTargeterAdapter(ReadPreferenceSetting readPref,
+    AsyncRemoteCommandTargeterAdapter(const ReadPreferenceSetting& readPref,
                                       std::shared_ptr<RemoteCommandTargeter> targeter)
-        : _readPref(readPref), _targeter(targeter) {}
+        : _readPref(readPref), _targeter(std::move(targeter)) {}
 
     SemiFuture<std::vector<HostAndPort>> resolve(CancellationToken t) final {
         return _targeter->findHosts(_readPref, t);

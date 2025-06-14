@@ -29,13 +29,15 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-
 #include "mongo/db/pipeline/aggregate_command_gen.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/process_interface/stub_mongo_process_interface.h"
 #include "mongo/db/query/datetime/date_time_support.h"
 #include "mongo/db/query/query_test_service_context.h"
+#include "mongo/db/server_options.h"
+#include "mongo/db/version_context.h"
+
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -65,9 +67,14 @@ public:
      * already exists on the current client then it will be adopted, otherwise an owned OpCtx will
      * be created using the ServiceContext. The OpCtx will be set on the ExpressionContextForTest.
      */
-    ExpressionContextForTest(NamespaceString nss)
+    ExpressionContextForTest(
+        NamespaceString nss,
+        multiversion::FeatureCompatibilityVersion fcv =
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion())
         : ExpressionContext(ExpressionContextParams{
+              .vCtx = VersionContext(fcv),
               .ns = nss,
+              .originalNs = nss,
               .runtimeConstants = LegacyRuntimeConstants(Date_t::now(), Timestamp(1, 0))}) {
         // If there is an existing global ServiceContext, adopt it. Otherwise, create a new context.
         // Similarly, we create a new OperationContext or adopt an existing context as appropriate.
@@ -104,10 +111,16 @@ public:
      * Constructor which sets the given OperationContext on the ExpressionContextForTest. This will
      * also resolve the ExpressionContextForTest's ServiceContext from the OperationContext.
      */
-    ExpressionContextForTest(OperationContext* opCtx, NamespaceString nss)
+    ExpressionContextForTest(
+        OperationContext* opCtx,
+        NamespaceString nss,
+        multiversion::FeatureCompatibilityVersion fcv =
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion())
         : ExpressionContext(ExpressionContextParams{
               .opCtx = opCtx,
+              .vCtx = VersionContext(fcv),
               .ns = nss,
+              .originalNs = nss,
               .runtimeConstants = LegacyRuntimeConstants(Date_t::now(), Timestamp(1, 0))}),
           _serviceContext(opCtx->getServiceContext()) {
         // Resolve the TimeZoneDatabase to be used by this ExpressionContextForTest.
@@ -119,10 +132,17 @@ public:
      * ExpressionContextForTest. This will also resolve the ExpressionContextForTest's
      * ServiceContext from the OperationContext.
      */
-    ExpressionContextForTest(OperationContext* opCtx, NamespaceString nss, SerializationContext sc)
+    ExpressionContextForTest(
+        OperationContext* opCtx,
+        NamespaceString nss,
+        SerializationContext sc,
+        multiversion::FeatureCompatibilityVersion fcv =
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion())
         : ExpressionContext(ExpressionContextParams{
               .opCtx = opCtx,
+              .vCtx = VersionContext(fcv),
               .ns = nss,
+              .originalNs = nss,
               .serializationContext = sc,
               .runtimeConstants = LegacyRuntimeConstants(Date_t::now(), Timestamp(1, 0)),
           }),
@@ -135,10 +155,16 @@ public:
      * Constructor which sets the given OperationContext on the ExpressionContextForTest. This will
      * also resolve the ExpressionContextForTest's ServiceContext from the OperationContext.
      */
-    ExpressionContextForTest(OperationContext* opCtx, const AggregateCommandRequest& request)
+    ExpressionContextForTest(
+        OperationContext* opCtx,
+        const AggregateCommandRequest& request,
+        multiversion::FeatureCompatibilityVersion fcv =
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion())
         : ExpressionContext(ExpressionContextParams{
               .opCtx = opCtx,
+              .vCtx = VersionContext(fcv),
               .ns = request.getNamespace(),
+              .originalNs = request.getNamespace(),
               .serializationContext = request.getSerializationContext(),
               .runtimeConstants = request.getLegacyRuntimeConstants(),
               .letParameters = request.getLet(),
@@ -162,14 +188,19 @@ public:
      * also resolve the ExpressionContextForTest's ServiceContext from the OperationContext
      * and accepts letParameters.
      */
-    ExpressionContextForTest(OperationContext* opCtx,
-                             const NamespaceString& nss,
-                             std::unique_ptr<CollatorInterface> collator,
-                             const boost::optional<BSONObj>& letParameters = boost::none)
+    ExpressionContextForTest(
+        OperationContext* opCtx,
+        const NamespaceString& nss,
+        std::unique_ptr<CollatorInterface> collator,
+        const boost::optional<BSONObj>& letParameters = boost::none,
+        multiversion::FeatureCompatibilityVersion fcv =
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion())
         : ExpressionContext(ExpressionContextParams{
               .opCtx = opCtx,
+              .vCtx = VersionContext(fcv),
               .collator = std::move(collator),
               .ns = nss,
+              .originalNs = nss,
               .runtimeConstants = LegacyRuntimeConstants(Date_t::now(), Timestamp(1, 0)),
               .letParameters = letParameters}),
           _serviceContext(opCtx->getServiceContext()) {

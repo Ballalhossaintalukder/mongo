@@ -27,18 +27,19 @@
  *    it in the license file.
  */
 
-#include <iterator>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/exec/add_fields_projection_executor.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/exec/add_fields_projection_executor.h"
 #include "mongo/db/matcher/expression_algo.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::projection_executor {
 namespace {
@@ -138,7 +139,7 @@ void ProjectionSpecValidator::validate() {
 }
 
 void ProjectionSpecValidator::parseElement(const BSONElement& elem, const FieldPath& pathToElem) {
-    if (elem.type() == BSONType::Object) {
+    if (elem.type() == BSONType::object) {
         parseNestedObject(elem.Obj(), pathToElem);
     } else {
         ensurePathDoesNotConflictOrThrow(pathToElem.fullPath());
@@ -206,7 +207,7 @@ void AddFieldsProjectionExecutor::parse(const BSONObj& spec) {
         // The field name might be a dotted path.
         auto fieldPath = FieldPath(elem.fieldNameStringData());
 
-        if (elem.type() == BSONType::Object) {
+        if (elem.type() == BSONType::object) {
             // This is either an expression, or a nested specification.
             if (parseObjectAsExpression(fieldPath, elem.Obj(), _expCtx->variablesParseState)) {
                 // It was an expression.
@@ -265,7 +266,7 @@ void AddFieldsProjectionExecutor::parseSubObject(const BSONObj& subObj,
                 fieldName.find('.') == std::string::npos);
 
         auto currentPath = pathToObj.concat(fieldName);
-        if (elem.type() == BSONType::Object) {
+        if (elem.type() == BSONType::object) {
             // This is either an expression, or a nested specification.
             if (!parseObjectAsExpression(currentPath, elem.Obj(), variablesParseState)) {
                 // It was a nested subobject

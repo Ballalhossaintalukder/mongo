@@ -29,17 +29,6 @@
 
 #include "mongo/db/db_raii.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <fmt/format.h>
-#include <mutex>
-#include <string>
-#include <tuple>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -63,6 +52,7 @@
 #include "mongo/db/s/database_sharding_state.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/scoped_collection_metadata.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/storage/capped_snapshots.h"
@@ -72,13 +62,23 @@
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/message.h"
 #include "mongo/s/shard_version.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <mutex>
+#include <string>
+#include <tuple>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -677,7 +677,13 @@ void acquireConsistentCatalogAndSnapshotUnsafe(OperationContext* opCtx,
         // Check that the sharding database version matches our read.
         if (dbName) {
             // Check that the sharding database version matches our read.
-            DatabaseShardingState::assertMatchingDbVersion(opCtx, *dbName);
+            const auto scopedSs =
+                ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+            if (scopedSs.isInTransitionalPhase(opCtx)) {
+                scopedSs.checkDbVersionOrThrow(opCtx, *dbName);
+            } else {
+                DatabaseShardingState::acquire(opCtx, *dbName)->checkDbVersionOrThrow(opCtx);
+            }
         }
 
         // We must open a storage snapshot consistent with the fetched in-memory Catalog instance.
@@ -869,7 +875,14 @@ AutoGetCollectionForReadLockFree::AutoGetCollectionForReadLockFree(
         (!shard_role_details::getRecoveryUnit(opCtx)->isActive() || _isLockFreeReadSubOperation));
 
     // Pre-snapshot shard version checks.
-    DatabaseShardingState::assertMatchingDbVersion(opCtx, nsOrUUID.dbName());
+    {
+        const auto scopedSs = ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+        if (scopedSs.isInTransitionalPhase(opCtx)) {
+            scopedSs.checkDbVersionOrThrow(opCtx, nsOrUUID.dbName());
+        } else {
+            DatabaseShardingState::acquire(opCtx, nsOrUUID.dbName())->checkDbVersionOrThrow(opCtx);
+        }
+    }
     if (nsOrUUID.isNamespaceString()) {
         CollectionShardingState::acquire(opCtx, nsOrUUID.nss())->checkShardVersionOrThrow(opCtx);
     }
@@ -901,7 +914,7 @@ AutoGetCollectionForReadLockFree::AutoGetCollectionForReadLockFree(
         // recursively. But this is not known when we create the Query plan for this sub operation.
         // Pretend that we are yieldable but don't allow yield to actually be called.
         _collectionPtr.makeYieldable(opCtx, [](OperationContext*, boost::optional<UUID>) {
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083511);
             return ConsistentCollection{};
         });
     } else {
@@ -1053,41 +1066,6 @@ AutoGetCollectionForReadCommandBase<AutoGetCollectionForReadType>::
         opCtx, _autoCollForRead.getNss(), _autoCollForRead.getCollection(), options._expectedUUID);
 }
 
-OldClientContext::OldClientContext(OperationContext* opCtx,
-                                   const NamespaceString& nss,
-                                   bool doVersion)
-    : _opCtx(opCtx) {
-    const auto dbName = nss.dbName();
-    _db = DatabaseHolder::get(opCtx)->getDb(opCtx, dbName);
-
-    if (!_db) {
-        _db = DatabaseHolder::get(opCtx)->openDb(_opCtx, dbName, &_justCreated);
-        invariant(_db);
-    }
-
-    auto const currentOp = CurOp::get(_opCtx);
-
-    if (doVersion) {
-        switch (currentOp->getNetworkOp()) {
-            case dbGetMore:  // getMore is special and should be handled elsewhere
-            case dbUpdate:   // update & delete check shard version as part of the write executor
-            case dbDelete:   // path, so no need to check them here as well
-                break;
-            default:
-                CollectionShardingState::assertCollectionLockedAndAcquire(_opCtx, nss)
-                    ->checkShardVersionOrThrow(_opCtx);
-                break;
-        }
-    }
-
-    stdx::lock_guard<Client> lk(*_opCtx->getClient());
-
-    currentOp->enter(lk,
-                     nss.isTimeseriesBucketsCollection() ? nss.getTimeseriesViewNamespace() : nss,
-                     DatabaseProfileSettings::get(opCtx->getServiceContext())
-                         .getDatabaseProfileLevel(_db->name()));
-}
-
 AutoGetCollectionForReadCommandMaybeLockFree::AutoGetCollectionForReadCommandMaybeLockFree(
     OperationContext* opCtx,
     const NamespaceStringOrUUID& nsOrUUID,
@@ -1176,26 +1154,6 @@ AutoGetDbForReadMaybeLockFree::AutoGetDbForReadMaybeLockFree(OperationContext* o
     } else {
         _autoGet.emplace(opCtx, dbName, MODE_IS, deadline);
     }
-}
-
-OldClientContext::~OldClientContext() {
-    // If in an interrupt, don't record any stats.
-    // It is possible to have no lock after saving the lock state and being interrupted while
-    // waiting to restore.
-    if (_opCtx->getKillStatus() != ErrorCodes::OK)
-        return;
-
-    invariant(shard_role_details::getLocker(_opCtx)->isLocked());
-    auto currentOp = CurOp::get(_opCtx);
-    Top::getDecoration(_opCtx).record(_opCtx,
-                                      currentOp->getNSS(),
-                                      currentOp->getLogicalOp(),
-                                      shard_role_details::getLocker(_opCtx)->isWriteLocked()
-                                          ? Top::LockType::WriteLocked
-                                          : Top::LockType::ReadLocked,
-                                      _timer.elapsed(),
-                                      currentOp->isCommand(),
-                                      currentOp->getReadWriteType());
 }
 
 LockMode getLockModeForQuery(OperationContext* opCtx, const NamespaceStringOrUUID& nssOrUUID) {

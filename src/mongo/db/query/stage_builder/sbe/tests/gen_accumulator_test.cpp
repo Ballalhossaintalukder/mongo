@@ -28,12 +28,10 @@
  */
 
 #include <algorithm>
-#include <boost/smart_ptr.hpp>
 #include <climits>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <fmt/printf.h>  // IWYU pragma: keep
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -45,8 +43,10 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/container/node_hash_map.h>
 #include <boost/none.hpp>
+#include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
+#include <fmt/printf.h>  // IWYU pragma: keep
 // IWYU pragma: no_include "format.h"
 
 #include "mongo/base/error_codes.h"
@@ -182,7 +182,7 @@ protected:
                                  const mongo::BSONArray& expectedValue,
                                  std::unique_ptr<CollatorInterface> collator = nullptr) {
         auto [resultsTag, resultsVal] =
-            getResultsForAggregation(fromjson(groupSpec.rawData()), inputDocs, std::move(collator));
+            getResultsForAggregation(fromjson(groupSpec.data()), inputDocs, std::move(collator));
         sbe::value::ValueGuard resultGuard{resultsTag, resultsVal};
 
         auto [sortedResultsTag, sortedResultsVal] = sortResults(resultsTag, resultsVal);
@@ -233,7 +233,7 @@ protected:
 
         // Run the accumulator.
         auto [resultsTag, resultsVal] =
-            getResultsForAggregation(fromjson(groupSpec.rawData()), inputDocs, std::move(collator));
+            getResultsForAggregation(fromjson(groupSpec.data()), inputDocs, std::move(collator));
         ValueGuard resultGuard{resultsTag, resultsVal};
         ASSERT_EQ(resultsTag, TypeTags::Array);
 
@@ -2223,7 +2223,7 @@ class AccumulatorSBEIncompatible final : public AccumulatorState {
 public:
     static constexpr auto kName = "$incompatible"_sd;
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
     explicit AccumulatorSBEIncompatible(ExpressionContext* expCtx) : AccumulatorState(expCtx) {}
     void processInternal(const Value& input, bool merging) final {}
@@ -2474,12 +2474,12 @@ public:
         auto resultArr = sbe::value::getArrayView(resultVal);
 
         for (auto&& elt : bsonArray) {
-            ASSERT(elt.type() == BSONType::Array);
+            ASSERT(elt.type() == BSONType::array);
 
             BSONObjIterator arrayIt{elt.embeddedObject()};
             ASSERT_TRUE(arrayIt.more());
             auto firstElt = arrayIt.next();
-            ASSERT(firstElt.type() == BSONType::Array);
+            ASSERT(firstElt.type() == BSONType::array);
             BSONArray partialBsonArr{firstElt.embeddedObject()};
 
             ASSERT_TRUE(arrayIt.more());
@@ -2576,7 +2576,7 @@ public:
         auto arr = sbe::value::getArrayView(arrVal);
 
         for (auto&& element : arrayOfArrays) {
-            ASSERT(element.type() == BSONType::Array);
+            ASSERT(element.type() == BSONType::array);
             auto [tag, val] =
                 makeOnePartialAggregate(aggFuncName, BSONArray{element.embeddedObject()});
             arr->push_back(tag, val);

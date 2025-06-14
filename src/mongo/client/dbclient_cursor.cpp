@@ -29,16 +29,6 @@
 
 #include "mongo/client/dbclient_cursor.h"
 
-#include <boost/cstdint.hpp>
-#include <cstdint>
-#include <cstring>
-#include <memory>
-#include <ostream>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -66,6 +56,16 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <ostream>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -126,7 +126,7 @@ Message DBClientCursor::assembleInit() {
 
 Message DBClientCursor::assembleGetMore() {
     tassert(9279706, "CursorId is unexpectedly zero", _cursorId);
-    auto getMoreRequest = GetMoreCommandRequest(_cursorId, _ns.coll().toString());
+    auto getMoreRequest = GetMoreCommandRequest(_cursorId, std::string{_ns.coll()});
     getMoreRequest.setBatchSize(
         boost::make_optional(_batchSize != 0, static_cast<int64_t>(_batchSize)));
     getMoreRequest.setMaxTimeMS(boost::make_optional(
@@ -373,8 +373,8 @@ DBClientCursor::DBClientCursor(DBClientBase* client,
       _ns(nsOrUuid.isNamespaceString() ? nsOrUuid.nss() : NamespaceString{nsOrUuid.dbName()}),
       _cursorId(cursorId),
       _isExhaust(isExhaust),
-      _operationTime(operationTime),
-      _postBatchResumeToken(postBatchResumeToken),
+      _operationTime(std::move(operationTime)),
+      _postBatchResumeToken(std::move(postBatchResumeToken)),
       _keepCursorOpen(keepCursorOpen) {}
 
 DBClientCursor::DBClientCursor(DBClientBase* client,
@@ -430,7 +430,7 @@ StatusWith<std::unique_ptr<DBClientCursor>> DBClientCursor::fromAggregationReque
 
     boost::optional<BSONObj> postBatchResumeToken;
     if (auto elem = cursorObj["postBatchResumeToken"]) {
-        if (elem.type() != BSONType::Object)
+        if (elem.type() != BSONType::object)
             return Status(ErrorCodes::Error(5761702),
                           "Expected field 'postBatchResumeToken' to be of object type");
         postBatchResumeToken = elem.Obj().getOwned();

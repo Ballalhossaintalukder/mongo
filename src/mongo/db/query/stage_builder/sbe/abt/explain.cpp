@@ -29,21 +29,14 @@
 
 #include "mongo/db/query/stage_builder/sbe/abt/explain.h"
 
+#include <cstddef>
+#include <cstdint>
+
 #include <absl/container/node_hash_map.h>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <functional>
-#include <iterator>
-#include <map>
-#include <sstream>
-#include <tuple>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/sbe/makeobj_spec.h"
 #include "mongo/db/query/algebra/operator.h"
@@ -52,6 +45,14 @@
 #include "mongo/db/query/stage_builder/sbe/abt/strong_alias.h"
 #include "mongo/db/query/stage_builder/sbe/abt/syntax/expr.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <functional>
+#include <iterator>
+#include <map>
+#include <sstream>
+#include <tuple>
+#include <vector>
 
 
 namespace mongo::abt {
@@ -131,7 +132,7 @@ public:
     }
 
     ExplainPrinterImpl& print(StringData s) {
-        print(s.empty() ? "<empty>" : s.rawData());
+        print(s.empty() ? "<empty>" : s.data());
         return *this;
     }
 
@@ -421,7 +422,7 @@ public:
     }
 
     ExplainPrinterImpl& print(const std::pair<sbe::value::TypeTags, sbe::value::Value> v) {
-        if (sbe::value::tagToType(v.first) == BSONType::EOO &&
+        if (sbe::value::tagToType(v.first) == BSONType::eoo &&
             v.first != sbe::value::TypeTags::Nothing) {
             if (v.first == sbe::value::TypeTags::makeObjSpec) {
                 // We want to append a stringified version of MakeObjSpec to explain here.
@@ -531,7 +532,7 @@ public:
     ExplainPrinterImpl& fieldName(const StrongStringAlias<TagType>& name,
                                   const ExplainVersion minVersion = ExplainVersion::V2,
                                   const ExplainVersion maxVersion = ExplainVersion::Vmax) {
-        fieldNameInternal(name.value().toString(), minVersion, maxVersion);
+        fieldNameInternal(std::string{name.value()}, minVersion, maxVersion);
         return *this;
     }
 

@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/db/auth/action_type.h"
@@ -46,6 +42,11 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 #if __has_feature(xray_instrument)
 
@@ -83,7 +84,7 @@ public:
                     __xray_log_get_current_mode() == nullptr);
 
 
-            auto selectStatus = __xray_log_select_mode(request().getMode().rawData());
+            auto selectStatus = __xray_log_select_mode(request().getMode().data());
             uassert(8638309,
                     str::stream() << "Failed to register XRay mode '" << request().getMode()
                                   << "' : " << selectStatus,
@@ -91,7 +92,7 @@ public:
 
 
             auto configStatus =
-                __xray_log_init_mode(request().getMode().rawData(), request().getFlags().rawData());
+                __xray_log_init_mode(request().getMode().data(), request().getFlags().data());
             uassert(8638308,
                     str::stream() << "Failed to initialize XRay logging '" << request().getFlags()
                                   << "' : " << configStatus,

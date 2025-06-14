@@ -29,20 +29,11 @@
 
 #pragma once
 
-#include <algorithm>
-#include <list>
-#include <memory>
-#include <set>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/dependencies.h"
@@ -54,10 +45,22 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <algorithm>
+#include <list>
+#include <memory>
+#include <set>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 
-class DocumentSourceSetVariableFromSubPipeline final : public DocumentSource {
+class DocumentSourceSetVariableFromSubPipeline final : public DocumentSource,
+                                                       public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$setVariableFromSubPipeline"_sd;
 
@@ -76,7 +79,7 @@ public:
         return DistributedPlanLogic{nullptr, this, boost::none};
     }
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -137,7 +140,10 @@ protected:
                                              std::unique_ptr<Pipeline, PipelineDeleter> subpipeline,
                                              Variables::Id varID)
         : DocumentSource(kStageName, expCtx),
+          exec::agg::Stage(kStageName, expCtx),
           _subPipeline(std::move(subpipeline)),
+          _subExecPipeline(
+              exec::agg::buildPipeline(_subPipeline->getSources(), _subPipeline->getContext())),
           _variableID(varID) {}
 
     void doDispose() final;
@@ -147,6 +153,7 @@ private:
     GetNextResult doGetNext() final;
     Value serialize(const SerializationOptions& opts = SerializationOptions{}) const final;
     std::unique_ptr<Pipeline, PipelineDeleter> _subPipeline;
+    std::unique_ptr<exec::agg::Pipeline> _subExecPipeline;
     Variables::Id _variableID;
     // $setVariableFromSubPipeline sets the value of $$SEARCH_META only on the first call to
     // doGetNext().

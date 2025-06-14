@@ -28,13 +28,7 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <mutex>
-#include <string>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/rpc/metadata/client_metadata.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -48,7 +42,6 @@
 #include "mongo/logv2/log.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/platform/process_id.h"
-#include "mongo/rpc/metadata/client_metadata.h"
 #include "mongo/transport/message_compressor_base.h"
 #include "mongo/transport/message_compressor_manager.h"
 #include "mongo/util/assert_util.h"
@@ -58,6 +51,14 @@
 #include "mongo/util/str.h"
 #include "mongo/util/testing_proctor.h"
 #include "mongo/util/version.h"
+
+#include <cstdint>
+#include <mutex>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -178,14 +179,14 @@ StatusWith<std::string> ClientMetadata::parseApplicationDocument(const BSONObj& 
         // Name is the only required field, and any other fields are simply ignored.
         if (name == kName) {
 
-            if (e.type() != String) {
+            if (e.type() != BSONType::string) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The '" << kApplication << "." << kName
                             << "' field must be a string in the client metadata document"};
             }
 
-            std::string value = str::escape(e.checkAndGetStringData().toString());
+            std::string value = str::escape(std::string{e.checkAndGetStringData()});
 
             if (value.size() > kMaxApplicationNameByteLength) {
                 return {ErrorCodes::ClientMetadataAppNameTooLarge,
@@ -212,7 +213,7 @@ Status ClientMetadata::validateDriverDocument(const BSONObj& doc) {
         StringData name = e.fieldNameStringData();
 
         if (name == kName) {
-            if (e.type() != String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::TypeMismatch,
                               str::stream()
                                   << "The '" << kDriver << "." << kName
@@ -221,7 +222,7 @@ Status ClientMetadata::validateDriverDocument(const BSONObj& doc) {
 
             foundName = true;
         } else if (name == kVersion) {
-            if (e.type() != String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::TypeMismatch,
                               str::stream()
                                   << "The '" << kDriver << "." << kVersion
@@ -256,7 +257,7 @@ Status ClientMetadata::validateOperatingSystemDocument(const BSONObj& doc) {
         StringData name = e.fieldNameStringData();
 
         if (name == kType) {
-            if (e.type() != String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::TypeMismatch,
                               str::stream()
                                   << "The '" << kOperatingSystem << "." << kType
@@ -448,7 +449,7 @@ bool ClientMetadata::tryFinalize(Client* client) {
     return true;
 }
 
-const ClientMetadata* ClientMetadata::getForClient(Client* client) noexcept {
+const ClientMetadata* ClientMetadata::getForClient(Client* client) {
     auto& state = getClientState(client);
     if (!state.meta) {
         // If we haven't finalized, it's still okay to return our existing value.
@@ -457,7 +458,7 @@ const ClientMetadata* ClientMetadata::getForClient(Client* client) noexcept {
     return &state.meta.value();
 }
 
-const ClientMetadata* ClientMetadata::getForOperation(OperationContext* opCtx) noexcept {
+const ClientMetadata* ClientMetadata::getForOperation(OperationContext* opCtx) {
     auto& state = getOperationState(opCtx);
     if (!state.isFinalized) {
         return nullptr;
@@ -466,7 +467,7 @@ const ClientMetadata* ClientMetadata::getForOperation(OperationContext* opCtx) n
     return &state.meta.value();
 }
 
-const ClientMetadata* ClientMetadata::get(Client* client) noexcept {
+const ClientMetadata* ClientMetadata::get(Client* client) {
     if (auto opCtx = client->getOperationContext()) {
         if (auto meta = getForOperation(opCtx)) {
             return meta;

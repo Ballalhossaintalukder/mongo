@@ -15,14 +15,16 @@
 #pragma once
 #endif  // defined(_MSC_VER) && (_MSC_VER >= 1200)
 
-#include <string>
-
 #include "mongo/util/errno_util.h"
 #include "mongo/util/net/ssl/apple.hpp"
 #include "mongo/util/net/ssl/error.hpp"
+
+#include <string>
+
 #include <asio/detail/assert.hpp>
 #include <asio/detail/config.hpp>
 
+// This must be after all other includes
 #include <asio/detail/push_options.hpp>
 
 namespace asio {

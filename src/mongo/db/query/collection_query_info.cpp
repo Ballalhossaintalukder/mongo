@@ -29,15 +29,6 @@
 
 #include "mongo/db/query/collection_query_info.h"
 
-#include <map>
-#include <set>
-#include <string>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -65,6 +56,15 @@
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
+
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -105,7 +105,7 @@ CollectionQueryInfo::PlanCacheState::PlanCacheState(OperationContext* opCtx,
     // TODO We shouldn't need to include unfinished indexes, but we must here because the index
     // catalog may be in an inconsistent state.  SERVER-18346.
     auto ii = collection->getIndexCatalog()->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished);
+        IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished);
     while (ii->more()) {
         const IndexCatalogEntry* ice = ii->next();
         if (ice->accessMethod()) {
@@ -177,8 +177,7 @@ void CollectionQueryInfo::init(OperationContext* opCtx, Collection* coll) {
         return;
     }
 
-    auto ii =
-        coll->getIndexCatalog()->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto ii = coll->getIndexCatalog()->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     auto& collectionIndexUsageTracker = CollectionIndexUsageTrackerDecoration::write(coll);
     while (ii->more()) {
         const IndexDescriptor* desc = ii->next()->descriptor();

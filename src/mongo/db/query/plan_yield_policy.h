@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <functional>
-#include <memory>
-#include <string>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -46,6 +41,11 @@
 #include "mongo/util/elapsed_tracker.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <variant>
 
 namespace mongo {
 
@@ -136,7 +136,7 @@ public:
     }
 
     static YieldPolicy parseFromBSON(StringData element) {
-        const std::string& yieldPolicy = element.toString();
+        const std::string& yieldPolicy = std::string{element};
         if (yieldPolicy == "YIELD_AUTO") {
             return YieldPolicy::YIELD_AUTO;
         }
@@ -234,8 +234,9 @@ public:
      * been relinquished.
      */
     virtual Status yieldOrInterrupt(OperationContext* opCtx,
-                                    std::function<void()> whileYieldingFn,
-                                    RestoreContext::RestoreType restoreType);
+                                    const std::function<void()>& whileYieldingFn,
+                                    RestoreContext::RestoreType restoreType,
+                                    const std::function<void()>& afterSnapshotAbandonFn = nullptr);
 
     /**
      * All calls to shouldYieldOrInterrupt() will return true until the next call to
@@ -325,9 +326,11 @@ private:
      */
     void performYield(OperationContext* opCtx,
                       const Yieldable& yieldable,
-                      std::function<void()> whileYieldingFn);
+                      std::function<void()> whileYieldingFn,
+                      std::function<void()> afterSnapshotAbandonFn);
     void performYieldWithAcquisitions(OperationContext* opCtx,
-                                      std::function<void()> whileYieldingFn);
+                                      std::function<void()> whileYieldingFn,
+                                      std::function<void()> afterSnapshotAbandonFn);
 
     const YieldPolicy _policy;
     std::variant<const Yieldable*, YieldThroughAcquisitions> _yieldable;

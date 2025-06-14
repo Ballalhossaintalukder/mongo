@@ -28,19 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <array>
-#include <cstring>
-#include <fmt/format.h>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/fle_crud.h"
 
 #include "mongo/base/data_range.h"
 #include "mongo/base/error_codes.h"
@@ -59,13 +47,13 @@
 #include "mongo/crypto/fle_field_schema_gen.h"
 #include "mongo/crypto/fle_stats_gen.h"
 #include "mongo/crypto/fle_tags.h"
+#include "mongo/crypto/hash_block.h"
 #include "mongo/crypto/symmetric_key.h"
 #include "mongo/db/basic_types.h"
 #include "mongo/db/catalog/clustered_collection_options_gen.h"
 #include "mongo/db/catalog/clustered_collection_util.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
-#include "mongo/db/fle_crud.h"
 #include "mongo/db/fle_query_interface_mock.h"
 #include "mongo/db/fts/unicode/string.h"
 #include "mongo/db/namespace_string.h"
@@ -94,6 +82,20 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
 namespace fle {
@@ -104,8 +106,8 @@ namespace {
 
 constexpr auto kIndexKeyId = "12345678-1234-9876-1234-123456789012"_sd;
 constexpr auto kUserKeyId = "ABCDEFAB-1234-9876-1234-123456789012"_sd;
-static UUID indexKeyId = uassertStatusOK(UUID::parse(kIndexKeyId.toString()));
-static UUID userKeyId = uassertStatusOK(UUID::parse(kUserKeyId.toString()));
+static UUID indexKeyId = uassertStatusOK(UUID::parse(kIndexKeyId));
+static UUID userKeyId = uassertStatusOK(UUID::parse(kUserKeyId));
 
 std::vector<char> testValue = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19};
 std::vector<char> testValue2 = {0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29};
@@ -297,6 +299,8 @@ protected:
         NamespaceString::createNamespaceString_forTest("test.enxcol_.coll.esc");
     NamespaceString _ecocNs =
         NamespaceString::createNamespaceString_forTest("test.enxcol_.coll.ecoc");
+
+    HmacContext hmacCtx;
 };
 
 void FleCrudTest::setUp() {
@@ -823,7 +827,9 @@ TEST_F(FleCrudTest, InsertOne) {
     assertECOCDocumentCountByField("encrypted", 1);
 
     ASSERT_FALSE(
-        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(getTestESCToken(element), 1))
+        _queryImpl
+            ->getById(_escNs,
+                      ESCCollection::generateNonAnchorId(&hmacCtx, getTestESCToken(element), 1))
             .isEmpty());
 }
 
@@ -849,9 +855,11 @@ TEST_F(FleCrudTest, InsertTwoSame) {
 
     auto escTagToken = getTestESCToken(element);
     ASSERT_FALSE(
-        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(escTagToken, 1)).isEmpty());
+        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(&hmacCtx, escTagToken, 1))
+            .isEmpty());
     ASSERT_FALSE(
-        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(escTagToken, 2)).isEmpty());
+        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(&hmacCtx, escTagToken, 2))
+            .isEmpty());
 }
 
 // Insert two documents with different values
@@ -866,12 +874,12 @@ TEST_F(FleCrudTest, InsertTwoDifferent) {
     ASSERT_FALSE(_queryImpl
                      ->getById(_escNs,
                                ESCCollection::generateNonAnchorId(
-                                   getTestESCToken(BSON("encrypted" << "secret")), 1))
+                                   &hmacCtx, getTestESCToken(BSON("encrypted" << "secret")), 1))
                      .isEmpty());
     ASSERT_FALSE(_queryImpl
                      ->getById(_escNs,
                                ESCCollection::generateNonAnchorId(
-                                   getTestESCToken(BSON("encrypted" << "topsecret")), 1))
+                                   &hmacCtx, getTestESCToken(BSON("encrypted" << "topsecret")), 1))
                      .isEmpty());
 }
 
@@ -880,7 +888,7 @@ TEST_F(FleCrudTest, Insert100Fields) {
 
     uint64_t fieldCount = 100;
     ValueGenerator valueGenerator = [](StringData fieldName, uint64_t row) {
-        return fieldName.toString();
+        return std::string{fieldName};
     };
     doSingleWideInsert(1, fieldCount, valueGenerator);
 
@@ -891,13 +899,14 @@ TEST_F(FleCrudTest, Insert100Fields) {
 
         assertECOCDocumentCountByField(fieldName, 1);
 
-        ASSERT_FALSE(
-            _queryImpl
-                ->getById(
-                    _escNs,
-                    ESCCollection::generateNonAnchorId(
-                        getTestESCToken(fieldName, valueGenerator(fieldNameFromInt(field), 0)), 1))
-                .isEmpty());
+        ASSERT_FALSE(_queryImpl
+                         ->getById(_escNs,
+                                   ESCCollection::generateNonAnchorId(
+                                       &hmacCtx,
+                                       getTestESCToken(fieldName,
+                                                       valueGenerator(fieldNameFromInt(field), 0)),
+                                       1))
+                         .isEmpty());
     }
 }
 
@@ -908,7 +917,7 @@ TEST_F(FleCrudTest, Insert20Fields50Rows) {
     uint64_t rowCount = 50;
 
     ValueGenerator valueGenerator = [](StringData fieldName, uint64_t row) {
-        return fieldName.toString() + std::to_string(row % 7);
+        return std::string{fieldName} + std::to_string(row % 7);
     };
 
 
@@ -929,6 +938,7 @@ TEST_F(FleCrudTest, Insert20Fields50Rows) {
                 _queryImpl
                     ->getById(_escNs,
                               ESCCollection::generateNonAnchorId(
+                                  &hmacCtx,
                                   getTestESCToken(fieldName,
                                                   valueGenerator(fieldNameFromInt(field), row)),
                                   count))
@@ -964,7 +974,7 @@ TEST_F(FleCrudTest, InsertV1PayloadAgainstV2Protocol) {
     payload.setServerEncryptionToken({{}});
     payload.setEncryptedTokens(bogusEncryptedTokens);
     payload.setValue(buf);
-    payload.setType(BSONType::String);
+    payload.setType(stdx::to_underlying(BSONType::string));
 
     std::vector<EDCServerPayloadInfo> serverPayload(1);
     serverPayload.front().fieldPathName = "encrypted";
@@ -994,7 +1004,7 @@ TEST_F(FleCrudTest, InsertUnindexedV1AgainstV2Protocol) {
     payload.setServerEncryptionToken({{}});
     payload.setEncryptedTokens(bogusEncryptedTokens);
     payload.setValue(std::vector<uint8_t>{64});
-    payload.setType(BSONType::String);
+    payload.setType(stdx::to_underlying(BSONType::string));
     payload.setContentionFactor(0);
     payload.setIndexKeyId(indexKeyId);
     auto iup = payload.toBSON();
@@ -1033,8 +1043,15 @@ TEST_F(FleCrudTest, InsertUnindexedV1AgainstV2Protocol) {
 // search token sets ('b') is rejected.
 TEST_F(FleCrudTest, InsertPayloadIsBothRangeAndTextSearch) {
     auto bogusEncryptedTokens = StateCollectionTokensV2({{}}, false).encrypt({{}});
-    FLE2InsertUpdatePayloadV2 payload(
-        {}, {}, bogusEncryptedTokens, indexKeyId, BSONType::String, {}, {}, {}, 0);
+    FLE2InsertUpdatePayloadV2 payload({},
+                                      {},
+                                      bogusEncryptedTokens,
+                                      indexKeyId,
+                                      stdx::to_underlying(BSONType::string),
+                                      {},
+                                      {},
+                                      {},
+                                      0);
     payload.setEdgeTokenSet(std::vector<EdgeTokenSetV2>{{{}, {}, {}, bogusEncryptedTokens}});
     payload.setTextSearchTokenSets(
         TextSearchTokenSets{{{}, {}, {}, bogusEncryptedTokens}, {}, {}, {}});
@@ -1059,7 +1076,9 @@ TEST_F(FleCrudTest, InsertAndDeleteOne) {
     assertDocumentCounts(1, 1, 1);
 
     ASSERT_FALSE(
-        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(getTestESCToken(element), 1))
+        _queryImpl
+            ->getById(_escNs,
+                      ESCCollection::generateNonAnchorId(&hmacCtx, getTestESCToken(element), 1))
             .isEmpty());
 
     doSingleDelete(1, Fle2AlgorithmInt::kEquality);
@@ -1094,7 +1113,9 @@ TEST_F(FleCrudTest, InsertTwoSameAndDeleteTwo) {
     assertDocumentCounts(2, 2, 2);
 
     ASSERT_FALSE(
-        _queryImpl->getById(_escNs, ESCCollection::generateNonAnchorId(getTestESCToken(element), 1))
+        _queryImpl
+            ->getById(_escNs,
+                      ESCCollection::generateNonAnchorId(&hmacCtx, getTestESCToken(element), 1))
             .isEmpty());
 
     doSingleDelete(2, Fle2AlgorithmInt::kEquality);
@@ -1438,8 +1459,15 @@ TEST_F(FleCrudTest, FindAndModify_SetSafeContent) {
 BSONObj makeInsertUpdatePayload(StringData path, const UUID& uuid) {
     // Actual values don't matter for these tests (apart from indexKeyId).
     auto encryptedTokens = StateCollectionTokensV2({{}}, boost::none).encrypt({{}});
-    auto bson = FLE2InsertUpdatePayloadV2(
-                    {}, {}, std::move(encryptedTokens), uuid, BSONType::String, {}, {}, {}, 0)
+    auto bson = FLE2InsertUpdatePayloadV2({},
+                                          {},
+                                          std::move(encryptedTokens),
+                                          uuid,
+                                          stdx::to_underlying(BSONType::string),
+                                          {},
+                                          {},
+                                          {},
+                                          0)
                     .toBSON();
     std::vector<std::uint8_t> bindata;
     bindata.resize(bson.objsize() + 1);
@@ -1459,7 +1487,7 @@ TEST_F(FleCrudTest, validateIndexKeyValid) {
 
     auto validInsert = makeInsertUpdatePayload(field.getPath(), field.getKeyId());
     auto validPayload = EDCServerCollection::getEncryptedFieldInfo(validInsert);
-    validateInsertUpdatePayloads(fields, validPayload);
+    validateInsertUpdatePayloads(_opCtx.get(), fields, validPayload);
 }
 
 TEST_F(FleCrudTest, validateIndexKeyInvalid) {
@@ -1470,7 +1498,7 @@ TEST_F(FleCrudTest, validateIndexKeyInvalid) {
 
     auto invalidInsert = makeInsertUpdatePayload(field.getPath(), UUID::gen());
     auto invalidPayload = EDCServerCollection::getEncryptedFieldInfo(invalidInsert);
-    ASSERT_THROWS_WITH_CHECK(validateInsertUpdatePayloads(fields, invalidPayload),
+    ASSERT_THROWS_WITH_CHECK(validateInsertUpdatePayloads(_opCtx.get(), fields, invalidPayload),
                              DBException,
                              [&](const DBException& ex) {
                                  ASSERT_STRING_CONTAINS(ex.what(),
@@ -1763,12 +1791,6 @@ protected:
     stdx::unordered_set<std::string> getExpectedPrefixes(const unicode::String& foldedString,
                                                          uint32_t lb,
                                                          uint32_t ub);
-    uint32_t getMsizeForSubstring(StringData unfoldedString,
-                                  uint32_t lb,
-                                  uint32_t ub,
-                                  uint32_t mlen);
-    uint32_t getMsizeForPrefixSuffix(StringData unfoldedString, uint32_t lb, uint32_t ub);
-
     void verifyExpectationsAfterInsertions(
         const std::vector<std::pair<StringData, StringData>>& inserted);
 
@@ -1801,7 +1823,7 @@ EncryptedFieldConfig QETextSearchCrudTest::getEFC() {
         qtc.setDiacriticSensitive(!schema.diacf);
         qtcs.push_back(std::move(qtc));
     }
-    EncryptedField ef(UUID::gen(), kTestFieldName.toString());
+    EncryptedField ef(UUID::gen(), std::string{kTestFieldName});
     std::variant<std::vector<QueryTypeConfig>, QueryTypeConfig> vqtcs = std::move(qtcs);
     ef.setBsonType("string"_sd);
     ef.setQueries(vqtcs);
@@ -2010,9 +2032,9 @@ EDCTwiceDerivedToken QETextSearchCrudTest::getTestEDCTwiceDerivedToken(
 BSONObj QETextSearchCrudTest::findESCNonAnchor(BSONElement element,
                                                uint64_t cpos,
                                                boost::optional<QueryTypeEnum> qtype) {
-    return _queryImpl->getById(
-        _escNs,
-        ESCCollection::generateNonAnchorId(getTestESCTwiceDerivedToken(element, qtype), cpos));
+    return _queryImpl->getById(_escNs,
+                               ESCCollection::generateNonAnchorId(
+                                   &hmacCtx, getTestESCTwiceDerivedToken(element, qtype), cpos));
 }
 
 void QETextSearchCrudTest::verifyESCEntriesForString(StringData testString,
@@ -2022,7 +2044,7 @@ void QETextSearchCrudTest::verifyESCEntriesForString(StringData testString,
     auto doc = BSON(kTestFieldName << testString);
     if (padding) {
         ASSERT(qtype.has_value());  // padding values must always have a query type
-        doc = BSON(kTestFieldName << (testString.toString() + "\xff"));
+        doc = BSON(kTestFieldName << (testString + "\xff"));
     }
     auto element = doc.firstElement();
 
@@ -2061,7 +2083,7 @@ stdx::unordered_set<std::string> QETextSearchCrudTest::getExpectedSubstrings(
     stdx::unordered_set<std::string> res;
     for (uint32_t ss_len = lb; ss_len <= std::min(ub, uint32_t(foldedString.size())); ss_len++) {
         for (uint32_t i = 0; i <= foldedString.size() - ss_len; i++) {
-            res.insert(foldedString.substrToBuf(&_stackBuf, i, ss_len).toString());
+            res.insert(std::string{foldedString.substrToBuf(&_stackBuf, i, ss_len)});
         }
     }
     return res;
@@ -2072,8 +2094,8 @@ stdx::unordered_set<std::string> QETextSearchCrudTest::getExpectedSuffixes(
     stdx::unordered_set<std::string> res;
     for (uint32_t suff_len = lb; suff_len <= std::min(ub, uint32_t(foldedString.size()));
          suff_len++) {
-        res.insert(foldedString.substrToBuf(&_stackBuf, foldedString.size() - suff_len, suff_len)
-                       .toString());
+        res.insert(std::string{
+            foldedString.substrToBuf(&_stackBuf, foldedString.size() - suff_len, suff_len)});
     }
     return res;
 }
@@ -2083,41 +2105,9 @@ stdx::unordered_set<std::string> QETextSearchCrudTest::getExpectedPrefixes(
     stdx::unordered_set<std::string> res;
     for (uint32_t pref_len = lb; pref_len <= std::min(ub, uint32_t(foldedString.size()));
          pref_len++) {
-        res.insert(foldedString.substrToBuf(&_stackBuf, 0, pref_len).toString());
+        res.insert(std::string{foldedString.substrToBuf(&_stackBuf, 0, pref_len)});
     }
     return res;
-}
-
-uint32_t QETextSearchCrudTest::getMsizeForSubstring(StringData unfoldedString,
-                                                    uint32_t lb,
-                                                    uint32_t ub,
-                                                    uint32_t mlen) {
-    // See
-    // https://github.com/10gen/mongo/blob/master/src/mongo/db/modules/enterprise/docs/fle/fle_string_search.md#strencode-substring
-    // for an explanation of this calculation.
-    uint32_t padded_len = uint32_t((unfoldedString.size() + 5 + 15) / 16) * 16 - 5;
-    if (lb > padded_len) {
-        return 0;
-    }
-    padded_len = std::min(mlen, padded_len);
-    uint32_t largest_substring = std::min(padded_len, ub);
-    uint32_t largest_substring_count = padded_len - largest_substring + 1;
-    uint32_t smallest_substring_count = padded_len - lb + 1;
-    return (largest_substring_count + smallest_substring_count) *
-        (smallest_substring_count - largest_substring_count + 1) / 2;
-}
-
-uint32_t QETextSearchCrudTest::getMsizeForPrefixSuffix(StringData unfoldedString,
-                                                       uint32_t lb,
-                                                       uint32_t ub) {
-    // See
-    // https://github.com/10gen/mongo/blob/master/src/mongo/db/modules/enterprise/docs/fle/fle_string_search.md#strencode-suffix-and-prefix
-    // for an explanation of this calculation.
-    const uint32_t padded_len = uint32_t((unfoldedString.size() + 5 + 15) / 16) * 16 - 5;
-    if (lb > padded_len) {
-        return 0;
-    }
-    return std::min(ub, padded_len) - lb + 1;
 }
 
 void QETextSearchCrudTest::verifyExpectationsAfterInsertions(
@@ -2147,22 +2137,23 @@ void QETextSearchCrudTest::verifyExpectationsAfterInsertions(
 
         totalTags++;  // exact
         unicode::String unicodeFoldedStr(foldedStr);
-        auto foldedStrStd = foldedStr.toString();
+        std::string foldedStrStd{foldedStr};
         exactCounts[foldedStrStd]++;
         for (const auto& schema : _schemas) {
             uint32_t msize;
             stdx::unordered_set<std::string> affixes;
             switch (schema.type) {
                 case QueryTypeEnum::SubstringPreview:
-                    msize = getMsizeForSubstring(unfoldedStr, schema.lb, schema.ub, schema.mlen);
+                    msize =
+                        msizeForSubstring(unfoldedStr.size(), schema.lb, schema.ub, schema.mlen);
                     affixes = getExpectedSubstrings(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 case QueryTypeEnum::SuffixPreview:
-                    msize = getMsizeForPrefixSuffix(unfoldedStr, schema.lb, schema.ub);
+                    msize = msizeForSuffixOrPrefix(unfoldedStr.size(), schema.lb, schema.ub);
                     affixes = getExpectedSuffixes(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 case QueryTypeEnum::PrefixPreview:
-                    msize = getMsizeForPrefixSuffix(unfoldedStr, schema.lb, schema.ub);
+                    msize = msizeForSuffixOrPrefix(unfoldedStr.size(), schema.lb, schema.ub);
                     affixes = getExpectedPrefixes(unicodeFoldedStr, schema.lb, schema.ub);
                     break;
                 default:
@@ -2214,9 +2205,9 @@ void QETextSearchCrudTest::doInsertsAndVerifyExpectations(
 
 TEST_F(QETextSearchCrudTest, BasicSubstring) {
     addSchema({.type = QueryTypeEnum::SubstringPreview,
-               .lb = 10,
-               .ub = 100,
-               .mlen = 1000,
+               .lb = 2,
+               .ub = 10,
+               .mlen = 400,
                .casef = false,
                .diacf = false});
     doInsertsAndVerifyExpectations({{"demonstration", "demonstration"}});
@@ -2256,9 +2247,9 @@ TEST_F(QETextSearchCrudTest, BasicPrefixAndSuffix) {
 
 TEST_F(QETextSearchCrudTest, RepeatingSubstring) {
     addSchema({.type = QueryTypeEnum::SubstringPreview,
-               .lb = 10,
-               .ub = 100,
-               .mlen = 1000,
+               .lb = 2,
+               .ub = 10,
+               .mlen = 400,
                .casef = false,
                .diacf = false});
     doInsertsAndVerifyExpectations({{"aaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaa"}});
@@ -2277,9 +2268,9 @@ TEST_F(QETextSearchCrudTest, FoldAsciiSuffix) {
 
 TEST_F(QETextSearchCrudTest, UnicodeSubstring) {
     addSchema({.type = QueryTypeEnum::SubstringPreview,
-               .lb = 1,
+               .lb = 2,
                .ub = 5,
-               .mlen = 1000,
+               .mlen = 400,
                .casef = false,
                .diacf = false});
     doInsertsAndVerifyExpectations({{"私はぺんです.", "私はぺんです."}});
@@ -2289,7 +2280,7 @@ TEST_F(QETextSearchCrudTest, FoldUnicodeSubstring) {
     addSchema({.type = QueryTypeEnum::SubstringPreview,
                .lb = 3,
                .ub = 5,
-               .mlen = 1000,
+               .mlen = 400,
                .casef = true,
                .diacf = true});
     doInsertsAndVerifyExpectations(
@@ -2299,9 +2290,9 @@ TEST_F(QETextSearchCrudTest, FoldUnicodeSubstring) {
 
 TEST_F(QETextSearchCrudTest, BasicSubstringMultipleInserts) {
     addSchema({.type = QueryTypeEnum::SubstringPreview,
-               .lb = 10,
-               .ub = 100,
-               .mlen = 1000,
+               .lb = 2,
+               .ub = 10,
+               .mlen = 400,
                .casef = false,
                .diacf = false});
     doInsertsAndVerifyExpectations({{"demonstration", "demonstration"},

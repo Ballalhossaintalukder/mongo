@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/sharding_recovery_service.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -53,18 +47,25 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/collection_critical_section_document_gen.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
-#include "mongo/db/s/database_sharding_state.h"
+#include "mongo/db/s/database_sharding_runtime.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/shard_server_op_observer.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/s/sharding_migration_critical_section.h"
-#include "mongo/db/s/sharding_recovery_service.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -147,46 +148,40 @@ public:
 
     void assertCriticalSectionCatchUpEnteredInMemory(const NamespaceString& nss) {
         if (nss.isDbOnly()) {
-            const auto scopedDss =
-                DatabaseShardingState::acquireShared(operationContext(), nss.dbName());
-            ASSERT(scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
-            ASSERT(!scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
+            const auto scopedDsr =
+                DatabaseShardingRuntime::acquireShared(operationContext(), nss.dbName());
+            ASSERT(scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(!scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         } else {
             const auto csr = CollectionShardingRuntime::acquireShared(operationContext(), nss);
-            ASSERT(csr->getCriticalSectionSignal(operationContext(),
-                                                 ShardingMigrationCriticalSection::kWrite));
-            ASSERT(!csr->getCriticalSectionSignal(operationContext(),
-                                                  ShardingMigrationCriticalSection::kRead));
+            ASSERT(csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(!csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         }
     }
 
     void assertCriticalSectionCommitEnteredInMemory(const NamespaceString& nss) {
         if (nss.isDbOnly()) {
-            const auto scopedDss =
-                DatabaseShardingState::acquireShared(operationContext(), nss.dbName());
-            ASSERT(scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
-            ASSERT(scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
+            const auto scopedDsr =
+                DatabaseShardingRuntime::acquireShared(operationContext(), nss.dbName());
+            ASSERT(scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         } else {
             const auto csr = CollectionShardingRuntime::acquireShared(operationContext(), nss);
-            ASSERT(csr->getCriticalSectionSignal(operationContext(),
-                                                 ShardingMigrationCriticalSection::kWrite));
-            ASSERT(csr->getCriticalSectionSignal(operationContext(),
-                                                 ShardingMigrationCriticalSection::kRead));
+            ASSERT(csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         }
     }
 
     void assertCriticalSectionLeftInMemory(const NamespaceString& nss) {
         if (nss.isDbOnly()) {
-            const auto scopedDss =
-                DatabaseShardingState::acquireShared(operationContext(), nss.dbName());
-            ASSERT(!scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
-            ASSERT(!scopedDss->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
+            const auto scopedDsr =
+                DatabaseShardingRuntime::acquireShared(operationContext(), nss.dbName());
+            ASSERT(!scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(!scopedDsr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         } else {
             const auto csr = CollectionShardingRuntime::acquireShared(operationContext(), nss);
-            ASSERT(!csr->getCriticalSectionSignal(operationContext(),
-                                                  ShardingMigrationCriticalSection::kWrite));
-            ASSERT(!csr->getCriticalSectionSignal(operationContext(),
-                                                  ShardingMigrationCriticalSection::kRead));
+            ASSERT(!csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kWrite));
+            ASSERT(!csr->getCriticalSectionSignal(ShardingMigrationCriticalSection::kRead));
         }
     }
 

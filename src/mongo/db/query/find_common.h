@@ -29,16 +29,16 @@
 
 #pragma once
 
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/operation_context.h"
 #include "mongo/db/query/client_cursor/cursor_response.h"
 #include "mongo/db/query/find.h"
 #include "mongo/db/query/plan_executor.h"
-#include <cstddef>
-
-#include "mongo/bson/bsonobj.h"
-#include "mongo/db/operation_context.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
 
 namespace mongo {
 
@@ -128,12 +128,10 @@ public:
     public:
         BSONObjCursorAppender(const bool alwaysAcceptFirstDoc,
                               CursorResponseBuilder* builder,
-                              ResourceConsumption::DocumentUnitCounter* docUnitsReturned,
                               BSONObj& pbrt,
                               bool& failedToAppend)
             : _alwaysAcceptFirstDoc{alwaysAcceptFirstDoc},
               _builder{builder},
-              _docUnitsReturned{docUnitsReturned},
               _pbrt{pbrt},
               _failedToAppend{failedToAppend} {}
 
@@ -157,7 +155,6 @@ public:
             }
 
             _builder->append(obj);
-            _docUnitsReturned->observeOne(objSize);
 
             // If this executor produces a postBatchResumeToken, store it. We will set the
             // latest valid 'pbrt' on the batch at the end of batched execution.
@@ -169,12 +166,11 @@ public:
         // State not owned by us.
         const bool _alwaysAcceptFirstDoc;
         CursorResponseBuilder* _builder;
-        ResourceConsumption::DocumentUnitCounter* _docUnitsReturned;
         BSONObj& _pbrt;
         bool& _failedToAppend;
 
         // State within append() calls.
-        size_t objSize;
+        size_t objSize = 0;
     };
 
     MONGO_COMPILER_ALWAYS_INLINE static bool fitsInBatch(size_t bytesBuffered, size_t objSize) {

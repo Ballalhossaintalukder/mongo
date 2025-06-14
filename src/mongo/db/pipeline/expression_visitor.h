@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include "mongo/db/pipeline/expression.h"
-#include "mongo/platform/basic.h"
-
 #include "mongo/db/pipeline/expression_walker.h"
 
 namespace ExpressionTests {
@@ -174,7 +171,7 @@ class ExpressionBitAnd;
 class ExpressionBitOr;
 class ExpressionBitXor;
 class ExpressionInternalKeyStringValue;
-class ExpressionUUID;
+class ExpressionCreateUUID;
 class ExpressionEncStrStartsWith;
 class ExpressionEncStrEndsWith;
 class ExpressionEncStrContains;
@@ -406,7 +403,7 @@ public:
     virtual void visit(expression_walker::MaybeConstPtr<IsConst, ExpressionInternalIndexKey>) = 0;
     virtual void visit(
         expression_walker::MaybeConstPtr<IsConst, ExpressionInternalKeyStringValue>) = 0;
-    virtual void visit(expression_walker::MaybeConstPtr<IsConst, ExpressionUUID>) = 0;
+    virtual void visit(expression_walker::MaybeConstPtr<IsConst, ExpressionCreateUUID>) = 0;
 };
 
 using ExpressionMutableVisitor = ExpressionVisitor<false>;
@@ -582,6 +579,6 @@ struct SelectiveConstExpressionVisitorBase : public ExpressionConstVisitor {
     void visit(const ExpressionInternalOwningShard*) override {}
     void visit(const ExpressionInternalIndexKey*) override {}
     void visit(const ExpressionInternalKeyStringValue*) override {}
-    void visit(const ExpressionUUID*) override {}
+    void visit(const ExpressionCreateUUID*) override {}
 };
 }  // namespace mongo

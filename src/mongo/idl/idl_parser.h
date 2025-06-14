@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <span>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/data_range.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -59,6 +47,19 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstdint>
+#include <span>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -152,10 +153,7 @@ inline auto idlPreparsedValue(stdx::type_identity<multiversion::FeatureCompatibi
 template <typename T, typename... A>
 T preparsedValue(A&&... args) {
     using preparsed_value_adl_barrier::idlPreparsedValue;
-    MONGO_COMPILER_DIAGNOSTIC_PUSH
-    MONGO_COMPILER_DIAGNOSTIC_WORKAROUND_BOOST_OPTIONAL_UNINITIALIZED
     return idlPreparsedValue(stdx::type_identity<T>{}, std::forward<A>(args)...);
-    MONGO_COMPILER_DIAGNOSTIC_POP
 }
 
 enum DebugEnabled : bool {};
@@ -357,7 +355,7 @@ public:
      * Throws an exception if the BSON element's type is wrong.
      */
     bool checkAndAssertBinDataType(const BSONElement& element, BinDataType type) const {
-        if (MONGO_likely(element.type() == BinData && element.binDataType() == type)) {
+        if (MONGO_likely(element.type() == BSONType::binData && element.binDataType() == type)) {
             return true;
         }
 

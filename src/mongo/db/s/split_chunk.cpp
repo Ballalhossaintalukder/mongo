@@ -29,15 +29,6 @@
 
 #include "mongo/db/s/split_chunk.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <iterator>
-#include <memory>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -59,6 +50,7 @@
 #include "mongo/db/s/collection_sharding_runtime.h"
 #include "mongo/db/s/shard_filtering_metadata_refresh.h"
 #include "mongo/db/s/shard_key_index_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/split_chunk_request_type.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/db/write_concern_options.h"
@@ -69,14 +61,21 @@
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -87,9 +86,8 @@ const ReadPreferenceSetting kPrimaryOnlyReadPreference{ReadPreference::PrimaryOn
 
 // This shard version is used as the received version in StaleConfigInfo since we do not have
 // information about the received version of the operation.
-ShardVersion ShardVersionPlacementIgnoredNoIndexes() {
-    return ShardVersionFactory::make(ChunkVersion::IGNORED(),
-                                     boost::optional<CollectionIndexes>(boost::none));
+ShardVersion ShardVersionPlacementIgnored() {
+    return ShardVersionFactory::make(ChunkVersion::IGNORED());
 }
 
 bool checkIfSingleDoc(OperationContext* opCtx,
@@ -139,29 +137,27 @@ bool checkMetadataForSuccessfulSplitChunk(OperationContext* opCtx,
     ShardId shardId = ShardingState::get(opCtx)->shardId();
 
     uassert(StaleConfigInfo(nss,
-                            ShardVersionPlacementIgnoredNoIndexes() /* receivedVersion */,
+                            ShardVersionPlacementIgnored() /* receivedVersion */,
                             boost::none /* wantedVersion */,
                             shardId),
             str::stream() << "Collection " << nss.toStringForErrorMsg() << " needs to be recovered",
             metadataAfterSplit);
     uassert(StaleConfigInfo(nss,
-                            ShardVersionPlacementIgnoredNoIndexes() /* receivedVersion */,
+                            ShardVersionPlacementIgnored() /* receivedVersion */,
                             ShardVersion::UNSHARDED() /* wantedVersion */,
                             shardId),
             str::stream() << "Collection " << nss.toStringForErrorMsg() << " is not sharded",
             metadataAfterSplit->isSharded());
     const auto placementVersion = metadataAfterSplit->getShardPlacementVersion();
     const auto epoch = placementVersion.epoch();
-    uassert(
-        StaleConfigInfo(
-            nss,
-            ShardVersionPlacementIgnoredNoIndexes() /* receivedVersion */,
-            ShardVersionFactory::make(*metadataAfterSplit,
-                                      scopedCSR->getCollectionIndexes(opCtx)) /* wantedVersion */,
-            shardId),
-        str::stream() << "Collection " << nss.toStringForErrorMsg() << " changed since split start",
-        epoch == expectedEpoch &&
-            (!expectedTimestamp || placementVersion.getTimestamp() == expectedTimestamp));
+    uassert(StaleConfigInfo(nss,
+                            ShardVersionPlacementIgnored() /* receivedVersion */,
+                            ShardVersionFactory::make(*metadataAfterSplit) /* wantedVersion */,
+                            shardId),
+            str::stream() << "Collection " << nss.toStringForErrorMsg()
+                          << " changed since split start",
+            epoch == expectedEpoch &&
+                (!expectedTimestamp || placementVersion.getTimestamp() == expectedTimestamp));
 
     ChunkType nextChunk;
     for (auto it = splitPoints.begin(); it != splitPoints.end(); ++it) {

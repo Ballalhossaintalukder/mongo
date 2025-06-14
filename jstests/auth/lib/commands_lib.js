@@ -3778,47 +3778,6 @@ export const authCommandsLib = {
           ]
         },
         {
-          testname: "_configsvrCommitIndex",
-          command: {
-            _configsvrCommitIndex: "x.y",
-            keyPattern: {x: 1},
-            name: 'x_1',
-            options: {},
-            collectionUUID: UUID(),
-            collectionIndexUUID: UUID(),
-            lastmod: Timestamp(1, 0),
-          },
-          skipSharded: true,
-          expectFail: true,
-          testcases: [
-              {
-                runOnDb: adminDbName,
-                roles: {__system: 1},
-                privileges: [{resource: {cluster: true}, actions: ["internal"]}],
-                expectFail: true
-              },
-          ]
-        },
-        {
-          testname: "_configsvrDropIndexCatalogEntry",
-          command: {
-            _configsvrDropIndexCatalogEntry: "x.y",
-            name: 'x_1',
-            collectionUUID: UUID(),
-            lastmod: Timestamp(1, 0),
-          },
-          skipSharded: true,
-          expectFail: true,
-          testcases: [
-              {
-                runOnDb: adminDbName,
-                roles: {__system: 1},
-                privileges: [{resource: {cluster: true}, actions: ["internal"]}],
-                expectFail: true
-              },
-          ]
-        },
-        {
           testname: "create",
           command: {create: "x"},
           teardown: function(db) {
@@ -5539,6 +5498,11 @@ export const authCommandsLib = {
               {runOnDb: firstDbName, privileges: [], expectAuthzFailure: true},
           ]
         },
+        {
+            testname: "listCollections_rawData",
+            command: {listCollections: 1, rawData: true},
+            testcases: [{runOnDb: firstDbName, roles: {__system: 1}}]
+        },
 
         {
           testname: "listIndexes",
@@ -5840,7 +5804,7 @@ export const authCommandsLib = {
         },
         {
           testname: "d_moveRange",
-          command: {_shardsvrMoveRange: "test.x", fromShard: "a", toShard: "b", min: {}, max: {}, maxChunkSizeBytes: 1024},
+          command: {_shardsvrMoveRange: "test.x", fromShard: "a", toShard: "b", min: {}, max: {}, maxChunkSizeBytes: 1024, collectionTimestamp: Timestamp(1, 0)},
           skipSharded: true,
           testcases: [
               {
@@ -7188,30 +7152,60 @@ export const authCommandsLib = {
           testcases: testcases_transformationOnlyExpectFail
         },
         {
-          testname: "startRecordingTraffic",
-          command: {startRecordingTraffic: 1, filename: "notARealPath"},
+          testname: "getTrafficRecordingStatus",
+          command: {getTrafficRecordingStatus: 1},
+          testcases: [
+              {runOnDb: adminDbName, roles: roles_hostManager},
+          ],
+          setup: function(db) {
+              db.runCommand({stopTrafficRecording: 1});
+              assert.commandWorked(db.runCommand({startTrafficRecording: 1, destination: "notARealPath"}));
+          },
+          teardown: function(db) {
+            db.runCommand({stopTrafficRecording: 1});
+            removeFile("notARealPath");
+          },
+        },
+        {
+          testname: "startTrafficRecording",
+          command: {startTrafficRecording: 1, destination: "notARealPath"},
           testcases: [
               {runOnDb: adminDbName, roles: roles_hostManager},
           ],
           teardown: (db, response) => {
               if (response.ok) {
-                  assert.commandWorked(db.runCommand({stopRecordingTraffic: 1}));
+                  assert.commandWorked(db.runCommand({stopTrafficRecording: 1}));
               }
           }
         },
         {
-          testname: "stopRecordingTraffic",
-          command: {stopRecordingTraffic: 1},
+          testname: "stopTrafficRecording",
+          command: {stopTrafficRecording: 1},
           testcases: [
               {runOnDb: adminDbName, roles: roles_hostManager},
           ],
           setup: function(db) {
-              db.runCommand({stopRecordingTraffic: 1});
-              assert.commandWorked(db.runCommand({startRecordingTraffic: 1, filename: "notARealPath"}));
+              db.runCommand({stopTrafficRecording: 1});
+              assert.commandWorked(db.runCommand({startTrafficRecording: 1, destination: "notARealPath"}));
           },
           teardown: function(db) {
-            db.runCommand({stopRecordingTraffic: 1});
+            db.runCommand({stopTrafficRecording: 1});
+            removeFile("notARealPath");
           },
+        },
+        {
+          // Internal command, renamed to startTrafficRecording. Test case remains for multi-version tests.
+          testname: "startRecordingTraffic",
+          skipTest: () => true,
+          command: {startRecordingTraffic: 1, destination: "notARealPath"},
+          testcases: [],
+        },
+        {
+          // Internal command, renamed to stopTrafficRecording. Test case remains for multi-version tests.
+          testname: "stopRecordingTraffic",
+          skipTest: () => true,
+          command: {stopRecordingTraffic: 1},
+          testcases: [],
         },
         {
           testname: "clearJumboFlag",
@@ -7354,31 +7348,6 @@ export const authCommandsLib = {
           ]
         },
         {
-          testname: "aggregate_operation_metrics",
-          command: {
-              aggregate: 1,
-              pipeline: [{$operationMetrics: {}}],
-              cursor: {}
-          },
-          testcases: [
-              {
-                runOnDb: adminDbName,
-                roles: roles_monitoring,
-                privileges: [
-                    {resource: {cluster: true}, actions: ["operationMetrics"]},
-                ],
-              },
-              {
-                runOnDb: firstDbName,
-                roles: roles_monitoring,
-                privileges: [
-                    {resource: {cluster: true}, actions: ["operationMetrics"]},
-                ],
-                expectFail: true,
-              },
-            ]
-        },
-        {
           testname: "aggregate_$_internalUnpackBucket",
           command: {
               aggregate: "foo",
@@ -7505,6 +7474,25 @@ export const authCommandsLib = {
           command: {
               aggregate: 1,
               pipeline: [{$_internalChangeStreamCheckResumability: {}}],
+              cursor: {}
+          },
+          testcases: [
+              {
+                runOnDb: firstDbName,
+                roles: {__system: 1},
+                privileges: [
+                    {resource: {db: firstDbName, collection: ""}, actions: ["find"]},
+                    {resource: {cluster: true}, actions: ["internal"]}
+                ],
+                expectFail: true,
+              },
+            ]
+        },
+        {
+          testname: "aggregate_$_internalChangeStreamInjectControlEvents",
+          command: {
+              aggregate: 1,
+              pipeline: [{$_internalChangeStreamInjectControlEvents: {}}],
               cursor: {}
           },
           testcases: [

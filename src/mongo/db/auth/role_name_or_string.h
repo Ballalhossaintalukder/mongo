@@ -29,16 +29,16 @@
 
 #pragma once
 
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/auth/role_name.h"
 #include "mongo/db/database_name.h"
+
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 namespace mongo {
 
@@ -56,7 +56,7 @@ class RoleNameOrString {
 public:
     RoleNameOrString() = delete;
     explicit RoleNameOrString(std::string role) : _roleName(std::move(role)) {}
-    explicit RoleNameOrString(StringData role) : _roleName(role.toString()) {}
+    explicit RoleNameOrString(StringData role) : _roleName(std::string{role}) {}
     explicit RoleNameOrString(RoleName role) : _roleName(std::move(role)) {}
 
     // IDL support.

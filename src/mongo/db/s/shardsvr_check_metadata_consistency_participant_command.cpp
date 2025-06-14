@@ -28,17 +28,6 @@
  */
 
 
-#include <algorithm>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -64,6 +53,7 @@
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/repl/read_concern_level.h"
 #include "mongo/db/s/metadata_consistency_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/s/catalog/sharding_catalog_client.h"
@@ -71,9 +61,19 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -131,8 +131,23 @@ public:
             const auto configsvrCollections =
                 getCollectionsListFromConfigServer(opCtx, nss, commandLevel);
 
-            auto inconsistencies = checkCollectionMetadataConsistency(
-                opCtx, nss, commandLevel, shardId, primaryShardId, configsvrCollections);
+            const auto checkRangeDeletionIndexes =
+                request().getCommonFields().getCheckRangeDeletionIndexes();
+            uassert(ErrorCodes::InvalidOptions,
+                    "Range deletion missing shard key index inconsistency check is not supported "
+                    "with the current FCV. Upgrade to the highest FCV for performing the check.",
+                    !checkRangeDeletionIndexes ||
+                        feature_flags::gCheckRangeDeletionsWithMissingShardKeyIndex.isEnabled(
+                            VersionContext::getDecoration(opCtx),
+                            serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
+
+            auto inconsistencies = checkCollectionMetadataConsistency(opCtx,
+                                                                      nss,
+                                                                      commandLevel,
+                                                                      shardId,
+                                                                      primaryShardId,
+                                                                      configsvrCollections,
+                                                                      checkRangeDeletionIndexes);
 
             // If this is the primary shard of the db coordinate index check across shards
             const auto optionalCheckIndexes = request().getCommonFields().getCheckIndexes();
@@ -245,7 +260,8 @@ public:
             const MetadataConsistencyCommandLevelEnum& commandLevel,
             const ShardId& shardId,
             const ShardId& primaryShardId,
-            const std::vector<mongo::CollectionType>& shardingCatalogCollections) {
+            const std::vector<mongo::CollectionType>& shardingCatalogCollections,
+            const bool checkRangeDeletionIndexes) {
             std::vector<CollectionPtr> localCatalogCollections;
             auto collCatalogSnapshot = [&] {
                 switch (commandLevel) {
@@ -325,7 +341,8 @@ public:
                 shardId,
                 primaryShardId,
                 shardingCatalogCollections,
-                localCatalogCollections);
+                localCatalogCollections,
+                checkRangeDeletionIndexes);
         }
 
         NamespaceString ns() const override {

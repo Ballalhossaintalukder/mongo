@@ -33,14 +33,8 @@
 #include <boost/optional/optional.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/json.h"
@@ -60,6 +54,7 @@
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/query/exec/async_results_merger.h"
+#include "mongo/s/query/exec/next_high_watermark_determining_strategy.h"
 #include "mongo/s/query/exec/results_merger_test_fixture.h"
 #include "mongo/s/session_catalog_router.h"
 #include "mongo/s/transaction_router.h"
@@ -69,26 +64,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 
-
-#include "mongo/logv2/log.h"
-
-#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
-
+#include <memory>
+#include <string>
 
 namespace mongo {
+
+using AsyncResultsMergerTest = ResultsMergerTestFixture;
+
 namespace {
 
 LogicalSessionId parseSessionIdFromCmd(BSONObj cmdObj) {
     return LogicalSessionId::parse(IDLParserContext("lsid"), cmdObj["lsid"].Obj());
-}
-
-BSONObj makePostBatchResumeToken(Timestamp clusterTime) {
-    auto pbrt =
-        ResumeToken::makeHighWaterMarkToken(clusterTime, ResumeTokenData::kDefaultTokenVersion)
-            .toDocument()
-            .toBson();
-    invariant(pbrt.firstElement().type() == BSONType::String);
-    return pbrt;
 }
 
 BSONObj makeResumeToken(Timestamp clusterTime, UUID uuid, BSONObj docKey) {
@@ -100,7 +86,79 @@ BSONObj makeResumeToken(Timestamp clusterTime, UUID uuid, BSONObj docKey) {
     return ResumeToken(data).toDocument().toBson();
 }
 
-using AsyncResultsMergerTest = ResultsMergerTestFixture;
+BSONObj makeHighWaterMarkToken(Timestamp ts) {
+    return BSON("_id" << AsyncResultsMergerTest::makePostBatchResumeToken(ts));
+}
+
+// Returns true if the high matermark token t1 is greater or equal compared to the high watermark
+// token t0.
+bool isMonotonicallyIncreasing(const BSONObj& highWaterMarkTokenT0,
+                               const BSONObj& highWaterMarkTokenT1) {
+    return AsyncResultsMerger::checkHighWaterMarkIsMonotonicallyIncreasing(
+        highWaterMarkTokenT0, highWaterMarkTokenT1, change_stream_constants::kSortSpec);
+}
+
+// Returns true if the high matermark token for timestamp t1 is greater or equal compared to the
+// high watermark token for timestamp t0.
+bool isMonotonicallyIncreasing(Timestamp timestampT0, Timestamp timestampT1) {
+    return isMonotonicallyIncreasing(makeHighWaterMarkToken(timestampT0),
+                                     makeHighWaterMarkToken(timestampT1));
+}
+
+NextHighWaterMarkDeterminingStrategyPtr buildNextHighWaterMarkDeterminingStrategy(
+    bool recognizeControlEvents) {
+    return NextHighWaterMarkDeterminingStrategyFactory::createForChangeStream(
+        AsyncResultsMergerTest::buildARMParamsForChangeStream(), recognizeControlEvents);
+}
+
+TEST_F(AsyncResultsMergerTest, ResponseReceivedWhileDetachedFromOperationContext) {
+    std::vector<RemoteCursor> cursors;
+    cursors.push_back(
+        makeRemoteCursor(kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, 5, {})));
+    auto arm = makeARMFromExistingCursors(std::move(cursors));
+
+    // Schedule requests.
+    auto readyEvent = unittest::assertGet(arm->nextEvent());
+
+    std::vector<CursorResponse> responses;
+    std::vector<BSONObj> batch = {fromjson("{_id: 1}"), fromjson("{_id: 2}")};
+    responses.emplace_back(kTestNss, CursorId(0), batch);
+
+    arm->detachFromOperationContext();
+    ASSERT_EQ(0, arm->numberOfBufferedRemoteResponses_forTest());
+
+    scheduleNetworkResponses(std::move(responses));
+
+    // As the ARM is detached from the OperationContext, it cannot immediately process the recceived
+    // response. IT must instead buffer it, so it can process it later when it is attached to an
+    // OperationContext again.
+    ASSERT_EQ(1, arm->numberOfBufferedRemoteResponses_forTest());
+
+    arm->reattachToOperationContext(operationContext());
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_TRUE(arm->remotesExhausted());
+
+    ASSERT_EQ(1, arm->numberOfBufferedRemoteResponses_forTest());
+
+    // ARM returns the correct results.
+    executor()->waitForEvent(readyEvent);
+    ASSERT_BSONOBJ_EQ(fromjson("{_id: 1}"), *unittest::assertGet(arm->nextReady()).getResult());
+
+    // Buffered remote response must have been processes as part of 'nextReady()' call.
+    ASSERT_EQ(0, arm->numberOfBufferedRemoteResponses_forTest());
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_BSONOBJ_EQ(fromjson("{_id: 2}"), *unittest::assertGet(arm->nextReady()).getResult());
+
+    // Number of buffered remote responses must remain at zero.
+    ASSERT_EQ(0, arm->numberOfBufferedRemoteResponses_forTest());
+
+    // After returning all the buffered results, ARM returns EOF immediately because the cursor was
+    // exhausted.
+    ASSERT_TRUE(arm->ready());
+    ASSERT_TRUE(unittest::assertGet(arm->nextReady()).isEOF());
+}
 
 TEST_F(AsyncResultsMergerTest, SingleShardUnsorted) {
     std::vector<RemoteCursor> cursors;
@@ -552,7 +610,7 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedClose) {
     // first shard may return further values between '6' and '9' in the future.
     ASSERT_FALSE(arm->ready());
 
-    // Close shard 1. Note that we have one buffered result from this shard in the merge queue.
+    // Close shard 1. This drops the document '{$sortKey: [9]}' from the result.
     arm->closeShardCursors({kTestShardIds[1]});
 
     // No killCursors command is supposed to be executed here, as the remote cursor was already
@@ -573,16 +631,13 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedClose) {
     // Respond with a cursorId of 5, meaning the remote cursor remains open.
     responses.emplace_back(kTestNss, CursorId(5), batch3);
     scheduleNetworkResponses(std::move(responses));
-
     executor()->waitForEvent(readyEvent);
 
     ASSERT_TRUE(arm->ready());
 
-    // We can now process all responses, including the one from the closed shard that is still in
-    // the merge queue.
+    // We can now process all responses. We should not see the not-yet consumed document from the
+    // shard that we already closed.
     ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [7]}"),
-                      *unittest::assertGet(arm->nextReady()).getResult());
-    ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [9]}"),
                       *unittest::assertGet(arm->nextReady()).getResult());
     ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [11]}"),
                       *unittest::assertGet(arm->nextReady()).getResult());
@@ -597,12 +652,6 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedClose) {
 
     ASSERT_EQ(0, arm->getNumRemotes());
     ASSERT_FALSE(arm->hasCursorForShard_forTest(kTestShardIds[0]));
-
-    // We still have one buffered result from shard 0 in the merge queue, which we can consume now.
-    ASSERT_TRUE(arm->ready());
-    ASSERT_TRUE(arm->remotesExhausted());
-    ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [12]}"),
-                      *unittest::assertGet(arm->nextReady()).getResult());
 
     // Now everything is fully consumed.
     ASSERT_TRUE(arm->ready());
@@ -644,7 +693,7 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedCloseAndReopen) {
     ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [1]}"),
                       *unittest::assertGet(arm->nextReady()).getResult());
 
-    // Close shard 1
+    // Close shard 1. This removes the document '{$sortKey: [2]}' from the result.
     arm->closeShardCursors({kTestShardIds[1]});
 
     // We expect to see one killCursors command call for the remote cursor.
@@ -669,9 +718,6 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedCloseAndReopen) {
     scheduleNetworkResponses(std::move(responses));
 
     executor()->waitForEvent(readyEvent);
-
-    ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [2]}"),
-                      *unittest::assertGet(arm->nextReady()).getResult());
 
     ASSERT_BSONOBJ_EQ(fromjson("{$sortKey: [3]}"),
                       *unittest::assertGet(arm->nextReady()).getResult());
@@ -725,6 +771,115 @@ TEST_F(AsyncResultsMergerTest, MultiShardSortedCloseAndReopen) {
     ASSERT_EQ(0, arm->getNumRemotes());
     ASSERT_FALSE(arm->hasCursorForShard_forTest(kTestShardIds[0]));
     ASSERT_FALSE(arm->hasCursorForShard_forTest(kTestShardIds[1]));
+}
+
+TEST_F(AsyncResultsMergerTest, CloseCursorWithUnconsumedInitialBatch) {
+    BSONObj findCmd = fromjson("{find: 'testcoll', sort: {_id: 1}}");
+    std::vector<BSONObj> batch = {BSON("$sortKey" << BSON_ARRAY(23)),
+                                  BSON("$sortKey" << BSON_ARRAY(42))};
+
+    std::vector<RemoteCursor> cursors;
+    cursors.push_back(makeRemoteCursor(
+        kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, 42, batch)));
+    auto arm = makeARMFromExistingCursors(std::move(cursors), findCmd);
+    ASSERT_EQ(1, arm->getNumRemotes());
+    ASSERT_TRUE(arm->hasCursorForShard_forTest(kTestShardIds[0]));
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_FALSE(arm->remotesExhausted());
+
+    // Close cursor immediately, without consuming any results. This drops the documents '{$sortKey:
+    // [23]}' and '{$sortKey: [42]}' from the result.
+    arm->closeShardCursors({kTestShardIds[0]});
+    ASSERT_EQ(0, arm->getNumRemotes());
+
+    // We expect to see one killCursors command call for the remote cursor.
+    ASSERT_TRUE(networkHasReadyRequests());
+    assertKillCursorsCmdHasCursorId(getNthPendingRequest(0u).cmdObj, 42);
+    blackHoleNextRequest();
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_TRUE(arm->remotesExhausted());
+
+    // Re-add the same shard, but with different documents.
+    batch = {BSON("$sortKey" << BSON_ARRAY(123)), BSON("$sortKey" << BSON_ARRAY(456))};
+
+    cursors.clear();
+    cursors.push_back(makeRemoteCursor(
+        kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, 99, batch)));
+    arm->addNewShardCursors(std::move(cursors));
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_FALSE(arm->remotesExhausted());
+    ASSERT_BSONOBJ_EQ(BSON("$sortKey" << BSON_ARRAY(123)),
+                      *unittest::assertGet(arm->nextReady()).getResult());
+    ASSERT_BSONOBJ_EQ(BSON("$sortKey" << BSON_ARRAY(456)),
+                      *unittest::assertGet(arm->nextReady()).getResult());
+
+    // Close cursor again.
+    arm->closeShardCursors({kTestShardIds[0]});
+    ASSERT_EQ(0, arm->getNumRemotes());
+
+    // We expect to see one killCursors command call for the remote cursor.
+    ASSERT_TRUE(networkHasReadyRequests());
+    assertKillCursorsCmdHasCursorId(getNthPendingRequest(0u).cmdObj, 99);
+    blackHoleNextRequest();
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_TRUE(arm->remotesExhausted());
+}
+
+TEST_F(AsyncResultsMergerTest, MultiShardSortedCloseWhileWaitingForShardResult) {
+    BSONObj findCmd = fromjson("{find: 'testcoll', sort: {_id: 1}}");
+    std::vector<RemoteCursor> cursors;
+    cursors.push_back(
+        makeRemoteCursor(kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, 23, {})));
+    cursors.push_back(
+        makeRemoteCursor(kTestShardIds[1], kTestShardHosts[1], CursorResponse(kTestNss, 42, {})));
+
+    auto arm = makeARMFromExistingCursors(std::move(cursors), findCmd);
+    ASSERT_EQ(2, arm->getNumRemotes());
+    ASSERT_TRUE(arm->hasCursorForShard_forTest(kTestShardIds[0]));
+    ASSERT_TRUE(arm->hasCursorForShard_forTest(kTestShardIds[1]));
+    ASSERT_FALSE(arm->ready());
+    ASSERT_FALSE(arm->remotesExhausted());
+
+    // Schedule requests.
+    unittest::assertGet(arm->nextEvent());
+
+    // One schedule a response from one of the shards.
+    std::vector<CursorResponse> responses;
+    std::vector<BSONObj> batch = {BSON("$sortKey" << BSON_ARRAY(1)),
+                                  BSON("$sortKey" << BSON_ARRAY(10))};
+    responses.emplace_back(kTestNss, CursorId(23), batch);
+
+    scheduleNetworkResponses(std::move(responses));
+
+    // Results are not ready because only one of the shards has responded.
+    ASSERT_FALSE(arm->ready());
+
+    // Close the cursor for the shard for which we have not scheduled a response yet. That
+    // immediately makes results available.
+    arm->closeShardCursors({kTestShardIds[1]});
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_FALSE(arm->remotesExhausted());
+
+    ASSERT_TRUE(arm->hasCursorForShard_forTest(kTestShardIds[0]));
+    ASSERT_FALSE(arm->hasCursorForShard_forTest(kTestShardIds[1]));
+    ASSERT_EQ(1, arm->getNumRemotes());
+
+    // We expect to see one killCursors command call for the remote cursor.
+    ASSERT_TRUE(networkHasReadyRequests());
+    assertKillCursorsCmdHasCursorId(getNthPendingRequest(0u).cmdObj, 42);
+    blackHoleNextRequest();
+
+    ASSERT_BSONOBJ_EQ(BSON("$sortKey" << BSON_ARRAY(1)),
+                      *unittest::assertGet(arm->nextReady()).getResult());
+    ASSERT_TRUE(arm->ready());
+    ASSERT_BSONOBJ_EQ(BSON("$sortKey" << BSON_ARRAY(10)),
+                      *unittest::assertGet(arm->nextReady()).getResult());
+    ASSERT_FALSE(arm->ready());
 }
 
 TEST_F(AsyncResultsMergerTest, MultiShardMultipleGets) {
@@ -820,6 +975,213 @@ TEST_F(AsyncResultsMergerTest, MultiShardMultipleGets) {
     // cursors were exhausted.
     ASSERT_TRUE(arm->ready());
     ASSERT_TRUE(unittest::assertGet(arm->nextReady()).isEOF());
+}
+
+TEST_F(AsyncResultsMergerTest, HighWaterMarkTestChangeStreamV1) {
+    runHighWaterMarkTest(false /* recognizeControlEvents */);
+}
+
+TEST_F(AsyncResultsMergerTest, HighWaterMarkTestRecognizeControlEvents) {
+    runHighWaterMarkTest(true /* recognizeControlEvents */);
+}
+
+DEATH_TEST_REGEX_F(AsyncResultsMergerTest,
+                   SetInitialHighWaterMarkWithTimeGoingBackwards,
+                   "Tripwire assertion.*10359104") {
+    AsyncResultsMergerParams params = AsyncResultsMergerTest::buildARMParamsForChangeStream();
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
+
+    // No high water mark set initially.
+    ASSERT_BSONOBJ_EQ(BSONObj(), arm->getHighWaterMark());
+
+    // Inject a high water mark.
+    auto highWaterMark = makePostBatchResumeToken(Timestamp(42, 33));
+
+    arm->setInitialHighWaterMark(highWaterMark);
+    ASSERT_BSONOBJ_EQ(highWaterMark, arm->getHighWaterMark());
+
+    auto highWaterMarkBefore = makePostBatchResumeToken(Timestamp(42, 32));
+    ASSERT_THROWS_CODE(
+        arm->setInitialHighWaterMark(highWaterMarkBefore), AssertionException, 10359104);
+}
+
+TEST_F(AsyncResultsMergerTest, HandleControlEventsWithUniqueTimestamps) {
+    AsyncResultsMergerParams params = AsyncResultsMergerTest::buildARMParamsForChangeStream();
+
+    std::vector<RemoteCursor> cursors;
+    auto initialPBRT = makePostBatchResumeToken(Timestamp(23, 23));
+    cursors.push_back(makeRemoteCursor(kTestShardIds[0],
+                                       kTestShardHosts[0],
+                                       CursorResponse(kTestNss, 1, {}, boost::none, initialPBRT)));
+    params.setRemotes(std::move(cursors));
+
+    auto arm = buildARM(std::move(params), true /* recognizeControlEvents */);
+
+    const std::vector<BSONObj> pbrts = {
+        makePostBatchResumeToken(Timestamp(42, 1)),
+        makePostBatchResumeToken(Timestamp(42, 2)),
+        makePostBatchResumeToken(Timestamp(42, 3)),
+        makePostBatchResumeToken(Timestamp(42, 4)),
+        makePostBatchResumeToken(Timestamp(42, 5)),
+        makePostBatchResumeToken(Timestamp(42, 6)),
+        makePostBatchResumeToken(Timestamp(42, 7)),
+    };
+
+    // All events following have unique timestamps.
+    const std::vector<BSONObj> batch = {
+        BSON("_id" << pbrts[0] << "$sortKey" << BSON_ARRAY(pbrts[0]) << "value" << 1),
+        BSON("_id" << pbrts[1] << "$sortKey" << BSON_ARRAY(pbrts[1]) << "value" << 2),
+        BSON("_id" << pbrts[2] << "$sortKey" << BSON_ARRAY(pbrts[2])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                   << "control1"),
+        BSON("_id" << pbrts[3] << "$sortKey" << BSON_ARRAY(pbrts[3]) << "value" << 3),
+        BSON("_id" << pbrts[4] << "$sortKey" << BSON_ARRAY(pbrts[4])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                   << "control2"),
+        BSON("_id" << pbrts[5] << "$sortKey" << BSON_ARRAY(pbrts[5]) << "value" << 4),
+        BSON("_id" << pbrts[6] << "$sortKey" << BSON_ARRAY(pbrts[6]) << "value" << 5),
+    };
+
+    auto readyEvent = unittest::assertGet(arm->nextEvent());
+
+    // Deliver response.
+    std::vector<CursorResponse> responses;
+    responses.emplace_back(kTestNss, CursorId(1), batch, boost::none, pbrts.back());
+
+    scheduleNetworkResponses(std::move(responses));
+
+    executor()->waitForEvent(readyEvent);
+
+    // Still expect the initial high water mark.
+    ASSERT_BSONOBJ_EQ(initialPBRT, arm->getHighWaterMark());
+
+    for (std::size_t i = 0; i < batch.size(); ++i) {
+        ASSERT_TRUE(arm->ready());
+        ASSERT_BSONOBJ_EQ(batch[i], *unittest::assertGet(arm->nextReady()).getResult());
+        ASSERT_BSONOBJ_EQ(pbrts[i], arm->getHighWaterMark());
+    }
+
+    ASSERT_FALSE(arm->ready());
+    ASSERT_BSONOBJ_EQ(pbrts.back(), arm->getHighWaterMark());
+}
+
+TEST_F(AsyncResultsMergerTest, HandleControlEventsWithNonUniqueTimestamps) {
+    AsyncResultsMergerParams params = AsyncResultsMergerTest::buildARMParamsForChangeStream();
+
+    std::vector<RemoteCursor> cursors;
+    auto initialPBRT = makePostBatchResumeToken(Timestamp(23, 23));
+    cursors.push_back(makeRemoteCursor(kTestShardIds[0],
+                                       kTestShardHosts[0],
+                                       CursorResponse(kTestNss, 1, {}, boost::none, initialPBRT)));
+    params.setRemotes(std::move(cursors));
+
+    auto arm = buildARM(std::move(params), true /* recognizeControlEvents */);
+
+    auto readyEvent = unittest::assertGet(arm->nextEvent());
+
+    // The followings events do not have unique timestamps.
+    const std::vector<BSONObj> pbrts = {
+        makePostBatchResumeToken(Timestamp(42, 1)),
+        makePostBatchResumeToken(Timestamp(42, 2)),
+        makePostBatchResumeToken(Timestamp(42, 2)),
+        makePostBatchResumeToken(Timestamp(42, 3)),
+        makePostBatchResumeToken(Timestamp(42, 3)),
+        makePostBatchResumeToken(Timestamp(42, 4)),
+        makePostBatchResumeToken(Timestamp(42, 5)),
+        makePostBatchResumeToken(Timestamp(42, 5)),
+        makePostBatchResumeToken(Timestamp(42, 5)),
+    };
+
+    // The control events following have timestamps identical to another event.
+    const std::vector<BSONObj> batch = {
+        BSON("_id" << pbrts[0] << "$sortKey" << BSON_ARRAY(pbrts[0]) << "value" << 1),
+        BSON("_id" << pbrts[1] << "$sortKey" << BSON_ARRAY(pbrts[1]) << "value" << 2),
+        BSON("_id" << pbrts[2] << "$sortKey" << BSON_ARRAY(pbrts[2])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                   << "control1"),
+        BSON("_id" << pbrts[3] << "$sortKey" << BSON_ARRAY(pbrts[3]) << "value" << 3),
+        BSON("_id" << pbrts[4] << "$sortKey" << BSON_ARRAY(pbrts[4])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                   << "control2"),
+        BSON("_id" << pbrts[5] << "$sortKey" << BSON_ARRAY(pbrts[5]) << "value" << 4),
+        BSON("_id" << pbrts[6] << "$sortKey" << BSON_ARRAY(pbrts[6]) << "value" << 5),
+        BSON("_id" << pbrts[7] << "$sortKey" << BSON_ARRAY(pbrts[7])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value" << "control3"),
+        BSON("_id" << pbrts[8] << "$sortKey" << BSON_ARRAY(pbrts[8])
+                   << Document::metaFieldChangeStreamControlEvent << 1 << "value" << "control4"),
+    };
+
+    // Deliver response.
+    std::vector<CursorResponse> responses;
+    responses.emplace_back(kTestNss, CursorId(1), batch, boost::none, pbrts.back());
+
+    scheduleNetworkResponses(std::move(responses));
+
+    executor()->waitForEvent(readyEvent);
+
+    // Still expect the initial high water mark.
+    ASSERT_BSONOBJ_EQ(initialPBRT, arm->getHighWaterMark());
+
+    ASSERT_TRUE(arm->ready());
+
+    for (std::size_t i = 0; i < batch.size(); ++i) {
+        ASSERT_TRUE(arm->ready());
+        ASSERT_BSONOBJ_EQ(batch[i], *unittest::assertGet(arm->nextReady()).getResult());
+        ASSERT_BSONOBJ_EQ(pbrts[i], arm->getHighWaterMark());
+    }
+
+    ASSERT_FALSE(arm->ready());
+    ASSERT_BSONOBJ_EQ(pbrts.back(), arm->getHighWaterMark());
+}
+
+DEATH_TEST_REGEX_F(AsyncResultsMergerTest, MakePBRTGoBackInTime, "Tripwire assertion.*10359104") {
+    AsyncResultsMergerParams params = AsyncResultsMergerTest::buildARMParamsForChangeStream();
+
+    std::vector<RemoteCursor> cursors;
+    cursors.push_back(
+        makeRemoteCursor(kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, 1, {})));
+    params.setRemotes(std::move(cursors));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
+
+    auto readyEvent = unittest::assertGet(arm->nextEvent());
+
+    // Deliver response.
+    std::vector<CursorResponse> responses;
+    auto pbrtLow = makePostBatchResumeToken(Timestamp(42, 1));
+    auto pbrtHigh = makePostBatchResumeToken(Timestamp(42, 2));
+
+    std::vector<BSONObj> batch1 = {
+        BSON("_id" << pbrtHigh << "$sortKey" << BSON_ARRAY(pbrtHigh) << "value" << 1),
+    };
+    responses.emplace_back(kTestNss, CursorId(1), batch1, boost::none, pbrtHigh);
+
+    scheduleNetworkResponses(std::move(responses));
+
+    executor()->waitForEvent(readyEvent);
+
+    ASSERT_TRUE(arm->ready());
+
+    ASSERT_BSONOBJ_EQ(BSON("_id" << pbrtHigh << "$sortKey" << BSON_ARRAY(pbrtHigh) << "value" << 1),
+                      *unittest::assertGet(arm->nextReady()).getResult());
+    ASSERT_BSONOBJ_EQ(pbrtHigh, arm->getHighWaterMark());
+
+    // Intentionally schedule a response with a lower PBRT. This will crash the ARM.
+    readyEvent = unittest::assertGet(arm->nextEvent());
+
+    std::vector<BSONObj> batch2 = {
+        BSON("_id" << pbrtLow << "$sortKey" << BSON_ARRAY(pbrtLow) << "value" << 1),
+    };
+    responses.clear();
+    responses.emplace_back(kTestNss, CursorId(1), batch2, boost::none, pbrtLow);
+
+    scheduleNetworkResponses(std::move(responses));
+
+    executor()->waitForEvent(readyEvent);
+
+    ASSERT_TRUE(arm->ready());
+    ASSERT_THROWS_CODE(
+        *unittest::assertGet(arm->nextReady()).getResult(), AssertionException, 10359104);
 }
 
 TEST_F(AsyncResultsMergerTest, CompoundSortKey) {
@@ -2030,7 +2392,8 @@ DEATH_TEST_REGEX_F(
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     auto readyEvent = unittest::assertGet(arm->nextEvent());
     ASSERT_FALSE(arm->ready());
@@ -2059,7 +2422,8 @@ DEATH_TEST_REGEX_F(AsyncResultsMergerTest,
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     auto readyEvent = unittest::assertGet(arm->nextEvent());
     ASSERT_TRUE(arm->ready());
@@ -2090,7 +2454,8 @@ TEST_F(AsyncResultsMergerTest, SortedTailableCursorNotReadyIfRemoteHasLowerPostB
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     auto readyEvent = unittest::assertGet(arm->nextEvent());
 
@@ -2114,7 +2479,8 @@ TEST_F(AsyncResultsMergerTest, SortedTailableCursorNewShardOrderedAfterExisting)
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     auto readyEvent = unittest::assertGet(arm->nextEvent());
 
@@ -2191,7 +2557,8 @@ TEST_F(AsyncResultsMergerTest, SortedTailableCursorNewShardOrderedBeforeExisting
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     auto readyEvent = unittest::assertGet(arm->nextEvent());
 
@@ -2281,7 +2648,8 @@ TEST_F(AsyncResultsMergerTest, SortedTailableCursorReturnsHighWaterMarkSortKey) 
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     // We have no results to return, so the ARM is not ready.
     auto readyEvent = unittest::assertGet(arm->nextEvent());
@@ -2352,7 +2720,8 @@ TEST_F(AsyncResultsMergerTest, SortedTailableCursorDoesNotAdvanceHighWaterMarkFo
     params.setRemotes(std::move(cursors));
     params.setTailableMode(TailableModeEnum::kTailableAndAwaitData);
     params.setSort(change_stream_constants::kSortSpec);
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     // We have no results to return, so the ARM is not ready.
     auto readyEvent = unittest::assertGet(arm->nextEvent());
@@ -2808,7 +3177,8 @@ TEST_F(AsyncResultsMergerTest, IncludeQueryStatsMetricsIncludedInGetMore) {
 
         auto params = makeARMParamsFromExistingCursors(std::move(cursors), findCmd);
         params.setRequestQueryStatsFromRemotes(requestParams);
-        auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+        auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
         // Schedule the request for the getMore.
         auto readyEvent = unittest::assertGet(arm->nextEvent());
@@ -2867,7 +3237,8 @@ TEST_F(AsyncResultsMergerTest, RemoteMetricsAggregatedLocally) {
     cursors.push_back(
         makeRemoteCursor(kTestShardIds[0], kTestShardHosts[0], CursorResponse(kTestNss, id, {})));
     params.setRemotes(std::move(cursors));
-    auto arm = AsyncResultsMerger::create(operationContext(), executor(), std::move(params));
+
+    auto arm = buildARM(std::move(params), false /* recognizeControlEvents */);
 
     // Schedule the request for a getMore.
     auto readyEvent = unittest::assertGet(arm->nextEvent());
@@ -2977,6 +3348,197 @@ TEST_F(AsyncResultsMergerTest, CanAccessParams) {
 
     // Now the AsyncResultsMerger can go out of scope without triggering the assertion failure.
     ASSERT_TRUE(arm->remotesExhausted());
+}
+
+TEST(AsyncResultsMergerTest, CheckHighWaterMarkTokensAreMonotonicallyIncreasing) {
+    // Compare high water mark tokens against each other.
+    ASSERT_FALSE(isMonotonicallyIncreasing(Timestamp(42, 1), Timestamp(42, 0)));
+    ASSERT_FALSE(isMonotonicallyIncreasing(Timestamp(42, 1), Timestamp(41, 0)));
+    ASSERT_FALSE(isMonotonicallyIncreasing(Timestamp(42, 1), Timestamp(41, 9)));
+    ASSERT_FALSE(isMonotonicallyIncreasing(Timestamp(99, 0), Timestamp(10, 10)));
+    ASSERT_FALSE(isMonotonicallyIncreasing(Timestamp(123, 5), Timestamp(99, 2)));
+
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(0, 0), Timestamp(0, 0)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(0, 0), Timestamp(0, 1)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(0, 123), Timestamp(99, 0)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(0, 0), Timestamp(123, 0)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(0, 0), Timestamp(123, 123)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(41, 9), Timestamp(41, 9)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(42, 1), Timestamp(43, 0)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(42, 1), Timestamp(42, 1)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(31, 1), Timestamp(41, 9)));
+    ASSERT_TRUE(isMonotonicallyIncreasing(Timestamp(42, 100), Timestamp(99, 0)));
+}
+
+TEST(AsyncResultsMergerTest, CheckHigResumeTokensAreMonotonicallyIncreasing) {
+    // Compare resume tokens against high water mark tokens.
+    UUID uuid = UUID::gen();
+
+    auto pbrt1 = makeResumeToken(Timestamp(42, 1), uuid, BSON("_id" << 1));
+    BSONObj doc1 = BSON("_id" << pbrt1 << "$sortKey" << BSON_ARRAY(pbrt1) << "value" << 1);
+
+    ASSERT_FALSE(isMonotonicallyIncreasing(makeHighWaterMarkToken(Timestamp(43, 0)), doc1));
+    ASSERT_FALSE(isMonotonicallyIncreasing(makeHighWaterMarkToken(Timestamp(43, 1)), doc1));
+    ASSERT_TRUE(isMonotonicallyIncreasing(makeHighWaterMarkToken(Timestamp(42, 0)), doc1));
+    ASSERT_TRUE(isMonotonicallyIncreasing(makeHighWaterMarkToken(Timestamp(42, 1)), doc1));
+    ASSERT_TRUE(isMonotonicallyIncreasing(doc1, doc1));
+
+    auto pbrt2 = makeResumeToken(Timestamp(42, 2), uuid, BSON("_id" << 1));
+    BSONObj doc2 = BSON("_id" << pbrt2 << "$sortKey" << BSON_ARRAY(pbrt2) << "value" << 1);
+
+    ASSERT_FALSE(isMonotonicallyIncreasing(doc2, doc1));
+    ASSERT_TRUE(isMonotonicallyIncreasing(doc2, doc2));
+    ASSERT_TRUE(isMonotonicallyIncreasing(doc1, doc2));
+}
+
+DEATH_TEST_REGEX(NextHighWaterMarkDeterminingStrategyTest,
+                 InvalidHighWatermarkStrategy,
+                 "Tripwire assertion.*10359107") {
+    // Use the "invalid" high water mark determining strategy. This strategy will always trigger a
+    // tassert when invoked.
+    auto nextHighWaterMarkDeterminingStrategy = NextHighWaterMarkDeterminingStrategyFactory::
+        createInvalidHighWaterMarkDeterminingStrategy();
+
+    ASSERT_EQ("invalid"_sd, nextHighWaterMarkDeterminingStrategy->getName());
+
+    // Throws whenever this strategy is used.
+    ASSERT_THROWS_CODE((*nextHighWaterMarkDeterminingStrategy)(BSONObj(), BSONObj()),
+                       AssertionException,
+                       10359107);
+}
+
+DEATH_TEST_REGEX(NextHighWaterMarkDeterminingStrategyTest,
+                 ChangeStreamV1InvalidInputDocument,
+                 "Tripwire assertion.*10359101") {
+    auto nextHighWaterMarkDeterminingStrategy =
+        buildNextHighWaterMarkDeterminingStrategy(false /* recognizeControlEvents */);
+
+    ASSERT_EQ("changeStreamV1"_sd, nextHighWaterMarkDeterminingStrategy->getName());
+
+    // '$sortKey' field is always expected. Will fail when passing in a BSONObj without a '$sortKey'
+    // field.
+    ASSERT_THROWS_CODE((*nextHighWaterMarkDeterminingStrategy)(BSONObj(), BSONObj()),
+                       AssertionException,
+                       10359101);
+}
+
+TEST(NextHighWaterMarkDeterminingStrategyTest,
+     HighWatermarkStrategiesSequenceWithIncreasingTokens) {
+    // Build a postBatchResumeToken from the components.
+    auto buildPBRT = [&](bool useHighWaterMarkTokens, Timestamp ts, int i) -> BSONObj {
+        if (useHighWaterMarkTokens) {
+            return AsyncResultsMergerTest::makePostBatchResumeToken(ts);
+        }
+        return makeResumeToken(ts, UUID::gen(), BSON("_id" << i));
+    };
+
+    // Test with and without control events.
+    for (bool recognizeControlEvents : {true, false}) {
+        // Test with high water mark tokens and document-based resume tokens.
+        for (bool useHighWaterMarkTokens : {true, false}) {
+            auto nextHighWaterMarkDeterminingStrategy =
+                buildNextHighWaterMarkDeterminingStrategy(recognizeControlEvents);
+
+            ASSERT_EQ(recognizeControlEvents ? "recognizeControlEvents"_sd : "changeStreamV1"_sd,
+                      nextHighWaterMarkDeterminingStrategy->getName());
+
+            // Send in initial document with resume token. This should return the same high water
+            // mark as in the document.
+            BSONObj pbrt = buildPBRT(useHighWaterMarkTokens, Timestamp(42, 1), 1);
+            BSONObj doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt) << "value" << 1);
+            auto next = (*nextHighWaterMarkDeterminingStrategy)(doc, pbrt);
+            ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
+
+            // Send a document with a higher resume token. This should return an updated high water
+            // mark with the same value as in the document just sent.
+            pbrt = buildPBRT(useHighWaterMarkTokens, Timestamp(42, 2), 2);
+            doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt) << "value" << 2);
+
+            // Use same input document again. This should return the same high water mark as before.
+            next = (*nextHighWaterMarkDeterminingStrategy)(doc, next);
+            ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
+
+            // Send a document with an even higher resume token. This should return an updated high
+            // water
+            // mark with the same value as in the document just sent.
+            pbrt = buildPBRT(useHighWaterMarkTokens, Timestamp(43, 0), 3);
+            doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt) << "value" << 3);
+
+            next = (*nextHighWaterMarkDeterminingStrategy)(doc, next);
+            ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
+        }
+    }
+}
+
+DEATH_TEST_REGEX(NextHighWaterMarkDeterminingStrategyTest,
+                 RecognizeControlEventsInvalidInputDocument,
+                 "Tripwire assertion.*10359101") {
+    auto nextHighWaterMarkDeterminingStrategy =
+        buildNextHighWaterMarkDeterminingStrategy(true /* recognizeControlEvents */);
+
+    ASSERT_EQ("recognizeControlEvents"_sd, nextHighWaterMarkDeterminingStrategy->getName());
+
+    // '$sortKey' field is always expected in the input document. Will fail when passing in a
+    // BSONObj without a '$sortKey' field.
+    BSONObj pbrt = makeResumeToken(Timestamp(23, 1), UUID::gen(), BSON("_id" << 1));
+    ASSERT_THROWS_CODE(
+        (*nextHighWaterMarkDeterminingStrategy)(BSONObj(), pbrt), AssertionException, 10359101);
+}
+
+DEATH_TEST_REGEX(NextHighWaterMarkDeterminingStrategyTest,
+                 RecognizeControlEventsThrowsUponEmptyCurrentHighWaterMark,
+                 "Tripwire assertion.*10359109") {
+    auto nextHighWaterMarkDeterminingStrategy =
+        buildNextHighWaterMarkDeterminingStrategy(true /* recognizeControlEvents */);
+
+    BSONObj pbrt = makeResumeToken(Timestamp(23, 1), UUID::gen(), BSON("_id" << 1));
+    BSONObj doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt)
+                             << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                             << "control1");
+    ASSERT_THROWS_CODE(
+        (*nextHighWaterMarkDeterminingStrategy)(doc, BSONObj()), AssertionException, 10359109);
+}
+
+TEST(NextHighWaterMarkDeterminingStrategyTest,
+     RecognizeControlEventsControlEventWithHigherTimestampThanPrevious) {
+    auto nextHighWaterMarkDeterminingStrategy =
+        buildNextHighWaterMarkDeterminingStrategy(true /* recognizeControlEvents */);
+
+    // Set initial high water mark from document and expect that the same value is returned.
+    BSONObj pbrt = makeResumeToken(Timestamp(23, 1), UUID::gen(), BSON("_id" << 1));
+    BSONObj doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt) << "value" << 1);
+    BSONObj next = (*nextHighWaterMarkDeterminingStrategy)(doc, pbrt);
+    ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
+
+    // Build control event with higher timestamp than initial document. This should return an
+    // updated high water mark token.
+    pbrt = makeResumeToken(Timestamp(42, 1), UUID::gen(), BSON("_id" << 1));
+    doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt)
+                     << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                     << "control1");
+    next = (*nextHighWaterMarkDeterminingStrategy)(doc, next);
+    ASSERT_BSONOBJ_EQ(AsyncResultsMergerTest::makePostBatchResumeToken(Timestamp(42, 1)),
+                      next.firstElement().Obj());
+}
+
+TEST(NextHighWaterMarkDeterminingStrategyTest,
+     RecognizeControlEventsControlEventWithSameTimestampAsPrevious) {
+    auto nextHighWaterMarkDeterminingStrategy =
+        buildNextHighWaterMarkDeterminingStrategy(true /* recognizeControlEvents */);
+
+    // Set initial high water mark from document and expect that the same value is returned.
+    BSONObj pbrt = makeResumeToken(Timestamp(23, 1), UUID::gen(), BSON("_id" << 1));
+    BSONObj doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt) << "value" << 1);
+    BSONObj next = (*nextHighWaterMarkDeterminingStrategy)(doc, pbrt);
+    ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
+
+    // Build control event with same timestamp as initial document. This should return the same high
+    // water mark.
+    doc = BSON("_id" << pbrt << "$sortKey" << BSON_ARRAY(pbrt)
+                     << Document::metaFieldChangeStreamControlEvent << 1 << "value"
+                     << "control1");
+    next = (*nextHighWaterMarkDeterminingStrategy)(doc, next);
+    ASSERT_BSONOBJ_EQ(pbrt, next.firstElement().Obj());
 }
 
 }  // namespace

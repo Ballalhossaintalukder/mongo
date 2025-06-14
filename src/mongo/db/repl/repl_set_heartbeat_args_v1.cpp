@@ -29,6 +29,7 @@
 
 
 #include "mongo/db/repl/repl_set_heartbeat_args_v1.h"
+
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/util/bson_extract.h"
 #include "mongo/util/assert_util.h"
@@ -140,7 +141,7 @@ void ReplSetHeartbeatArgsV1::setSenderId(long long newVal) {
 }
 
 void ReplSetHeartbeatArgsV1::setSetName(StringData newVal) {
-    _setName = newVal.toString();
+    _setName = std::string{newVal};
 }
 
 void ReplSetHeartbeatArgsV1::setTerm(long long newVal) {

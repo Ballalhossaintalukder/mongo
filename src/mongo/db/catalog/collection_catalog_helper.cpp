@@ -29,23 +29,18 @@
 
 #include "mongo/db/catalog/collection_catalog_helper.h"
 
-#include <boost/optional.hpp>
-#include <functional>
-#include <memory>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/concurrency/d_concurrency.h"
+#include "mongo/db/global_settings.h"
+#include "mongo/db/repl/repl_set_member_in_standalone_mode.h"
 #include "mongo/db/storage/control/storage_control.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/kv/kv_engine.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/recovery_unit_noop.h"
 #include "mongo/db/transaction_resources.h"
@@ -54,6 +49,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <functional>
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -191,7 +194,7 @@ Status dropCollections(OperationContext* opCtx,
     for (auto& uuid : toDrop) {
         CollectionWriter writer{opCtx, uuid};
         auto coll = writer.getWritableCollection(opCtx);
-        if (coll->ns().coll().startsWith(collectionNamePrefix)) {
+        if (coll->ns().coll().starts_with(collectionNamePrefix)) {
             // Drop all indexes in the collection.
             coll->getIndexCatalog()->dropAllIndexes(
                 opCtx, coll, /*includingIdIndex=*/true, /*onDropFn=*/{});
@@ -220,8 +223,6 @@ void removeIndex(OperationContext* opCtx,
                  Collection* collection,
                  std::shared_ptr<IndexCatalogEntry> entry,
                  DataRemoval dataRemoval) {
-    auto durableCatalog = DurableCatalog::get(opCtx);
-
     std::shared_ptr<Ident> ident = [&]() -> std::shared_ptr<Ident> {
         if (!entry) {
             return nullptr;
@@ -234,7 +235,7 @@ void removeIndex(OperationContext* opCtx,
     // users to finish.
     if (!ident) {
         ident = std::make_shared<Ident>(
-            durableCatalog->getIndexIdent(opCtx, collection->getCatalogId(), indexName));
+            MDBCatalog::get(opCtx)->getIndexIdent(opCtx, collection->getCatalogId(), indexName));
     }
 
     // Run the first phase of drop to remove the catalog entry.
@@ -265,7 +266,7 @@ void removeIndex(OperationContext* opCtx,
          storageEngine,
          uuid = collection->uuid(),
          nss = collection->ns(),
-         indexNameStr = indexName.toString(),
+         indexNameStr = std::string{indexName},
          ident,
          isTwoPhaseDrop](OperationContext*, boost::optional<Timestamp> commitTimestamp) {
             StorageEngine::DropIdentCallback onDrop =
@@ -303,7 +304,7 @@ void removeIndex(OperationContext* opCtx,
                 // Intentionally ignoring failure here. Since we've removed the metadata pointing to
                 // the collection, we should never see it again anyway.
                 storageEngine->getEngine()
-                    ->dropIdent(recoveryUnit,
+                    ->dropIdent(*recoveryUnit,
                                 ident->getIdent(),
                                 /*identHasSizeInfo=*/false,
                                 std::move(onDrop))
@@ -319,7 +320,8 @@ Status dropCollection(OperationContext* opCtx,
     invariant(ident);
 
     // Run the first phase of drop to remove the catalog entry.
-    Status status = DurableCatalog::get(opCtx)->dropCollection(opCtx, collectionCatalogId);
+    Status status =
+        durable_catalog::dropCollection(opCtx, collectionCatalogId, MDBCatalog::get(opCtx));
     if (!status.isOK()) {
         return status;
     }
@@ -384,7 +386,12 @@ Status dropCollectionsWithPrefix(OperationContext* opCtx,
     return dropCollections(opCtx, toDrop, collectionNamePrefix);
 }
 
-void shutDownCollectionCatalogAndGlobalStorageEngineCleanly(ServiceContext* service) {
+void shutDownCollectionCatalogAndGlobalStorageEngineCleanly(ServiceContext* service,
+                                                            bool memLeakAllowed) {
+    if (auto truncateMarkers = LocalOplogInfo::get(service)->getTruncateMarkers()) {
+        truncateMarkers->kill();
+    }
+
     // SERVER-103812 Shut down JournalFlusher before closing CollectionCatalog
     StorageControl::stopStorageControls(
         service,
@@ -394,7 +401,7 @@ void shutDownCollectionCatalogAndGlobalStorageEngineCleanly(ServiceContext* serv
         catalog.onCloseCatalog();
         catalog.deregisterAllCollectionsAndViews(service);
     });
-    shutdownGlobalStorageEngineCleanly(service);
+    shutdownGlobalStorageEngineCleanly(service, memLeakAllowed);
 }
 
 StorageEngine::LastShutdownState startUpStorageEngineAndCollectionCatalog(
@@ -410,8 +417,13 @@ StorageEngine::LastShutdownState startUpStorageEngineAndCollectionCatalog(
                                         std::make_unique<RecoveryUnitNoop>(),
                                         WriteUnitOfWork::RecoveryUnitState::kNotInUnitOfWork);
 
-    auto lastShutdownState = initializeStorageEngine(
-        initializeStorageEngineOpCtx.get(), initFlags, startupTimeElapsedBuilder);
+    auto lastShutdownState =
+        initializeStorageEngine(initializeStorageEngineOpCtx.get(),
+                                initFlags,
+                                getGlobalReplSettings().isReplSet(),
+                                repl::ReplSettings::shouldRecoverFromOplogAsStandalone(),
+                                getReplSetMemberInStandaloneMode(getGlobalServiceContext()),
+                                startupTimeElapsedBuilder);
 
     Lock::GlobalWrite globalLk(initializeStorageEngineOpCtx.get());
     catalog::initializeCollectionCatalog(initializeStorageEngineOpCtx.get(),

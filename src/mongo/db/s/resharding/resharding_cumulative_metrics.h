@@ -29,31 +29,20 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/s/metrics/cumulative_metrics_state_holder.h"
 #include "mongo/db/s/metrics/sharding_data_transform_cumulative_metrics.h"
-#include "mongo/db/s/metrics/with_oplog_application_count_metrics.h"
-#include "mongo/db/s/metrics/with_oplog_application_latency_metrics.h"
-#include "mongo/db/s/metrics/with_state_management_for_cumulative_metrics.h"
 #include "mongo/db/s/resharding/resharding_cumulative_metrics_field_name_provider.h"
-#include "mongo/s/resharding/common_types_gen.h"
+
+#include <mutex>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
-namespace resharding_cumulative_metrics {
-using Base = WithOplogApplicationLatencyMetrics<WithOplogApplicationCountMetrics<
-    WithStateManagementForCumulativeMetrics<ShardingDataTransformCumulativeMetrics,
-                                            CoordinatorStateEnum,
-                                            DonorStateEnum,
-                                            RecipientStateEnum>>>;
-}  // namespace resharding_cumulative_metrics
-
-class ReshardingCumulativeMetrics : public resharding_cumulative_metrics::Base {
+class ReshardingCumulativeMetrics : public ShardingDataTransformCumulativeMetrics {
 public:
-    using Base = resharding_cumulative_metrics::Base;
+    using Base = ShardingDataTransformCumulativeMetrics;
 
     ReshardingCumulativeMetrics();
     ReshardingCumulativeMetrics(const std::string& rootName);
@@ -61,10 +50,10 @@ public:
     static boost::optional<StringData> fieldNameFor(AnyState state);
     void reportForServerStatus(BSONObjBuilder* bob) const override;
 
-    void onStarted(bool isSameKeyResharding);
-    void onSuccess(bool isSameKeyResharding);
-    void onFailure(bool isSameKeyResharding);
-    void onCanceled(bool isSameKeyResharding);
+    void onStarted(bool isSameKeyResharding, const UUID& reshardingUUID);
+    void onSuccess(bool isSameKeyResharding, const UUID& reshardingUUID);
+    void onFailure(bool isSameKeyResharding, const UUID& reshardingUUID);
+    void onCanceled(bool isSameKeyResharding, const UUID& reshardingUUID);
 
 private:
     void reportActive(BSONObjBuilder* bob) const override;
@@ -77,6 +66,9 @@ private:
     AtomicWord<int64_t> _countSameKeySucceeded{0};
     AtomicWord<int64_t> _countSameKeyFailed{0};
     AtomicWord<int64_t> _countSameKeyCancelled{0};
+
+    std::set<UUID> _activeReshardingOperations;
+    std::mutex _activeReshardingOperationsMutex;
 };
 
 }  // namespace mongo

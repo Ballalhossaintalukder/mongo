@@ -6,6 +6,7 @@
  * Queries with similar shapes are run consecutively, to trigger plan cache interactions.
  *
  * @tags: [
+ * query_intensive_pbt,
  * # This test runs commands that are not allowed with security token: setParameter.
  * not_allowed_with_signed_security_token,
  * assumes_no_implicit_collection_creation_after_drop,
@@ -27,6 +28,7 @@ import {
     getPartialFilterPredicateArb
 } from "jstests/libs/property_test_helpers/models/match_models.js";
 import {getAggPipelineModel} from "jstests/libs/property_test_helpers/models/query_models.js";
+import {partialIndexCounterexamples} from "jstests/libs/property_test_helpers/pbt_resolved_bugs.js";
 import {
     concreteQueryFromFamily,
     testProperty
@@ -34,12 +36,13 @@ import {
 import {isSlowBuild} from "jstests/libs/query/aggregation_pipeline_utils.js";
 import {fc} from "jstests/third_party/fast_check/fc-3.1.0.js";
 
-let numRuns = 200;
-let numQueriesPerRun = 20;
 if (isSlowBuild(db)) {
     jsTestLog('Exiting early because debug is on, opt is off, or a sanitizer is enabled.');
     quit();
 }
+
+const numRuns = 100;
+const numQueriesPerRun = 20;
 
 const controlColl = db.partial_index_pbt_control;
 const experimentColl = db.partial_index_pbt_experiment;
@@ -80,4 +83,9 @@ const workloadModel =
     });
 
 // Test with a regular collection.
-testProperty(correctnessProperty, {controlColl, experimentColl}, workloadModel, numRuns);
+testProperty(correctnessProperty,
+             {controlColl, experimentColl},
+             workloadModel,
+             numRuns,
+             partialIndexCounterexamples);
+// TODO SERVER-103381 extend this test to use time-series collections.

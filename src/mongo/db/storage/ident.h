@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/database_name.h"
+
+#include <string>
 
 namespace mongo {
 
@@ -44,7 +44,7 @@ namespace mongo {
  */
 class Ident {
 public:
-    explicit Ident(StringData ident) : _ident(ident.toString()) {}
+    explicit Ident(StringData ident) : _ident(std::string{ident}) {}
     virtual ~Ident() = default;
 
     const std::string& getIdent() const {

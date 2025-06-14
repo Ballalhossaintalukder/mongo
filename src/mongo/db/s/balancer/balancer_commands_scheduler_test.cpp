@@ -31,13 +31,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -59,7 +52,6 @@
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/request_types/move_range_request_gen.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/unittest/unittest.h"
@@ -67,6 +59,13 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -111,7 +110,7 @@ public:
         shardSvrRequest.setDbName(DatabaseName::kAdmin);
         shardSvrRequest.setMoveRangeRequestBase(base);
         shardSvrRequest.setFromShard(from);
-        shardSvrRequest.setEpoch(OID::gen());
+        shardSvrRequest.setCollectionTimestamp(Timestamp(10));
         shardSvrRequest.setMaxChunkSizeBytes(1024 * 1024);
 
         return shardSvrRequest;
@@ -178,6 +177,7 @@ TEST_F(BalancerCommandsSchedulerTest, SuccessfulMoveRangeCommand) {
         }});
     _scheduler.start(operationContext());
     ShardsvrMoveRange shardsvrRequest(kNss);
+    shardsvrRequest.setCollectionTimestamp(Timestamp(10));
     shardsvrRequest.setDbName(DatabaseName::kAdmin);
     shardsvrRequest.setFromShard(kShardId0);
     shardsvrRequest.setMaxChunkSizeBytes(1024);
@@ -235,16 +235,15 @@ TEST_F(BalancerCommandsSchedulerTest, SuccessfulRequestChunkDataSizeCommand) {
     _scheduler.start(operationContext());
     ChunkType chunk = makeChunk(0, kShardId0);
 
-    auto futureResponse = _scheduler.requestDataSize(
-        operationContext(),
-        kNss,
-        chunk.getShard(),
-        chunk.getRange(),
-        ShardVersionFactory::make(chunk.getVersion(),
-                                  boost::optional<CollectionIndexes>(boost::none)),
-        KeyPattern(BSON("x" << 1)),
-        false /* issuedByRemoteUser */,
-        (kDefaultMaxChunkSizeBytes / 100) * 25 /* maxSize */);
+    auto futureResponse =
+        _scheduler.requestDataSize(operationContext(),
+                                   kNss,
+                                   chunk.getShard(),
+                                   chunk.getRange(),
+                                   ShardVersionFactory::make(chunk.getVersion()),
+                                   KeyPattern(BSON("x" << 1)),
+                                   false /* issuedByRemoteUser */,
+                                   (kDefaultMaxChunkSizeBytes / 100) * 25 /* maxSize */);
     auto swReceivedDataSize = futureResponse.getNoThrow();
     ASSERT_OK(swReceivedDataSize.getStatus());
     auto receivedDataSize = swReceivedDataSize.getValue();

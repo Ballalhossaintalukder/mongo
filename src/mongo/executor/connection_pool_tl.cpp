@@ -28,18 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_set.h>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/tuple/tuple.hpp>
-#include <functional>
-#include <mutex>
-#include <tuple>
-#include <type_traits>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
+#include "mongo/executor/connection_pool_tl.h"
 
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
@@ -60,12 +49,12 @@
 #include "mongo/db/auth/user_name.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/connection_health_metrics_parameter_gen.h"
-#include "mongo/executor/connection_pool_tl.h"
 #include "mongo/executor/egress_networking_parameters_gen.h"
 #include "mongo/executor/remote_command_request.h"
 #include "mongo/executor/remote_command_response.h"
 #include "mongo/logv2/log.h"
 #include "mongo/logv2/log_severity_suppressor.h"
+#include "mongo/stdx/unordered_map.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
@@ -77,6 +66,19 @@
 #include "mongo/util/net/ssl_types.h"
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/str.h"
+
+#include <functional>
+#include <mutex>
+#include <tuple>
+#include <type_traits>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/tuple/tuple.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kConnectionPool
 
@@ -129,7 +131,7 @@ void TLTypeFactory::shutdown() {
 
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
-    std::unordered_map<std::string, int> counts;
+    stdx::unordered_map<std::string, int> counts;
     for (const Type* collar : _collars) {
         ++counts[demangleName(typeid(collar))];
     }
@@ -280,16 +282,16 @@ public:
             _saslMechsForInternalAuth.push_back("MONGODB-X509");
         } else {
             const auto saslMechsElem = reply.getField("saslSupportedMechs");
-            if (saslMechsElem.type() == Array) {
+            if (saslMechsElem.type() == BSONType::array) {
                 auto array = saslMechsElem.Array();
                 for (const auto& elem : array) {
-                    _saslMechsForInternalAuth.push_back(elem.checkAndGetStringData().toString());
+                    _saslMechsForInternalAuth.push_back(std::string{elem.checkAndGetStringData()});
                 }
             }
         }
 
         const auto specAuth = reply.getField(auth::kSpeculativeAuthenticate);
-        if (specAuth.type() == Object) {
+        if (specAuth.type() == BSONType::object) {
             _speculativeAuthenticate = specAuth.Obj().getOwned();
         }
 

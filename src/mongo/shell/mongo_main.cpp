@@ -29,9 +29,6 @@
 
 #include <algorithm>
 #include <array>
-#include <boost/core/null_deleter.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/log/attributes/value_extraction.hpp>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -47,8 +44,11 @@
 #include <utility>
 #include <vector>
 
+#include <boost/core/null_deleter.hpp>
 #include <boost/exception/exception.hpp>
+#include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
+#include <boost/log/attributes/value_extraction.hpp>
 #include <boost/log/core/core.hpp>
 #include <boost/log/core/record_view.hpp>
 // IWYU pragma: no_include "boost/log/detail/attachable_sstream_buf.hpp"
@@ -60,8 +60,6 @@
 #include <boost/smart_ptr/make_shared_object.hpp>
 #include <boost/smart_ptr/shared_ptr.hpp>
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
-#include <boost/thread/exceptions.hpp>
-
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -80,6 +78,7 @@
 #include "mongo/client/sasl_aws_client_options.h"
 #include "mongo/client/sasl_oidc_client_params.h"
 #include "mongo/config.h"  // IWYU pragma: keep
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/wire_version.h"
@@ -94,7 +93,6 @@
 #include "mongo/logv2/plain_formatter.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/process_id.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/shell/linenoise.h"
 #include "mongo/shell/mongo_main.h"
@@ -127,6 +125,8 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/version.h"
 #include "mongo/util/version/releases.h"
+
+#include <boost/thread/exceptions.hpp>
 
 #ifdef MONGO_CONFIG_GRPC
 #include "mongo/transport/grpc/grpc_transport_layer.h"
@@ -580,7 +580,7 @@ bool execPrompt(mongo::Scope& scope, const char* promptFunction, std::string& pr
     std::string execStatement = std::string("__promptWrapper__(") + promptFunction + ");";
     scope.exec("delete __prompt__;", "", false, false, false, 0);
     scope.exec(execStatement, "", false, false, false, 0);
-    if (scope.type("__prompt__") == String) {
+    if (scope.type("__prompt__") == stdx::to_underlying(BSONType::string)) {
         prompt = scope.getString("__prompt__");
         return true;
     }
@@ -595,7 +595,7 @@ bool execPrompt(mongo::Scope& scope, const char* promptFunction, std::string& pr
 static void edit(const std::string& whatToEdit) {
     // EDITOR may be defined in the JavaScript scope or in the environment
     std::string editor;
-    if (shellMainScope->type("EDITOR") == String) {
+    if (shellMainScope->type("EDITOR") == stdx::to_underlying(BSONType::string)) {
         editor = shellMainScope->getString("EDITOR");
     } else {
         static const char* editorFromEnv = getenv("EDITOR");
@@ -622,7 +622,7 @@ static void edit(const std::string& whatToEdit) {
     if (editingVariable) {
         // If "whatToEdit" is undeclared or uninitialized, declare
         int varType = shellMainScope->type(whatToEdit.c_str());
-        if (varType == Undefined) {
+        if (varType == stdx::to_underlying(BSONType::undefined)) {
             shellMainScope->exec("var " + whatToEdit, "(shell)", false, true, false);
         }
 
@@ -749,7 +749,7 @@ bool mechanismRequiresPassword(const MongoURI& uri) {
             auth::kMechanismGSSAPI, auth::kMechanismMongoX509, auth::kMechanismMongoOIDC};
         const std::string& authMechanism = authMechanisms.value();
         for (const auto& mechanism : passwordlessMechanisms) {
-            if (mechanism.toString() == authMechanism) {
+            if (mechanism == authMechanism) {
                 return false;
             }
         }
@@ -1051,7 +1051,7 @@ int mongo_main(int argc, char* argv[]) {
                     "function() { return typeof TestData === 'object' && TestData !== null && "
                     "TestData.hasOwnProperty('ignoreChildProcessErrorCode') && "
                     "TestData.ignoreChildProcessErrorCode === true; }"_sd;
-                shellMainScope->invokeSafe(code.rawData(), nullptr, nullptr);
+                shellMainScope->invokeSafe(code.data(), nullptr, nullptr);
                 ignoreChildProcessErrorCode = shellMainScope->getBoolean("__returnValue");
                 auto childProcessErrorCode = mongo::shell_utils::KillMongoProgramInstances();
 
@@ -1085,7 +1085,7 @@ int mongo_main(int argc, char* argv[]) {
                     "function() { return typeof TestData === 'object' && TestData !== null && "
                     "TestData.hasOwnProperty('ignoreUnterminatedProcesses') && "
                     "TestData.ignoreUnterminatedProcesses === true; }"_sd;
-                shellMainScope->invokeSafe(code.rawData(), nullptr, nullptr);
+                shellMainScope->invokeSafe(code.data(), nullptr, nullptr);
                 ignoreUnterminatedProcesses = shellMainScope->getBoolean("__returnValue");
 
                 if (!ignoreUnterminatedProcesses) {
@@ -1133,7 +1133,7 @@ int mongo_main(int argc, char* argv[]) {
                     "function() { return typeof TestData === 'object' && TestData !== null && "
                     "TestData.hasOwnProperty('cleanUpCoreDumpsFromExpectedCrash') && "
                     "TestData.cleanUpCoreDumpsFromExpectedCrash === true; }"_sd;
-                shellMainScope->invokeSafe(code.rawData(), nullptr, nullptr);
+                shellMainScope->invokeSafe(code.data(), nullptr, nullptr);
                 bool cleanUpCoreDumpsFromExpectedCrash =
                     shellMainScope->getBoolean("__returnValue");
 
@@ -1160,7 +1160,7 @@ int mongo_main(int argc, char* argv[]) {
 
         {
             const StringData parallelShellCode = "uncheckedParallelShellPidsString();"_sd;
-            shellMainScope->invokeSafe(parallelShellCode.rawData(), nullptr, nullptr);
+            shellMainScope->invokeSafe(parallelShellCode.data(), nullptr, nullptr);
             std::string ret = shellMainScope->getString("__returnValue");
             if (!ret.empty()) {
                 std::cout << "exiting due to parallel shells with unchecked return values. "
@@ -1265,9 +1265,10 @@ int mongo_main(int argc, char* argv[]) {
                 gotInterrupted = false;
 
                 promptType = scope->type("prompt");
-                if (promptType == String) {
+                if (promptType == stdx::to_underlying(BSONType::string)) {
                     prompt = scope->getString("prompt");
-                } else if ((promptType == Code) && execPrompt(*scope, "prompt", prompt)) {
+                } else if ((promptType == stdx::to_underlying(BSONType::code)) &&
+                           execPrompt(*scope, "prompt", prompt)) {
                 } else if (execPrompt(*scope, "defaultPrompt", prompt)) {
                 } else {
                     prompt = "> ";

@@ -27,11 +27,22 @@
  *    it in the license file.
  */
 
+#include "mongo/unittest/golden_test_base.h"
+
+#include "mongo/base/init.h"  // IWYU pragma: keep
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonelement.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/ctype.h"
+#include "mongo/util/str.h"
+
+#include <cstddef>
+#include <fstream>  // IWYU pragma: keep
+
 #include <boost/core/addressof.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/path_traits.hpp>
 #include <boost/function/function_base.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
@@ -42,23 +53,12 @@
 #include <boost/program_options/value_semantic.hpp>
 #include <boost/program_options/variables_map.hpp>
 #include <boost/type_index/type_index_facade.hpp>
-#include <cstddef>
 #include <fmt/format.h>
 #include <fmt/ostream.h>
-#include <fstream>  // IWYU pragma: keep
 #include <yaml-cpp/node/impl.h>
 #include <yaml-cpp/node/node.h>
 #include <yaml-cpp/node/parse.h>
 #include <yaml-cpp/yaml.h>  // IWYU pragma: keep
-
-#include "mongo/base/init.h"  // IWYU pragma: keep
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/unittest/golden_test_base.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/ctype.h"
-#include "mongo/util/str.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -92,7 +92,7 @@ GoldenTestConfig GoldenTestConfig::parseFromBson(const BSONObj& obj) {
         if (elem.fieldNameStringData() == "relativePath"_sd) {
             uassert(6741504,
                     "GoldenTestConfig relativePath must be a string",
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             relativePath = elem.String();
         }
     }
@@ -114,7 +114,7 @@ GoldenTestEnvironment::GoldenTestEnvironment() : _goldenDataRoot(".") {
     fs::path outputRoot;
     if (opts.outputRootPattern) {
         fs::path pattern(*opts.outputRootPattern);
-        outputRoot = pattern.parent_path() / fs::unique_path(pattern.leaf());
+        outputRoot = pattern.parent_path() / fs::unique_path(pattern.filename());
     } else {
         outputRoot = fs::temp_directory_path() / fs::unique_path("out-%%%%-%%%%-%%%%-%%%%");
     }

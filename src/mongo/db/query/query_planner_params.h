@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/db/catalog/clustered_collection_options_gen.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/query/canonical_distinct.h"
@@ -44,6 +42,8 @@
 #include "mongo/db/query/stats/collection_statistics.h"
 #include "mongo/s/shard_key_pattern_query_util.h"
 #include "mongo/s/shard_targeting_helpers.h"
+
+#include <vector>
 
 namespace mongo {
 
@@ -234,6 +234,7 @@ struct QueryPlannerParams {
         const MultipleCollectionAccessor& collections;
         size_t plannerOptions = DEFAULT;
         boost::optional<TraversalPreference> traversalPreference = boost::none;
+        QueryPlanRankerModeEnum planRankerMode = QueryPlanRankerModeEnum::kMultiPlanning;
     };
 
     /**
@@ -268,14 +269,16 @@ struct QueryPlannerParams {
      */
     explicit QueryPlannerParams(ArgsForSingleCollectionQuery&& args)
         : providedOptions(args.plannerOptions),
-          traversalPreference(std::move(args.traversalPreference)) {
+          traversalPreference(std::move(args.traversalPreference)),
+          planRankerMode(args.planRankerMode) {
         mainCollectionInfo.options = args.plannerOptions;
         if (!args.collections.hasMainCollection()) {
             return;
         }
         fillOutPlannerParamsForExpressQuery(
             args.opCtx, args.canonicalQuery, args.collections.getMainCollection());
-        fillOutMainCollectionPlannerParams(args.opCtx, args.canonicalQuery, args.collections);
+        fillOutMainCollectionPlannerParams(
+            args.opCtx, args.canonicalQuery, args.collections, args.planRankerMode);
     }
 
     /**
@@ -358,6 +361,8 @@ struct QueryPlannerParams {
     // Were query settings applied?
     bool querySettingsApplied{false};
 
+    QueryPlanRankerModeEnum planRankerMode = QueryPlanRankerModeEnum::kMultiPlanning;
+
 private:
     bool requiresShardFiltering(const CanonicalQuery& canonicalQuery,
                                 const CollectionPtr& collection) {
@@ -415,7 +420,8 @@ private:
      */
     void fillOutMainCollectionPlannerParams(OperationContext* opCtx,
                                             const CanonicalQuery& canonicalQuery,
-                                            const MultipleCollectionAccessor& collections);
+                                            const MultipleCollectionAccessor& collections,
+                                            QueryPlanRankerModeEnum planRankerMode);
 
     /**
      * Applies query settings to the main collection if applicable. If not, tries to apply index

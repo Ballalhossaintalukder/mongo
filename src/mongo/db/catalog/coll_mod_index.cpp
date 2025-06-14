@@ -30,13 +30,6 @@
 
 #include "mongo/db/catalog/coll_mod_index.h"
 
-#include "mongo/util/time_support.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -61,7 +54,15 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+#include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -145,8 +146,8 @@ void _processCollModIndexRequestExpireAfterSeconds(OperationContext* opCtx,
     *oldExpireSecs = oldExpireSecsElement.safeNumberLong();
     bool equivalentAsTypeLong = **oldExpireSecs == indexExpireAfterSeconds;
     bool shouldUpdateCatalog = !equivalentAsTypeLong ||
-        (oldExpireSecsElement.type() != BSONType::NumberInt &&
-         oldExpireSecsElement.type() != BSONType::NumberLong);
+        (oldExpireSecsElement.type() != BSONType::numberInt &&
+         oldExpireSecsElement.type() != BSONType::numberLong);
     if (shouldUpdateCatalog) {
         // Change the value of "expireAfterSeconds" on disk.
         auto ttlCache = &TTLCollectionCache::get(opCtx->getServiceContext());
@@ -366,7 +367,8 @@ std::vector<std::vector<RecordId>> scanIndexForDuplicates(OperationContext* opCt
     // Scans index for duplicates, comparing consecutive index entries.
     // KeyStrings will be in strictly increasing order because all keys are sorted and they are
     // in the format (Key, RID), and all RecordIDs are unique.
-    auto indexCursor = accessMethod->newCursor(opCtx);
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
+    auto indexCursor = accessMethod->newCursor(opCtx, ru);
     boost::optional<KeyStringEntry> prevIndexEntry;
     std::vector<std::vector<RecordId>> duplicateRecords;
     std::vector<RecordId> curDuplicateRecords;
@@ -374,8 +376,8 @@ std::vector<std::vector<RecordId>> scanIndexForDuplicates(OperationContext* opCt
     size_t indexEntryCount{0};
 
     Date_t lastLogTime = Date_t::now();
-    for (auto indexEntry = indexCursor->nextKeyString(); indexEntry;
-         indexEntry = indexCursor->nextKeyString()) {
+    for (auto indexEntry = indexCursor->nextKeyString(ru); indexEntry;
+         indexEntry = indexCursor->nextKeyString(ru)) {
         if (prevIndexEntry &&
             indexEntry->keyString.compareWithoutRecordId(prevIndexEntry->keyString,
                                                          indexEntry->loc.keyFormat()) == 0) {

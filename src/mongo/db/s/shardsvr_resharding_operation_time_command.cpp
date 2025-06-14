@@ -31,10 +31,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/auth/action_type.h"
@@ -46,13 +42,18 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/s/resharding/resharding_metrics.h"
 #include "mongo/db/s/resharding/resharding_recipient_service.h"
+#include "mongo/db/s/resharding/resharding_server_parameters_gen.h"
 #include "mongo/db/s/resharding/resharding_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/request_types/resharding_operation_time_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -104,25 +105,33 @@ public:
 
         Response typedRun(OperationContext* opCtx) {
             ShardingState::get(opCtx)->assertCanAcceptShardedCommands();
-            auto instances = resharding::getReshardingStateMachines<
+            Response response;
+
+            const auto majorityReplicationLag = resharding::getMajorityReplicationLag(opCtx);
+            response.setMajorityReplicationLagMillis(majorityReplicationLag);
+
+            auto recipients = resharding::getReshardingStateMachines<
                 ReshardingRecipientService,
                 ReshardingRecipientService::RecipientStateMachine>(opCtx, ns());
 
-            if (instances.empty()) {
-                return {};
+            invariant(recipients.size() <= 1);
+            if (!recipients.empty()) {
+                const auto& metrics = recipients[0]->getMetrics();
+
+                const auto elapsedTime =
+                    duration_cast<Milliseconds>(metrics.getOperationRunningTimeSecs());
+                response.setRecipientElapsedMillis(elapsedTime);
+
+                const auto remainingTime = metrics.getHighEstimateRemainingTimeMillis();
+                response.setRecipientRemainingMillis(remainingTime);
+
+                const auto prepareThreshold = Milliseconds(
+                    resharding::gRemainingReshardingOperationTimePrepareThresholdMillis.load());
+                if (remainingTime <= prepareThreshold) {
+                    recipients[0]->prepareForCriticalSection();
+                }
             }
 
-            invariant(instances.size() == 1);
-            const auto& metrics = instances[0]->getMetrics();
-            const auto elapsedTime =
-                duration_cast<Milliseconds>(metrics.getOperationRunningTimeSecs());
-            const auto remainingTime = metrics.getHighEstimateRemainingTimeMillis();
-            const auto majorityReplicationLag = resharding::getMajorityReplicationLag(opCtx);
-
-            Response response;
-            response.setElapsedMillis(elapsedTime);
-            response.setRemainingMillis(remainingTime);
-            response.setMajorityReplicationLagMillis(majorityReplicationLag);
             return response;
         }
     };

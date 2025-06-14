@@ -29,15 +29,11 @@
 
 
 #include <array>
-#include <boost/property_tree/json_parser.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/tuple/tuple.hpp>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <exception>
-#include <fmt/format.h>
 #include <forward_list>
 #include <fstream>  // IWYU pragma: keep
 #include <initializer_list>
@@ -62,6 +58,10 @@
 #include <boost/log/attributes/attribute_value_set.hpp>
 #include <boost/log/core/core.hpp>
 #include <boost/log/core/record_view.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/tuple/tuple.hpp>
+#include <fmt/format.h>
 // IWYU pragma: no_include "boost/log/detail/attachable_sstream_buf.hpp"
 // IWYU pragma: no_include "boost/log/detail/locking_ptr.hpp"
 #include <boost/log/keywords/file_name.hpp>
@@ -79,12 +79,6 @@
 #include <boost/parameter/keyword.hpp>
 // IWYU pragma: no_include "boost/property_tree/detail/exception_implementation.hpp"
 // IWYU pragma: no_include "boost/property_tree/detail/ptree_implementation.hpp"
-#include <boost/property_tree/ptree_fwd.hpp>
-#include <boost/smart_ptr/make_shared_object.hpp>
-#include <boost/smart_ptr/shared_ptr.hpp>
-#include <boost/thread/exceptions.hpp>
-#include <fmt/format.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -141,6 +135,12 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <boost/property_tree/ptree_fwd.hpp>
+#include <boost/smart_ptr/make_shared_object.hpp>
+#include <boost/smart_ptr/shared_ptr.hpp>
+#include <boost/thread/exceptions.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -467,7 +467,7 @@ TEST_F(LogV2Test, MismatchAttrInLogging) {
     auto lines = makeLineCapture(PlainFormatter());
     if (!kDebugBuild) {
         LOGV2(4638203, "mismatch {name}", "not_name"_attr = 1);
-        ASSERT(StringData(lines->back()).startsWith("Exception during log"_sd));
+        ASSERT(StringData(lines->back()).starts_with("Exception during log"_sd));
     }
 }
 
@@ -475,7 +475,7 @@ TEST_F(LogV2Test, MissingAttrInLogging) {
     auto lines = makeLineCapture(PlainFormatter());
     if (!kDebugBuild) {
         LOGV2(6636803, "Log missing {attr}");
-        ASSERT(StringData(lines->back()).startsWith("Exception during log"_sd));
+        ASSERT(StringData(lines->back()).starts_with("Exception during log"_sd));
     }
 }
 
@@ -745,7 +745,7 @@ TEST_F(LogV2TypesTest, Stringlike) {
     StringData str_data = "a StringData"_sd;
     LOGV2(20019, "StringData {name}", "name"_attr = str_data);
     ASSERT_EQUALS(text->back(), "StringData a StringData");
-    validateJSON(str_data.toString());
+    validateJSON(std::string{str_data});
     ASSERT_EQUALS(lastBSONElement().String(), str_data);
 
     {
@@ -881,8 +881,7 @@ TEST_F(LogV2TypesTest, UUID) {
 TEST_F(LogV2TypesTest, BoostOptional) {
     LOGV2(20028, "boost::optional empty {name}", "name"_attr = boost::optional<bool>());
     ASSERT_EQUALS(text->back(),
-                  std::string("boost::optional empty ") +
-                      constants::kNullOptionalString.toString());
+                  std::string("boost::optional empty ") + constants::kNullOptionalString);
     ASSERT(mongo::fromjson(json->back())
                .getField(kAttributesFieldName)
                .Obj()
@@ -1190,7 +1189,7 @@ TEST_F(LogV2JsonBsonTest, TypeWithBSONArray) {
     LOGV2(20046, "{name}", "name"_attr = t5);
     validate([&t5](const BSONObj& obj) {
         ASSERT_EQUALS(obj.getField(kAttributesFieldName).Obj().getField("name").type(),
-                      BSONType::Array);
+                      BSONType::array);
         ASSERT(obj.getField(kAttributesFieldName)
                    .Obj()
                    .getField("name")
@@ -1431,9 +1430,9 @@ TEST_F(LogV2ContainerTest, Uint32Sequence) {
         ASSERT_EQUALS(vectorUInt32s.size(), jsonVector.size());
         for (std::size_t i = 0; i < vectorUInt32s.size(); ++i) {
             const auto& jsonElem = jsonVector[i];
-            if (jsonElem.type() == NumberInt)
+            if (jsonElem.type() == BSONType::numberInt)
                 ASSERT_EQUALS(jsonElem.Int(), vectorUInt32s[i]);
-            else if (jsonElem.type() == NumberLong)
+            else if (jsonElem.type() == BSONType::numberLong)
                 ASSERT_EQUALS(jsonElem.Long(), vectorUInt32s[i]);
             else
                 ASSERT(false) << "Element type is " << typeName(jsonElem.type())
@@ -1465,7 +1464,7 @@ TEST_F(LogV2ContainerTest, OptionalsAsElements) {
     LOGV2(20049, "{name}", "name"_attr = listOptionalBool);
     ASSERT_EQUALS(text->back(), textJoin(listOptionalBool, [](const auto& item) -> std::string {
                       if (!item)
-                          return constants::kNullOptionalString.toString();
+                          return std::string{constants::kNullOptionalString};
                       if (*item)
                           return "true";
                       return "false";
@@ -1540,7 +1539,7 @@ TEST_F(LogV2ContainerTest, AssociativeWithOptionalSequential) {
                       if (item.second) {
                           r += textJoin(*item.second, [](int v) { return fmt::format("{}", v); });
                       } else {
-                          r += constants::kNullOptionalString.toString();
+                          r += std::string{constants::kNullOptionalString};
                       }
                       return r;
                   }));
@@ -1597,9 +1596,9 @@ TEST_F(LogV2ContainerTest, StringMapUint32) {
             obj.getField(kAttributesFieldName).Obj().getField("mapOfUInt32s").Obj();
         for (const auto& mapElem : mapOfUInt32s) {
             auto elem = mappedValues.getField(mapElem.first);
-            if (elem.type() == NumberInt)
+            if (elem.type() == BSONType::numberInt)
                 ASSERT_EQUALS(elem.Int(), mapElem.second);
-            else if (elem.type() == NumberLong)
+            else if (elem.type() == BSONType::numberLong)
                 ASSERT_EQUALS(elem.Long(), mapElem.second);
             else
                 ASSERT(false) << "Element type is " << typeName(elem.type())
@@ -1737,7 +1736,7 @@ public:
             subobj1.append("lvl2_c", 1);
             subobj1.append("lvl2_d", 2);
         }
-        truncation.leafType = BSONType::String;
+        truncation.leafType = BSONType::string;
         truncation.path = {{"sub1", 0}, {"sub2", 2}, {"large", 2}};
         return TestCase{builder.obj(), std::move(truncation), "large string in subobject"};
     }
@@ -1746,7 +1745,7 @@ public:
         BSONObjBuilder builder;
         TruncationInfo truncation;
         builder.append("large", largeString);
-        truncation.leafType = BSONType::String;
+        truncation.leafType = BSONType::string;
         truncation.path = {{"large", 1}};
         return TestCase{builder.obj(), std::move(truncation), "single large string in object"};
     }
@@ -1757,7 +1756,7 @@ public:
         for (size_t i = 0; i < maxAttributeOutputSize; ++i) {
             builder.append("str");
         }
-        truncation.leafType = BSONType::String;
+        truncation.leafType = BSONType::string;
         truncation.path = {{"862", maxAttributeOutputSize - 862}};
         return TestCase{builder.arr(), std::move(truncation), "large array"};
     }
@@ -1766,7 +1765,7 @@ public:
         BSONArrayBuilder builder;
         TruncationInfo truncation;
         builder.append(largeString);
-        truncation.leafType = BSONType::String;
+        truncation.leafType = BSONType::string;
         truncation.path = {{"0", 1}};
         return TestCase{builder.arr(), std::move(truncation), "single large string in array"};
     }
@@ -1790,7 +1789,7 @@ public:
         // ["1_a", [["3_a", "3_b", "3_c", largeString, "3_d"]], "1_b"]
         auto array = builder.arr();
 
-        truncation.leafType = BSONType::String;
+        truncation.leafType = BSONType::string;
         truncation.path = {{"1", 1}, {"0", 0}, {"3", 2}};
         return TestCase{array, std::move(truncation), "large string in nested arrays"};
     }
@@ -1836,7 +1835,7 @@ public:
 
         BSONObj fieldObj = report.getField(attrName).Obj();
         BSONObj truncated;
-        std::string currentObjPath = attrName.toString();
+        std::string currentObjPath = std::string{attrName};
 
         // validate nested "truncated" elements except for the last (leaf) truncated element.
         for (size_t i = 0; i < path.size(); i++) {
@@ -2060,11 +2059,11 @@ TEST_F(LogV2Test, StringTruncation) {
         std::string context = "Failed test: " + note;
 
         ASSERT_LTE(str.size(), maxLength) << context;
-        ASSERT(str.endsWith(suffix))
+        ASSERT(str.ends_with(suffix))
             << context << " - string " << str << " does not end with " << suffix;
 
         auto trunc = obj[constants::kTruncatedFieldName]["name"];
-        ASSERT_EQUALS(trunc["type"].String(), typeName(BSONType::String)) << context;
+        ASSERT_EQUALS(trunc["type"].String(), typeName(BSONType::string)) << context;
         ASSERT_EQUALS(trunc["size"].numberLong(), str::escapeForJSON(input).size()) << context;
     }
 }

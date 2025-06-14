@@ -52,7 +52,7 @@ REGISTER_DOCUMENT_SOURCE_WITH_FEATURE_FLAG(vectorSearch,
                                            LiteParsedSearchStage::parse,
                                            DocumentSourceVectorSearch::createFromBson,
                                            AllowedWithApiStrict::kNeverInVersion1,
-                                           feature_flags::gFeatureFlagVectorSearchPublicPreview);
+                                           &feature_flags::gFeatureFlagVectorSearchPublicPreview);
 ALLOCATE_DOCUMENT_SOURCE_ID(vectorSearch, DocumentSourceVectorSearch::id)
 
 DocumentSourceVectorSearch::DocumentSourceVectorSearch(
@@ -61,6 +61,7 @@ DocumentSourceVectorSearch::DocumentSourceVectorSearch(
     BSONObj originalSpec,
     boost::optional<SearchQueryViewSpec> view)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _taskExecutor(taskExecutor),
       _originalSpec(originalSpec.getOwned()),
       _view(view) {
@@ -123,10 +124,8 @@ Value DocumentSourceVectorSearch::serialize(const SerializationOptions& opts) co
         // If the request is on a view, include the view information when mongos is serializing the
         // query to the shards, but do not include in explain output for this stage as the view
         // information will be present in $_internalSearchIdLookup and thus would be redundant.
-        if (!opts.verbosity && pExpCtx->getInRouter()) {
-            if (_view) {
-                spec["view"] = Value(_view->toBSON());
-            }
+        if (_view) {
+            spec["view"] = Value(_view->toBSON());
         }
         return Value(Document{{kStageName, spec.freezeToValue()}});
     }
@@ -238,7 +237,7 @@ std::list<intrusive_ptr<DocumentSource>> DocumentSourceVectorSearch::createFromB
     uassert(ErrorCodes::FailedToParse,
             str::stream() << kStageName
                           << " value must be an object. Found: " << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     auto spec = elem.embeddedObject();
 
@@ -248,33 +247,6 @@ std::list<intrusive_ptr<DocumentSource>> DocumentSourceVectorSearch::createFromB
     std::list<intrusive_ptr<DocumentSource>> desugaredPipeline = {
         make_intrusive<DocumentSourceVectorSearch>(
             expCtx, executor::getMongotTaskExecutor(serviceContext), elem.embeddedObject(), view)};
-
-    // TODO: SERVER-85426 Remove this block of code (it's the original location id lookup
-    // was added to $vectorSearch, but that needed to be changed to support sharded
-    // $unionWith $vectorSearch)
-    // TODO: BACKPORT-22945 (8.0) Ensure that using this feature inside a view definition is not
-    // permitted.
-    if (!enableUnionWithVectorSearch.load()) {
-        auto shardFilterer = DocumentSourceInternalShardFilter::buildIfNecessary(expCtx);
-        // Only add an idLookup stage once, when we reach the mongod that will execute the pipeline.
-        // Ignore the case where we have a stub 'mongoProcessInterface' because this only occurs
-        // during validation/analysis, e.g. for QE and pipeline-style updates.
-        if ((expCtx->getMongoProcessInterface()->isExpectedToExecuteQueries() &&
-             !expCtx->getMongoProcessInterface()->inShardedEnvironment(
-                 expCtx->getOperationContext())) ||
-            OperationShardingState::isComingFromRouter(expCtx->getOperationContext())) {
-            desugaredPipeline.insert(
-                std::next(desugaredPipeline.begin()),
-                make_intrusive<DocumentSourceInternalSearchIdLookUp>(
-                    expCtx,
-                    0,
-                    buildExecShardFilterPolicy(shardFilterer),
-                    view ? boost::make_optional(view->getEffectivePipeline()) : boost::none));
-            if (shardFilterer)
-                desugaredPipeline.push_back(std::move(shardFilterer));
-        }
-    }
-
     return desugaredPipeline;
 }
 

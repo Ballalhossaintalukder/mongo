@@ -29,13 +29,13 @@
 
 #include "mongo/db/matcher/path.h"
 
-#include <boost/move/utility_core.hpp>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/matcher/path_internal.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -131,21 +131,21 @@ void BSONElementIterator::_setTraversalStart(size_t suffixIndex, BSONElement ele
     if (suffixIndex == _path->fieldRef().numParts()) {
         _traversalStart = elementToIterate;
     } else {
-        if (elementToIterate.type() == BSONType::Object) {
+        if (elementToIterate.type() == BSONType::object) {
             _traversalStart = getFieldDottedOrArray(
                 elementToIterate.Obj(), _path->fieldRef(), &_traversalStartIndex, suffixIndex);
-        } else if (elementToIterate.type() == BSONType::Array) {
+        } else if (elementToIterate.type() == BSONType::array) {
             _traversalStart = elementToIterate;
         }
     }
 }
 
 void BSONElementIterator::ArrayIterationState::reset(const FieldRef& ref, int start) {
-    restOfPath = ref.dottedField(start).toString();
+    restOfPath = std::string{ref.dottedField(start)};
     hasMore = restOfPath.size() > 0;
     if (hasMore) {
         nextPieceOfPath = ref.getPart(start);
-        nextPieceOfPathIsNumber = isAllDigits(nextPieceOfPath);
+        nextPieceOfPathIsNumber = str::isAllDigits(nextPieceOfPath);
     } else {
         nextPieceOfPathIsNumber = false;
     }
@@ -229,7 +229,7 @@ bool BSONElementIterator::more() {
     }
 
     if (_state == BEGIN) {
-        if (_traversalStart.type() != Array) {
+        if (_traversalStart.type() != BSONType::array) {
             _next.reset(_traversalStart, BSONElement());
             _state = DONE;
             return true;
@@ -279,7 +279,7 @@ bool BSONElementIterator::more() {
             // Our path does not terminate at this array; there's a subpath left over.  Inspect
             // the current array element to see if it could match the subpath.
 
-            if (eltInArray.type() == Object) {
+            if (eltInArray.type() == BSONType::object) {
                 // The current array element is a subdocument.  See if the subdocument generates
                 // any elements matching the remaining subpath.
                 if (!_subIterator) {
@@ -305,8 +305,8 @@ bool BSONElementIterator::more() {
                     return true;
                 }
 
-                invariant(eltInArray.type() != Object);  // Handled above.
-                if (eltInArray.type() == Array) {
+                invariant(eltInArray.type() != BSONType::object);  // Handled above.
+                if (eltInArray.type() == BSONType::array) {
                     // The current array element is itself an array.  See if the nested array
                     // has any elements matching the remaining.
                     if (!_subIterator) {

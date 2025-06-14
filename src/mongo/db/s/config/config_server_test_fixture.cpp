@@ -29,13 +29,6 @@
 
 #include "mongo/db/s/config/config_server_test_fixture.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <typeinfo>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -85,6 +78,14 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 
+#include <memory>
+#include <typeinfo>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+
 namespace mongo {
 
 using executor::NetworkInterfaceMock;
@@ -132,7 +133,12 @@ void ConfigServerTestFixture::setUp() {
 
     auto loader = std::make_shared<ShardServerCatalogCacheLoaderImpl>(
         std::make_unique<ConfigServerCatalogCacheLoaderImpl>());
-    auto catalogCache = std::make_unique<CatalogCache>(getServiceContext(), loader);
+    auto catalogCache =
+        std::make_unique<CatalogCache>(getServiceContext(),
+                                       std::make_unique<ConfigServerCatalogCacheLoaderImpl>(),
+                                       loader,
+                                       true /* cascadeDatabaseCacheLoaderShutdown */,
+                                       false /* cascadeCollectionCacheLoaderShutdown */);
 
     RoutingInformationCache::set(getServiceContext());
 
@@ -313,10 +319,10 @@ CollectionType ConfigServerTestFixture::setupCollection(
     const KeyPattern& shardKey,
     const std::vector<ChunkType>& chunks,
     std::function<void(CollectionType& coll)> collectionCustomizer) {
-    auto dbDoc = findOneOnConfigCollection(
-        operationContext(),
-        NamespaceString::kConfigDatabasesNamespace,
-        BSON(DatabaseType::kDbNameFieldName << nss.db_forTest().toString()));
+    auto dbDoc =
+        findOneOnConfigCollection(operationContext(),
+                                  NamespaceString::kConfigDatabasesNamespace,
+                                  BSON(DatabaseType::kDbNameFieldName << nss.db_forTest()));
     if (!dbDoc.isOK()) {
         // If the database is not setup, choose the first available shard as primary to implicitly
         // create the db
@@ -417,7 +423,7 @@ StatusWith<std::vector<BSONObj>> ConfigServerTestFixture::getIndexes(OperationCo
     auto response = configShard->runCommand(opCtx,
                                             ReadPreferenceSetting{ReadPreference::PrimaryOnly},
                                             ns.dbName(),
-                                            BSON("listIndexes" << ns.coll().toString()),
+                                            BSON("listIndexes" << ns.coll()),
                                             Milliseconds(defaultConfigCommandTimeoutMS.load()),
                                             Shard::RetryPolicy::kIdempotent);
     if (!response.isOK()) {

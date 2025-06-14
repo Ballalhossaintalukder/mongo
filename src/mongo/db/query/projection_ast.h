@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/flat_hash_map.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -50,6 +38,18 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/query/projection_ast_visitor.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace projection_ast {
@@ -131,7 +131,7 @@ inline auto end(const ASTNode& node) {
 
 class MatchExpressionASTNode final : public ASTNode {
 public:
-    MatchExpressionASTNode(CopyableMatchExpression matchExpr) : _matchExpr{matchExpr} {}
+    MatchExpressionASTNode(const CopyableMatchExpression& matchExpr) : _matchExpr{matchExpr} {}
 
     MatchExpressionASTNode(const MatchExpressionASTNode& other)
         : ASTNode{other}, _matchExpr{other._matchExpr} {}
@@ -216,7 +216,7 @@ public:
 
         // Use the map if available. Otherwise linearly search through the vector.
         if (_fieldToChildMap) {
-            auto it = _fieldToChildMap->find(fieldName.toString());
+            auto it = _fieldToChildMap->find(std::string{fieldName});
             if (it == _fieldToChildMap->end()) {
                 return nullptr;
             }
@@ -234,10 +234,10 @@ public:
     void addChild(StringData fieldName, std::unique_ptr<ASTNode> node) {
         auto rawPtrNode = node.get();
         addChildToInternalVector(std::move(node));
-        _fieldNames.push_back(fieldName.toString());
+        _fieldNames.push_back(std::string{fieldName});
 
         if (_fieldToChildMap) {
-            _fieldToChildMap->emplace(fieldName.toString(), rawPtrNode);
+            _fieldToChildMap->emplace(std::string{fieldName}, rawPtrNode);
         } else if (!_fieldToChildMap && _fieldNames.size() >= kUseMapThreshold) {
             // Start using the map, so we can perform getChild lookups faster.
             _fieldToChildMap = std::make_unique<FieldToChildMap>();
@@ -260,7 +260,7 @@ public:
             _children.erase(_children.begin() + std::distance(_fieldNames.begin(), it));
             _fieldNames.erase(it);
             if (_fieldToChildMap)
-                _fieldToChildMap->erase(fieldName.toString());
+                _fieldToChildMap->erase(std::string{fieldName});
             return true;
         }
 
@@ -357,7 +357,7 @@ public:
 
 class ExpressionASTNode final : public ASTNode {
 public:
-    ExpressionASTNode(boost::intrusive_ptr<Expression> expr) : _expr(expr) {}
+    ExpressionASTNode(boost::intrusive_ptr<Expression> expr) : _expr(std::move(expr)) {}
     ExpressionASTNode(const ExpressionASTNode& other) : ASTNode(other) {
         BSONObjBuilder bob;
         bob << "" << other._expr->serialize();

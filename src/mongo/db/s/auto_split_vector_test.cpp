@@ -28,6 +28,19 @@
  */
 
 
+#include "mongo/db/s/auto_split_vector.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/catalog/create_collection.h"
+#include "mongo/db/dbdirectclient.h"
+#include "mongo/db/s/operation_sharding_state.h"
+#include "mongo/db/s/shard_server_test_fixture.h"
+#include "mongo/logv2/log.h"
+#include "mongo/platform/random.h"
+#include "mongo/unittest/unittest.h"
+
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -35,18 +48,6 @@
 
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/catalog/create_collection.h"
-#include "mongo/db/dbdirectclient.h"
-#include "mongo/db/s/auto_split_vector.h"
-#include "mongo/db/s/operation_sharding_state.h"
-#include "mongo/db/s/shard_server_test_fixture.h"
-#include "mongo/logv2/log.h"
-#include "mongo/platform/random.h"
-#include "mongo/unittest/unittest.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -58,6 +59,18 @@ const NamespaceString kNss = NamespaceString::createNamespaceString_forTest("aut
 const std::string kPattern_id = "_id";
 const std::string kPattern_x = "x";
 
+CollectionAcquisition acquireCollectionForAutoSplit(OperationContext* opCtx,
+                                                    const NamespaceString& nss) {
+    auto& readConcern = repl::ReadConcernArgs::get(opCtx);
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest{nss,
+                                     PlacementConcern::kPretendUnsharded,
+                                     readConcern,
+                                     AcquisitionPrerequisites::OperationType::kRead},
+        MODE_IS);
+}
+
 /*
  * Call the autoSplitVector function of the test collection on a chunk with bounds [0, 100) and with
  * the specified `maxChunkSizeMB`.
@@ -66,8 +79,9 @@ std::pair<std::vector<BSONObj>, bool> autoSplit(OperationContext* opCtx,
                                                 int maxChunkSizeMB,
                                                 boost::optional<int> limit = boost::none,
                                                 bool forward = true) {
+    auto acq = acquireCollectionForAutoSplit(opCtx, kNss);
     return autoSplitVector(opCtx,
-                           kNss,
+                           acq,
                            BSON(kPattern_id << 1) /* shard key pattern */,
                            BSON(kPattern_id << 0) /* min */,
                            BSON(kPattern_id << 1000) /* max */,
@@ -147,21 +161,23 @@ class AutoSplitVectorTest10MB : public AutoSplitVectorTest {
 
 // Throw exception upon calling autoSplitVector on dropped/unexisting collection
 TEST_F(AutoSplitVectorTest, NoCollection) {
-    ASSERT_THROWS_CODE(
-        autoSplitVector(operationContext(),
-                        NamespaceString::createNamespaceString_forTest("dummy", "collection"),
-                        BSON(kPattern_id << 1) /* shard key pattern */,
-                        BSON(kPattern_id << kMinBSONKey) /* min */,
-                        BSON(kPattern_id << kMaxBSONKey) /* max */,
-                        1 * 1024 * 1024 /* max chunk size in bytes*/),
-        DBException,
-        ErrorCodes::NamespaceNotFound);
+    auto acq = acquireCollectionForAutoSplit(
+        operationContext(), NamespaceString::createNamespaceString_forTest("dummy", "collection"));
+    ASSERT_THROWS_CODE(autoSplitVector(operationContext(),
+                                       acq,
+                                       BSON(kPattern_id << 1) /* shard key pattern */,
+                                       BSON(kPattern_id << kMinBSONKey) /* min */,
+                                       BSON(kPattern_id << kMaxBSONKey) /* max */,
+                                       1 * 1024 * 1024 /* max chunk size in bytes*/),
+                       DBException,
+                       ErrorCodes::NamespaceNotFound);
 }
 
 TEST_F(AutoSplitVectorTest, EmptyCollection) {
+    auto acq = acquireCollectionForAutoSplit(operationContext(), kNss);
     const auto [splitKey, continuation] =
         autoSplitVector(operationContext(),
-                        kNss,
+                        acq,
                         BSON(kPattern_id << 1) /* shard key pattern */,
                         BSON(kPattern_id << kMinBSONKey) /* min */,
                         BSON(kPattern_id << kMaxBSONKey) /* max */,
@@ -171,9 +187,10 @@ TEST_F(AutoSplitVectorTest, EmptyCollection) {
 }
 
 TEST_F(AutoSplitVectorTest, EmptyCollectionBackwards) {
+    auto acq = acquireCollectionForAutoSplit(operationContext(), kNss);
     const auto [splitKey, continuation] =
         autoSplitVector(operationContext(),
-                        kNss,
+                        acq,
                         BSON(kPattern_id << 1) /* shard key pattern */,
                         BSON(kPattern_id << kMinBSONKey) /* min */,
                         BSON(kPattern_id << kMaxBSONKey) /* max */,
@@ -185,9 +202,10 @@ TEST_F(AutoSplitVectorTest, EmptyCollectionBackwards) {
 }
 
 TEST_F(AutoSplitVectorTest10MB, EmptyRange) {
+    auto acq = acquireCollectionForAutoSplit(operationContext(), kNss);
     const auto [splitKey, continuation] =
         autoSplitVector(operationContext(),
-                        kNss,
+                        acq,
                         BSON(kPattern_id << 1) /* shard key pattern */,
                         BSON(kPattern_id << kMinBSONKey) /* min */,
                         BSON(kPattern_id << -10) /* max */,
@@ -370,9 +388,10 @@ TEST_F(AutoSplitVectorTestInvalidKey, NoSplitIfAllDataIsInvalid) {
     insertNBadDocsKeyXOf1MB(operationContext(), 9);
     DBDirectClient client(operationContext());
     ASSERT_EQUALS(9, client.count(kNss));
+    auto acq = acquireCollectionForAutoSplit(operationContext(), kNss);
     const auto [splitKey, continuation] =
         autoSplitVector(operationContext(),
-                        kNss,
+                        acq,
                         BSON(kPattern_x << 1) /* shard key pattern */,
                         BSON(kPattern_x << MINKEY) /* min */,
                         BSON(kPattern_x << MAXKEY) /* max */,
@@ -385,16 +404,17 @@ TEST_F(AutoSplitVectorTestInvalidKey, NoSplitIfAllDataIsInvalid) {
 TEST_F(AutoSplitVectorTestInvalidKey, OnlySplitAtValidKey) {
     insertNDocsKeyXOf1MB(operationContext(), 15);
     insertNBadDocsKeyXOf1MB(operationContext(), 15);
+    auto acq = acquireCollectionForAutoSplit(operationContext(), kNss);
     const auto [splitKey, continuation] =
         autoSplitVector(operationContext(),
-                        kNss,
+                        acq,
                         BSON(kPattern_x << 1) /* shard key pattern */,
                         BSON(kPattern_x << MINKEY) /* min */,
                         BSON(kPattern_x << MAXKEY) /* max */,
                         10 * 1024 * 1024 /* max chunk size in bytes*/);
 
     ASSERT_EQ(1, splitKey.size());
-    ASSERT_NE(RegEx, splitKey.front().getField(kPattern_x).type());
+    ASSERT_NE(BSONType::regEx, splitKey.front().getField(kPattern_x).type());
     ASSERT_FALSE(continuation);
 }
 

@@ -27,11 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/optional/optional.hpp>
+#include "mongo/s/request_types/update_zone_key_range_serialization.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/s/request_types/update_zone_key_range_serialization.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -39,7 +40,7 @@ boost::optional<std::string> stringOrNullParseFromBSON(const BSONElement& elem) 
     if (elem.isNull()) {
         return boost::none;
     }
-    if (elem.type() == BSONType::String) {
+    if (elem.type() == BSONType::string) {
         return elem.str();
     }
 

@@ -29,15 +29,16 @@
 
 #include "mongo/db/pipeline/percentile_algo_accurate.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cmath>
-
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/sorter/sorter_template_defs.h"
 #include "mongo/platform/atomic_word.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 using std::vector;
@@ -59,28 +60,6 @@ std::string nextFileName() {
         std::to_string(percentileAccumulatorFileCounter.fetchAndAdd(1));
 }
 }  // namespace
-
-
-void AccuratePercentile::incorporate(double input) {
-    if (std::isnan(input)) {
-        return;
-    }
-    if (std::isinf(input)) {
-        if (input < 0) {
-            _negInfCount++;
-        } else {
-            _posInfCount++;
-        }
-        return;
-    }
-
-    // Take advantage of already sorted input -- avoid resorting it later.
-    if (!_shouldSort && !_accumulatedValues.empty() && input < _accumulatedValues.back()) {
-        _shouldSort = true;
-    }
-
-    _accumulatedValues.push_back(input);
-}
 
 void AccuratePercentile::incorporate(const std::vector<double>& inputs) {
     _accumulatedValues.reserve(_accumulatedValues.size() + inputs.size());

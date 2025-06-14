@@ -29,8 +29,6 @@
 
 #include "mongo/crypto/jws_validator.h"
 
-#include <string>
-
 #include "mongo/base/data_range.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -39,6 +37,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/base64.h"
 #include "mongo/util/hex.h"
+
+#include <string>
 
 #if MONGO_CONFIG_SSL_PROVIDER == MONGO_CONFIG_SSL_PROVIDER_OPENSSL
 
@@ -54,7 +54,7 @@ public:
                                           StringData msg,
                                           StringData signature,
                                           bool shouldPass) {
-            this->keyID = keyID.toString();
+            this->keyID = std::string{keyID};
 
             std::string strE = hexblob::decode(e);
             std::string base64E = base64url::encode(StringData(strE.data(), strE.length()));

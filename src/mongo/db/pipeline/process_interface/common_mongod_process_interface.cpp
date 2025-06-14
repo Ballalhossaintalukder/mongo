@@ -30,18 +30,6 @@
 
 #include "mongo/db/pipeline/process_interface/common_mongod_process_interface.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <limits>
-#include <vector>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -65,6 +53,7 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbhelpers.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/matcher/matcher.h"
 #include "mongo/db/index/index_descriptor.h"
@@ -85,9 +74,11 @@
 #include "mongo/db/query/multiple_collection_accessor.h"
 #include "mongo/db/query/plan_cache/plan_cache.h"
 #include "mongo/db/query/plan_cache/sbe_plan_cache.h"
+#include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/repl/primary_only_service.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/query_analysis_writer.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/transaction_coordinator_curop.h"
 #include "mongo/db/s/transaction_coordinator_worker_curop_repository.h"
 #include "mongo/db/service_context.h"
@@ -97,10 +88,11 @@
 #include "mongo/db/stats/storage_stats.h"
 #include "mongo/db/stats/top.h"
 #include "mongo/db/storage/backup_cursor_hooks.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/feature_document_util.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/timeseries/catalog_helper.h"
 #include "mongo/db/timeseries/timeseries_options.h"
@@ -115,11 +107,22 @@
 #include "mongo/s/analyze_shard_key_role.h"
 #include "mongo/s/query_analysis_sample_tracker.h"
 #include "mongo/s/query_analysis_sampler_util.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/future.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <limits>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -205,13 +208,11 @@ void listDurableCatalog(OperationContext* opCtx,
                         StringData shardName,
                         std::deque<BSONObj>* docs,
                         std::vector<NamespaceStringOrUUID>* systemViewsNamespaces) {
-    auto durableCatalog = DurableCatalog::get(opCtx);
-    auto rs = durableCatalog->getRecordStore();
-    if (!rs) {
+    auto cursor = MDBCatalog::get(opCtx)->getCursor(opCtx);
+    if (!cursor) {
         return;
     }
 
-    auto cursor = rs->getCursor(opCtx);
     while (auto record = cursor->next()) {
         BSONObj obj = record->data.releaseToBson();
 
@@ -426,7 +427,7 @@ boost::optional<BSONObj> CommonMongodProcessInterface::getCatalogEntry(
         return boost::none;
     }
     const auto& collPtr = acquisition.getCollectionPtr();
-    auto obj = DurableCatalog::get(opCtx)->getCatalogEntry(opCtx, collPtr->getCatalogId());
+    auto obj = MDBCatalog::get(opCtx)->getRawCatalogEntry(opCtx, collPtr->getCatalogId());
 
     return createCommonNsFields(VersionContext::getDecoration(opCtx), getShardName(opCtx), ns, obj)
         .obj();
@@ -595,18 +596,19 @@ CommonMongodProcessInterface::attachCursorSourceToPipelineForLocalRead(
     std::unique_ptr<Pipeline, PipelineDeleter> pipeline(
         ownedPipeline, PipelineDeleter(expCtx->getOperationContext()));
 
-    Pipeline::SourceContainer& sources = pipeline->getSources();
+    const auto& sources = pipeline->getSources();
     boost::optional<DocumentSource*> firstStage =
         sources.empty() ? boost::optional<DocumentSource*>{} : sources.front().get();
-    invariant(!firstStage || !dynamic_cast<DocumentSourceCursor*>(*firstStage));
+    tassert(10287400,
+            "Pipeline must not yet have a DocumentSourceCursor as the first stage.",
+            !firstStage || !dynamic_cast<DocumentSourceCursor*>(*firstStage));
 
-    bool skipRequiresInputDocSourceCheck =
-        PipelineD::isSearchPresentAndEligibleForSbe(pipeline.get());
-
-    if (!skipRequiresInputDocSourceCheck && firstStage &&
-        !(*firstStage)->constraints().requiresInputDocSource) {
-        // There's no need to attach a cursor here.
-        search_helpers::prepareSearchForNestedPipelineLegacyExecutor(pipeline.get());
+    const bool isMongotPipeline = search_helpers::isMongotPipeline(pipeline.get());
+    if (!isMongotPipeline && firstStage && !(*firstStage)->constraints().requiresInputDocSource) {
+        // There's no need to attach a cursor or perform collection acquisition here (for stages
+        // like $documents or $collStats that will not read from a user collection). Mongot
+        // pipelines will not need a cursor but _do_ need to acquire the collection to check for a
+        // stale shard version.
         return pipeline;
     }
 
@@ -671,12 +673,13 @@ CommonMongodProcessInterface::attachCursorSourceToPipelineForLocalRead(
         initializeAutoGet(opCtx, primaryNss, secondaryNamespaces, initAutoGetCallback);
 
     // Extract the main acquisition.
-    auto primaryAcquisition = allAcquisitions.extract(primaryNss).mapped();
-    auto& secondaryAcquisitions = allAcquisitions;
+    boost::optional<CollectionOrViewAcquisition> primaryAcquisition =
+        allAcquisitions.extract(primaryNss).mapped();
+    auto secondaryAcquisitions = std::move(allAcquisitions);
 
     tassert(10004200,
             "Expected the primary namespace to be a collection.",
-            primaryAcquisition.isCollection());
+            primaryAcquisition.has_value() && primaryAcquisition->isCollection());
 
     bool isAnySecondaryNamespaceAView =
         std::any_of(secondaryAcquisitions.begin(),
@@ -686,7 +689,7 @@ CommonMongodProcessInterface::attachCursorSourceToPipelineForLocalRead(
     bool isAnySecondaryNamespaceAViewOrNotFullyLocal =
         isAnySecondaryNamespaceAView || isAnySecondaryCollectionNotLocal;
 
-    const auto& collPtr = primaryAcquisition.getCollection().getCollectionPtr();
+    const auto& collPtr = primaryAcquisition->getCollection().getCollectionPtr();
     if (aggRequest && aggRequest->getCollectionUUID() && collPtr) {
         checkCollectionUUIDMismatch(
             opCtx, expCtx->getNamespaceString(), collPtr, aggRequest->getCollectionUUID());
@@ -700,7 +703,7 @@ CommonMongodProcessInterface::attachCursorSourceToPipelineForLocalRead(
     }
 
     MultipleCollectionAccessor holder{
-        primaryAcquisition, secondaryAcquisitions, isAnySecondaryNamespaceAViewOrNotFullyLocal};
+        *primaryAcquisition, secondaryAcquisitions, isAnySecondaryNamespaceAViewOrNotFullyLocal};
 
     auto resolvedAggRequest = aggRequest ? &aggRequest.get() : nullptr;
     auto sharedStasher = make_intrusive<ShardRoleTransactionResourcesStasherForPipeline>();
@@ -711,6 +714,19 @@ CommonMongodProcessInterface::attachCursorSourceToPipelineForLocalRead(
                                                           pipeline.get(),
                                                           catalogResourceHandle,
                                                           shardFilterPolicy);
+
+    if (isMongotPipeline) {
+        // For mongot pipelines, we will not have a cursor attached and now must perform
+        // $search-specific stage preparation. It's important that we release locks early, before
+        // preparing the pipeline, so that we don't hold them during network calls to mongot. This
+        // is fine for search pipelines since they are not reading any local (lock-protected) data
+        // in the main pipeline. It was important that we still acquired the collection in order to
+        // check for a stale shard version.
+        holder.clear();
+        primaryAcquisition.reset();
+        secondaryAcquisitions.clear();
+        search_helpers::prepareSearchForNestedPipelineLegacyExecutor(pipeline.get());
+    }
 
     // Stash resources to free locks.
     stashTransactionResourcesFromOperationContext(opCtx, sharedStasher.get());
@@ -780,10 +796,11 @@ boost::optional<Document> CommonMongodProcessInterface::doLookupSingleDocument(
         return boost::none;
     }
 
-    auto lookedUpDocument = pipeline->getNext();
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+    auto lookedUpDocument = execPipeline->getNext();
 
     // Ensure that there are no two documents for the same 'documentKey'.
-    if (auto next = pipeline->getNext()) {
+    if (auto next = execPipeline->getNext()) {
         uasserted(ErrorCodes::TooManyMatchingDocuments,
                   str::stream() << "found more than one document with document key "
                                 << documentKey.toString() << " [" << lookedUpDocument->toString()
@@ -901,7 +918,7 @@ CommonMongodProcessInterface::fieldsHaveSupportingUniqueIndex(
                                                         : SupportingUniqueIndex::None;
     }
     auto indexIterator = collection.getCollectionPtr()->getIndexCatalog()->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady);
+        IndexCatalog::InclusionPolicy::kReady);
     auto result = SupportingUniqueIndex::None;
     while (indexIterator->more()) {
         const IndexCatalogEntry* entry = indexIterator->next();
@@ -1075,82 +1092,92 @@ boost::optional<TimeseriesOptions> CommonMongodProcessInterface::_getTimeseriesO
     return mongo::timeseries::getTimeseriesOptions(opCtx, ns, true /*convertToBucketsNamespace*/);
 }
 
-void CommonMongodProcessInterface::writeRecordsToRecordStore(
+void CommonMongodProcessInterface::writeRecordsToSpillTable(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    RecordStore* rs,
-    std::vector<Record>* records,
-    const std::vector<Timestamp>& ts) const {
+    SpillTable& spillTable,
+    std::vector<Record>* records) const {
     tassert(5643012, "Attempted to write to record store with nullptr", records);
     assertIgnorePrepareConflictsBehavior(expCtx);
     writeConflictRetry(
         expCtx->getOperationContext(),
-        "MPI::writeRecordsToRecordStore",
+        "MPI::writeRecordsToSpillTable",
         expCtx->getNamespaceString(),
         [&] {
             Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
             WriteUnitOfWork wuow(expCtx->getOperationContext());
-            auto writeResult = rs->insertRecords(expCtx->getOperationContext(), records, ts);
-            tassert(5643002,
+            auto writeResult = spillTable.insertRecords(expCtx->getOperationContext(), records);
+            uassert(ErrorCodes::OutOfDiskSpace,
                     str::stream() << "Failed to write to disk because " << writeResult.reason(),
                     writeResult.isOK());
             wuow.commit();
         });
 }
 
-std::unique_ptr<TemporaryRecordStore> CommonMongodProcessInterface::createTemporaryRecordStore(
+std::unique_ptr<SpillTable> CommonMongodProcessInterface::createSpillTable(
     const boost::intrusive_ptr<ExpressionContext>& expCtx, KeyFormat keyFormat) const {
     assertIgnorePrepareConflictsBehavior(expCtx);
     Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
+    if (feature_flags::gFeatureFlagCreateSpillKVEngine.isEnabled()) {
+        return expCtx->getOperationContext()
+            ->getServiceContext()
+            ->getStorageEngine()
+            ->makeSpillTable(expCtx->getOperationContext(),
+                             keyFormat,
+                             internalQuerySpillingMinAvailableDiskSpaceBytes.load());
+    }
     return expCtx->getOperationContext()
         ->getServiceContext()
         ->getStorageEngine()
         ->makeTemporaryRecordStore(expCtx->getOperationContext(), keyFormat);
 }
 
-Document CommonMongodProcessInterface::readRecordFromRecordStore(
+Document CommonMongodProcessInterface::readRecordFromSpillTable(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const RecordStore* rs,
+    const SpillTable& spillTable,
     RecordId rID) const {
     RecordData possibleRecord;
     Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
-    auto foundDoc = rs->findRecord(expCtx->getOperationContext(), RecordId(rID), &possibleRecord);
+    auto foundDoc =
+        spillTable.findRecord(expCtx->getOperationContext(), RecordId(rID), &possibleRecord);
     tassert(775101, str::stream() << "Could not find document id " << rID, foundDoc);
     return Document::fromBsonWithMetaData(possibleRecord.toBson());
 }
 
-bool CommonMongodProcessInterface::checkRecordInRecordStore(
+bool CommonMongodProcessInterface::checkRecordInSpillTable(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const RecordStore* rs,
+    const SpillTable& spillTable,
     RecordId rID) const {
     RecordData possibleRecord;
     Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
-    return rs->findRecord(expCtx->getOperationContext(), RecordId(rID), &possibleRecord);
+    return spillTable.findRecord(expCtx->getOperationContext(), RecordId(rID), &possibleRecord);
 }
 
-void CommonMongodProcessInterface::deleteRecordFromRecordStore(
-    const boost::intrusive_ptr<ExpressionContext>& expCtx, RecordStore* rs, RecordId rID) const {
+void CommonMongodProcessInterface::deleteRecordFromSpillTable(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx,
+    SpillTable& spillTable,
+    RecordId rID) const {
     assertIgnorePrepareConflictsBehavior(expCtx);
     writeConflictRetry(expCtx->getOperationContext(),
-                       "MPI::deleteFromRecordStore",
+                       "MPI::deleteRecordFromSpillTable",
                        expCtx->getNamespaceString(),
                        [&] {
                            Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
                            WriteUnitOfWork wuow(expCtx->getOperationContext());
-                           rs->deleteRecord(expCtx->getOperationContext(), rID);
+                           spillTable.deleteRecord(expCtx->getOperationContext(), rID);
                            wuow.commit();
                        });
 }
 
-void CommonMongodProcessInterface::truncateRecordStore(
-    const boost::intrusive_ptr<ExpressionContext>& expCtx, RecordStore* rs) const {
+void CommonMongodProcessInterface::truncateSpillTable(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx, SpillTable& spillTable) const {
     assertIgnorePrepareConflictsBehavior(expCtx);
     writeConflictRetry(expCtx->getOperationContext(),
-                       "MPI::truncateRecordStore",
+                       "MPI::truncateSpillTable",
                        expCtx->getNamespaceString(),
                        [&] {
                            Lock::GlobalLock lk(expCtx->getOperationContext(), MODE_IS);
                            WriteUnitOfWork wuow(expCtx->getOperationContext());
-                           auto status = rs->truncate(expCtx->getOperationContext());
+                           auto status = spillTable.truncate(expCtx->getOperationContext());
                            tassert(5643000, "Unable to clear record store", status.isOK());
                            wuow.commit();
                        });

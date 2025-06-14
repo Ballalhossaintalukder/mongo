@@ -210,7 +210,12 @@ error_codes:
   - {code: 140, name: InvalidSSLConfiguration}
   - {code: 141, name: SSLHandshakeFailed}
   - {code: 142, name: JSUncatchableError}
-  - {code: 143, name: CursorInUse}
+  - {
+      code: 143,
+      name: CursorInUse,
+      extra: CursorInUseInfo,
+      extraIsOptional: true,
+    }
   - {code: 144, name: IncompatibleCatalogManager}
   - {code: 145, name: PooledConnectionsDropped}
   - {code: 146, name: ExceededMemoryLimit}
@@ -870,7 +875,22 @@ error_codes:
       categories: [InternalOnly],
     }
   - {code: 447, name: ObjectAlreadyExists, categories: [InternalOnly]}
-  - {code: 448, name: StreamProcessorAtlasReadError}
+  - {
+      code: 448,
+      name: StreamProcessorInvalidNamespace,
+      categories: [StreamProcessorUserError],
+    }
+  - {code: 449, name: RateLimitExceeded, categories: [SystemOverloadedError]}
+  - {
+      code: 450,
+      name: PooledConnectionAcquisitionRejected,
+      categories: [SystemOverloadedError],
+    }
+  - {
+      code: 451,
+      name: StreamProcessorS3TokenExpired,
+      categories: [StreamProcessorRetryableError],
+    }
 
   # Error codes 4000-8999 are reserved.
 

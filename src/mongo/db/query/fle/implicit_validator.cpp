@@ -29,16 +29,6 @@
 
 #include "mongo/db/query/fle/implicit_validator.h"
 
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,6 +45,16 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -91,7 +91,7 @@ std::unique_ptr<Node> buildTreeFromEncryptedFieldPaths(
                 // the rest of the path forms a new branch; append nodes until the last part
                 for (; i < fieldPath.numParts(); i++) {
                     level->subobjs.push_back(
-                        {fieldPath.getPart(i).toString(), boost::none, std::vector<Node>()});
+                        {std::string{fieldPath.getPart(i)}, boost::none, std::vector<Node>()});
                     level = &(level->subobjs.back());
                 }
                 if (field.getBsonType().has_value()) {
@@ -109,7 +109,7 @@ std::unique_ptr<Node> buildTreeFromEncryptedFieldPaths(
             }
         }
     }
-    root->type = BSONType::Object;
+    root->type = BSONType::object;
     return root;
 }
 
@@ -144,7 +144,7 @@ std::unique_ptr<MatchExpression> createObjectExpression(
         doc_validation_error::createAnnotation(expCtx, AnnotationMode::kIgnoreButDescend));
     auto orExpr = std::make_unique<OrMatchExpression>(
         doc_validation_error::createAnnotation(expCtx, AnnotationMode::kIgnoreButDescend));
-    orExpr->add(createNotTypeExpression(expCtx, BSONType::Object, path));
+    orExpr->add(createNotTypeExpression(expCtx, BSONType::object, path));
     orExpr->add(std::move(objectMatch));
     return orExpr;
 }
@@ -215,7 +215,7 @@ std::unique_ptr<MatchExpression> treeToMatchExpression(
         expCtx, "_property", BSON("propertyName" << node.name)));
     andExpr->add(createObjectExpression(expCtx, node.name, std::move(subschema)));
     andExpr->add(
-        createNotTypeExpression(expCtx, BSONType::Array, node.name, false /* ignoreError */));
+        createNotTypeExpression(expCtx, BSONType::array, node.name, false /* ignoreError */));
     return andExpr;
 }
 

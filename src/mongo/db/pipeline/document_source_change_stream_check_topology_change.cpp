@@ -29,9 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_change_stream_check_topology_change.h"
 
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -40,12 +37,17 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamCheckTopologyChange,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamCheckTopologyChange::createFromBson,
                                   true);
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamCheckTopologyChange,
+                            DocumentSourceChangeStreamCheckTopologyChange::id)
 
 StageConstraints DocumentSourceChangeStreamCheckTopologyChange::constraints(
     Pipeline::SplitState pipeState) const {
@@ -66,7 +68,7 @@ DocumentSourceChangeStreamCheckTopologyChange::createFromBson(
     const BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5669601,
             str::stream() << "the '" << kStageName << "' spec must be an object",
-            elem.type() == Object && elem.Obj().isEmpty());
+            elem.type() == BSONType::object && elem.Obj().isEmpty());
     return new DocumentSourceChangeStreamCheckTopologyChange(expCtx);
 }
 

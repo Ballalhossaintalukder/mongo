@@ -47,8 +47,12 @@ function runTest(conn, disableAtRunTime) {
     // Authenticate as the user we created earlier and run a find on the view. Since the
     // $$USER_ROLES server parameter is disabled, the find should fail.
     db.auth("user", "pwd");
-    assert.commandFailedWithCode(db.runCommand({find: "coll_view", filter: {}}),
-                                 varNotAvailableErr);
+
+    let res = db.runCommand({find: "coll_view", filter: {}});
+    assert(res["errmsg"].includes("Builtin variable") && res["errmsg"].includes("$$USER_ROLES") &&
+               res["errmsg"].includes("as the server is not configured to accept it"),
+           "Error message did not match expected message");
+    assert.commandFailedWithCode(res, varNotAvailableErr);
 
     db.logout();
 }

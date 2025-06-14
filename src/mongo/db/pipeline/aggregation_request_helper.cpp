@@ -29,12 +29,6 @@
 
 #include "mongo/db/pipeline/aggregation_request_helper.h"
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -56,6 +50,11 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace aggregation_request_helper {
@@ -154,7 +153,7 @@ void validate(const AggregateCommandRequest& aggregate,
                           << " must be set for non-oplog namespace",
             !hasRequestResumeToken || !nss.isOplog());
     if (hasRequestResumeToken) {
-        auto hintElem = aggregate.getHint();
+        const auto& hintElem = aggregate.getHint();
         uassert(ErrorCodes::BadValue,
                 "hint must be {$natural:1} if 'requestResumeToken' is enabled",
                 hintElem.has_value() &&
@@ -255,7 +254,7 @@ void setFromRouter(const VersionContext& vCtx, MutableDocument& doc, mongo::Valu
 boost::optional<bool> parseExplainModeFromBSON(const BSONElement& explainElem) {
     uassert(ErrorCodes::TypeMismatch,
             "explain must be a boolean",
-            explainElem.type() == BSONType::Bool);
+            explainElem.type() == BSONType::boolean);
     if (explainElem.Bool()) {
         return true;
     } else {
@@ -288,7 +287,7 @@ mongo::SimpleCursorOptions parseAggregateCursorFromBSON(const BSONElement& curso
 
     uassert(ErrorCodes::TypeMismatch,
             "cursor field must be missing or an object",
-            cursorElem.type() == mongo::Object);
+            cursorElem.type() == BSONType::object);
 
     SimpleCursorOptions cursor = SimpleCursorOptions::parse(
         IDLParserContext(AggregateCommandRequest::kCursorFieldName), cursorElem.embeddedObject());

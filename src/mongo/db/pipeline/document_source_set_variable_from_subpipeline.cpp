@@ -29,11 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_set_variable_from_subpipeline.h"
 
-#include <string>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -43,6 +38,11 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -87,7 +87,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceSetVariableFromSubPipeline::c
         str::stream()
             << "the $setVariableFromSubPipeline stage specification must be an object, but found "
             << typeName(elem.type()),
-        elem.type() == BSONType::Object);
+        elem.type() == BSONType::object);
 
     auto spec =
         SetVariableFromSubPipelineSpec::parse(IDLParserContext(kStageName), elem.embeddedObject());
@@ -95,8 +95,8 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceSetVariableFromSubPipeline::c
     uassert(
         625291,
         str::stream() << "SetVariableFromSubPipeline only allows setting $$SEARCH_META variable,  "
-                      << spec.getSetVariable().toString() << " is not allowed.",
-        spec.getSetVariable().toString() == searchMetaStr);
+                      << spec.getSetVariable() << " is not allowed.",
+        spec.getSetVariable() == searchMetaStr);
 
     std::unique_ptr<Pipeline, PipelineDeleter> pipeline = Pipeline::parse(
         spec.getPipeline(), expCtx->copyForSubPipeline(expCtx->getNamespaceString()));
@@ -132,14 +132,14 @@ DocumentSource::GetNextResult DocumentSourceSetVariableFromSubPipeline::doGetNex
         tassert(6448002,
                 "Expected to have already attached a cursor source to the pipeline",
                 !_subPipeline->peekFront()->constraints().requiresInputDocSource);
-        auto nextSubPipelineInput = _subPipeline->getNext();
+        auto nextSubPipelineInput = _subExecPipeline->getNext();
         uassert(625296,
                 "No document returned from $SetVariableFromSubPipeline subpipeline",
                 nextSubPipelineInput);
         uassert(625297,
                 "Multiple documents returned from $SetVariableFromSubPipeline subpipeline when "
                 "only one expected",
-                !_subPipeline->getNext());
+                !_subExecPipeline->getNext());
         pExpCtx->variables.setReservedValue(_variableID, Value(*nextSubPipelineInput), true);
     }
     _firstCallForInput = false;
@@ -153,18 +153,18 @@ void DocumentSourceSetVariableFromSubPipeline::addSubPipelineInitialSource(
 
 void DocumentSourceSetVariableFromSubPipeline::detachFromOperationContext() {
     if (_subPipeline) {
-        _subPipeline->detachFromOperationContext();
+        _subExecPipeline->detachFromOperationContext();
     }
 }
 
 void DocumentSourceSetVariableFromSubPipeline::reattachToOperationContext(OperationContext* opCtx) {
-    _subPipeline->reattachToOperationContext(opCtx);
+    _subExecPipeline->reattachToOperationContext(opCtx);
 }
 
 bool DocumentSourceSetVariableFromSubPipeline::validateOperationContext(
     const OperationContext* opCtx) const {
     return getContext()->getOperationContext() == opCtx &&
-        (!_subPipeline || _subPipeline->validateOperationContext(opCtx));
+        (!_subPipeline || _subExecPipeline->validateOperationContext(opCtx));
 }
 
 }  // namespace mongo

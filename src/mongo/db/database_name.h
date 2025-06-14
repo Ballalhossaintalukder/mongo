@@ -28,20 +28,6 @@
  */
 
 #pragma once
-#include <algorithm>
-#include <boost/algorithm/string/predicate.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <cstring>
-#include <fmt/format.h>
-#include <iosfwd>
-#include <mutex>
-#include <string>
-#include <utility>
-
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -52,6 +38,21 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/static_immortal.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <iosfwd>
+#include <mutex>
+#include <string>
+#include <utility>
+
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -210,7 +211,7 @@ public:
      * tolerated in the serialized output, and should otherwise be avoided whenever possible.
      */
     std::string serializeWithoutTenantPrefix_UNSAFE() const {
-        return db(omitTenant).toString();
+        return std::string{db(omitTenant)};
     }
 
     /**
@@ -260,7 +261,7 @@ public:
      */
     bool equalCaseInsensitive(const DatabaseName& other) const {
         return tenantIdView() == other.tenantIdView() &&
-            db(omitTenant).equalCaseInsensitive(other.db(omitTenant));
+            str::equalCaseInsensitive(db(omitTenant), other.db(omitTenant));
     }
 
     int compare(const DatabaseName& other) const {
@@ -404,7 +405,7 @@ protected:
     }
 
     std::string toString() const {
-        return db(omitTenant).toString();
+        return std::string{db(omitTenant)};
     }
 
     std::string toStringWithTenantId() const {
@@ -413,7 +414,7 @@ protected:
             return str::stream() << tenantId.toString() << "_" << db(omitTenant);
         }
 
-        return db(omitTenant).toString();
+        return std::string{db(omitTenant)};
     }
 
     static constexpr size_t kDataOffset = sizeof(uint8_t);
@@ -645,7 +646,7 @@ protected:
             if (!collectionName.empty()) {
                 *(dataptr + dbStartIndex + db.size()) = '.';
                 std::memcpy(dataptr + dbStartIndex + db.size() + dotSize,
-                            collectionName.rawData(),
+                            collectionName.data(),
                             collectionName.size());
             }
 
@@ -787,8 +788,7 @@ constexpr auto makeDbData(const char* db) {
     p = std::copy_n(db, dbSize, p);
     return result;
 }
-#define DBNAME_CONSTANT(id, db) \
-    constexpr inline auto id##_data = makeDbData<db.size()>(db.rawData());
+#define DBNAME_CONSTANT(id, db) constexpr inline auto id##_data = makeDbData<db.size()>(db.data());
 #include "database_name_reserved.def.h"
 #undef DBNAME_CONSTANT
 }  // namespace dbname_detail::constexpr_data

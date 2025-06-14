@@ -30,10 +30,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <iterator>
-#include <string>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -43,6 +39,10 @@
 #include "mongo/db/matcher/expression_path.h"
 #include "mongo/db/matcher/expression_tree.h"
 #include "mongo/db/query/collation/collator_interface.h"
+
+#include <algorithm>
+#include <iterator>
+#include <string>
 
 namespace mongo {
 namespace {
@@ -297,7 +297,7 @@ MatchExpression::ExpressionOptimizerFunc ListOfMatchExpression::getOptimizer() c
             std::vector<std::unique_ptr<MatchExpression>> nonEligibleForIn;
 
             auto isRegEx = [](const BSONElement& elm) {
-                return elm.type() == BSONType::RegEx;
+                return elm.type() == BSONType::regEx;
             };
 
             // Group the children together that have equality conditions or regular expressions on
@@ -345,7 +345,7 @@ MatchExpression::ExpressionOptimizerFunc ListOfMatchExpression::getOptimizer() c
                     }
                 }
 
-                auto key = childExpression->path().toString();
+                auto key = std::string{childExpression->path()};
                 if (!pathToExprsMap.contains(key)) {
                     std::vector<std::unique_ptr<MatchExpression>> exprs;
                     exprs.push_back(std::move(childExpression));

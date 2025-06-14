@@ -28,17 +28,7 @@
  */
 
 
-#include "mongo/platform/random.h"
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <initializer_list>
-#include <memory>
-#include <ostream>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/resharding/resharding_recipient_service.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -53,6 +43,7 @@
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
+#include "mongo/db/concurrency/locker.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/index_builds/index_builds_coordinator_mock.h"
@@ -76,7 +67,6 @@
 #include "mongo/db/s/resharding/resharding_data_replication.h"
 #include "mongo/db/s/resharding/resharding_oplog_applier_progress_gen.h"
 #include "mongo/db/s/resharding/resharding_oplog_fetcher_progress_gen.h"
-#include "mongo/db/s/resharding/resharding_recipient_service.h"
 #include "mongo/db/s/resharding/resharding_recipient_service_external_state.h"
 #include "mongo/db/s/resharding/resharding_service_test_helpers.h"
 #include "mongo/db/s/resharding/resharding_util.h"
@@ -85,14 +75,12 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/logv2/log.h"
+#include "mongo/platform/random.h"
 #include "mongo/s/catalog/type_chunk.h"
-#include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/database_version.h"
-#include "mongo/s/index_version.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/s/sharding_test_fixture_common.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/unittest/death_test.h"
@@ -102,6 +90,17 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/functional.h"
 #include "mongo/util/uuid.h"
+
+#include <initializer_list>
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -247,7 +246,7 @@ public:
 
     void startOplogApplication() override {};
 
-    void onEnteringCriticalSection() override {};
+    void prepareForCriticalSection() override {};
 
     SharedSemiFuture<void> awaitCloningDone() override {
         return makeReadyFutureWith([] {}).share();
@@ -360,6 +359,31 @@ BSONObj makeTestDocumentForInsert(int i) {
 
 BSONObj makeTestDocumentUpdateStatement() {
     return BSON("$inc" << BSON("x" << 1));
+}
+
+void runRandomizedLocking(OperationContext* opCtx,
+                          Locker& locker,
+                          const ResourceId& resId,
+                          AtomicWord<bool>& keepRunning) {
+    PseudoRandom random = PseudoRandom(123456);
+
+    while (keepRunning.load()) {
+        try {
+            locker.lockGlobal(opCtx, MODE_IX);
+            locker.lock(opCtx, resId, MODE_X);
+
+            // The migrationLockAcquisitionMaxWaitMS is 500 by default. Ensure the lock is held long
+            // enough to trigger the lockTimeout.
+            sleepFor(Milliseconds(500 + random.nextInt32(500)));
+
+            ASSERT(locker.unlock(resId));
+            ASSERT(locker.unlockGlobal());
+
+            sleepFor(Milliseconds(random.nextInt32(5)));
+        } catch (const DBException& ex) {
+            LOGV2(10568801, "Error during locking/unlocking", "error"_attr = ex.toString());
+        }
+    }
 }
 
 struct RecipientMetricsCommon {
@@ -556,8 +580,12 @@ public:
             CancellationSource cancelSource;
             SemiFuture<void> future =
                 notifyToStartCloningUsingCmd(cancelSource.token(), recipient, recipientDoc);
+            // There is a race here where the recipient can fulfill the future before cancelSource
+            // is canceled. Due to this we need to check for Status::OK() as well as
+            // CallbackCanceled.
             cancelSource.cancel();
-            ASSERT_EQ(future.getNoThrow(), ErrorCodes::CallbackCanceled);
+            auto status = future.getNoThrow();
+            ASSERT_TRUE(status == ErrorCodes::CallbackCanceled || status == Status::OK()) << status;
         } else {
             _onReshardingFieldsChanges(
                 opCtx, recipient, recipientDoc, CoordinatorStateEnum::kCloning);
@@ -784,6 +812,22 @@ protected:
                     opCtx, testOptions, testMetricsForDonor, metadata, metrics);
             }
         }
+    }
+
+    ChangeStreamsMonitorContext createChangeStreamsMonitorContext(OperationContext* opCtx) {
+        // Perform an insert to ensure the change streams monitor has a valid startAt timestamp.
+        auto testNss = NamespaceString::createNamespaceString_forTest("testDb", "testColl");
+        resharding::data_copy::ensureCollectionExists(opCtx, testNss, CollectionOptions());
+        insertDocuments(opCtx, testNss, {makeTestDocumentForInsert(0)});
+
+        WriteUnitOfWork wuow(opCtx);
+        auto ts = repl::getNextOpTime(opCtx).getTimestamp();
+        wuow.commit();
+
+        ChangeStreamsMonitorContext changeStreams;
+        changeStreams.setStartAtOperationTime(ts - 1);
+        changeStreams.setDocumentsDelta(0);
+        return changeStreams;
     }
 
     int64_t getExpectedDocumentsDelta() {
@@ -1052,8 +1096,6 @@ protected:
                 recipientDoc.getTempReshardingNss(), BSON("_id" << idsInserted[i].toBSON()), false);
         }
     }
-
-    PseudoRandom _random = PseudoRandom(123456);
 
 private:
     TypeCollectionRecipientFields _makeRecipientFields(
@@ -1596,7 +1638,7 @@ TEST_F(ReshardingRecipientServiceTest, WritesNoopOplogEntryOnReshardDoneCatchUp)
         ASSERT_EQ(OpType_serializer(op.getOpType()), OpType_serializer(repl::OpTypeEnum::kNoop))
             << op.getEntry();
         ASSERT_EQ(*op.getUuid(), doc.getReshardingUUID()) << op.getEntry();
-        ASSERT_EQ(op.getObject()["msg"].type(), BSONType::String) << op.getEntry();
+        ASSERT_EQ(op.getObject()["msg"].type(), BSONType::string) << op.getEntry();
         ASSERT_TRUE(receivedChangeEvent == expectedChangeEvent);
         ASSERT_TRUE(op.getFromMigrate());
         ASSERT_FALSE(bool(op.getDestinedRecipient())) << op.getEntry();
@@ -1653,7 +1695,7 @@ TEST_F(ReshardingRecipientServiceTest, WritesNoopOplogEntryForImplicitShardColle
             << shardCollectionOp.getEntry();
         ASSERT_EQ(*shardCollectionOp.getUuid(), doc.getReshardingUUID())
             << shardCollectionOp.getEntry();
-        ASSERT_EQ(shardCollectionOp.getObject()["msg"].type(), BSONType::Object)
+        ASSERT_EQ(shardCollectionOp.getObject()["msg"].type(), BSONType::object)
             << shardCollectionOp.getEntry();
         ASSERT_FALSE(shardCollectionOp.getFromMigrate());
 
@@ -2050,15 +2092,7 @@ TEST_F(ReshardingRecipientServiceTest, RestoreMetricsAfterStepUpWithMissingProgr
         doc.setCommonReshardingMetadata(metadata);
 
         if (testOptions.performVerification) {
-            ChangeStreamsMonitorContext changeStreams;
-
-            WriteUnitOfWork wuow(opCtx.get());
-            auto ts = repl::getNextOpTime(opCtx.get()).getTimestamp();
-            wuow.commit();
-
-            changeStreams.setStartAtOperationTime(ts - 1);
-            changeStreams.setDocumentsDelta(0);
-            doc.setChangeStreamsMonitor(changeStreams);
+            doc.setChangeStreamsMonitor(createChangeStreamsMonitorContext(opCtx.get()));
         }
 
         createTempReshardingCollection(opCtx.get(), doc);
@@ -2088,14 +2122,7 @@ TEST_F(ReshardingRecipientServiceTest, AbortWhileChangeStreamsMonitorInProgress)
     doc.setMutableState(mutableState);
     doc.setCloneTimestamp(Timestamp{10, 0});
     doc.setStartConfigTxnCloneTime(Date_t::now());
-
-    ChangeStreamsMonitorContext changeStreams;
-    WriteUnitOfWork wuow(opCtx.get());
-    auto ts = repl::getNextOpTime(opCtx.get()).getTimestamp();
-    wuow.commit();
-    changeStreams.setStartAtOperationTime(ts - 1);
-    changeStreams.setDocumentsDelta(0);
-    doc.setChangeStreamsMonitor(changeStreams);
+    doc.setChangeStreamsMonitor(createChangeStreamsMonitorContext(opCtx.get()));
 
     createTempReshardingCollection(opCtx.get(), doc);
     RecipientStateMachine::insertStateDocument(opCtx.get(), doc);
@@ -2147,7 +2174,7 @@ TEST_F(ReshardingRecipientServiceTest, AbortAfterStepUpWithAbortReasonFromCoordi
             auto abortReason = persistedDoc.getMutableState().getAbortReason();
             ASSERT(abortReason);
             ASSERT_EQ(abortReason->getIntField("code"), ErrorCodes::ReshardCollectionAborted);
-            ASSERT_EQ(abortReason->getStringField("errmsg").toString(), abortErrMsg);
+            ASSERT_EQ(abortReason->getStringField("errmsg"), abortErrMsg);
         }
 
         stepDown();
@@ -2329,6 +2356,51 @@ TEST_F(ReshardingRecipientServiceTest,
         ASSERT_OK(recipient->getCompletionFuture().getNoThrow());
 
         tempReshardingCollectionOptions = BSONObj();
+    }
+}
+
+TEST_F(ReshardingRecipientServiceTest, VerifyRecipientRetriesOnLockTimeoutError) {
+    const std::vector<RecipientStateEnum> recipientPhases{RecipientStateEnum::kCreatingCollection,
+                                                          RecipientStateEnum::kCloning,
+                                                          RecipientStateEnum::kBuildingIndex,
+                                                          RecipientStateEnum::kApplying,
+                                                          RecipientStateEnum::kStrictConsistency};
+
+    for (const auto& testOptions : makeBasicTestOptions()) {
+        LOGV2(10568802,
+              "Running case",
+              "test"_attr = _agent.getTestName(),
+              "testOptions"_attr = testOptions);
+
+        PauseDuringStateTransitions phaseTransitionsGuard{controller(), {recipientPhases}};
+        auto doc = makeRecipientDocument(testOptions);
+        auto instanceId =
+            BSON(ReshardingRecipientDocument::kReshardingUUIDFieldName << doc.getReshardingUUID());
+
+        auto opCtx = makeOperationContext();
+        RecipientStateMachine::insertStateDocument(opCtx.get(), doc);
+        auto recipient = RecipientStateMachine::getOrCreate(opCtx.get(), _service, doc.toBSON());
+
+        // Start a thread to create randomized lock/unlock contention.
+        const ResourceId resId(RESOURCE_COLLECTION, doc.getTempReshardingNss());
+        Locker locker(opCtx->getServiceContext());
+        AtomicWord<bool> keepRunning{true};
+        stdx::thread lockThread(
+            [&] { runRandomizedLocking(opCtx.get(), locker, resId, keepRunning); });
+
+        notifyToStartCloning(opCtx.get(), *recipient, doc);
+        for (const auto& phase : recipientPhases) {
+            phaseTransitionsGuard.wait(phase);
+            sleepFor(Milliseconds(100));
+            phaseTransitionsGuard.unset(phase);
+        }
+
+        // Signal the thread to stop and wait for its completion.
+        keepRunning.store(false);
+        lockThread.join();
+
+        notifyReshardingCommitting(opCtx.get(), *recipient, doc);
+        ASSERT_OK(recipient->getCompletionFuture().getNoThrow());
     }
 }
 

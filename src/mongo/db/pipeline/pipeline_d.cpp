@@ -29,23 +29,6 @@
 
 #include "mongo/db/pipeline/pipeline_d.h"
 
-#include <algorithm>
-#include <bitset>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <iterator>
-#include <list>
-#include <string>
-#include <tuple>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/exact_cast.h"
 #include "mongo/base/status.h"
@@ -138,6 +121,24 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 
+#include <algorithm>
+#include <bitset>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <iterator>
+#include <list>
+#include <string>
+#include <tuple>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
@@ -214,7 +215,7 @@ boost::optional<StringData> extractGeoNearFieldFromIndexesByType(OperationContex
 
     if (idxToUse) {
         for (auto&& elem : idxToUse->keyPattern()) {
-            if (elem.type() == BSONType::String && elem.valueStringData() == indexType) {
+            if (elem.type() == BSONType::string && elem.valueStringData() == indexType) {
                 return elem.fieldNameStringData();
             }
         }
@@ -1590,7 +1591,8 @@ bool PipelineD::sortAndKeyPatternPartAgreeAndOnMeta(
     const timeseries::BucketUnpacker& bucketUnpacker,
     StringData keyPatternFieldName,
     const FieldPath& sortFieldPath) {
-    FieldPath keyPatternFieldPath = FieldPath(keyPatternFieldName);
+    FieldPath keyPatternFieldPath = FieldPath(
+        keyPatternFieldName, false /* precomputeHashes */, false /* validateFieldNames */);
 
     // If they don't have the same path length they cannot agree.
     if (keyPatternFieldPath.getPathLength() != sortFieldPath.getPathLength())
@@ -1873,11 +1875,10 @@ PipelineD::BuildQueryExecutorResult PipelineD::buildInnerQueryExecutorGeoNear(
 
     // If the user specified a "key" field, use that field to satisfy the "near" query. Otherwise,
     // look for a geo-indexed field in 'collection' that can.
-    auto nearFieldName =
-        (geoNearStage->getKeyField()
-             ? geoNearStage->getKeyField()->fullPath()
-             : extractGeoNearFieldFromIndexes(expCtx->getOperationContext(), collection))
-            .toString();
+    auto nearFieldName = std::string{
+        geoNearStage->getKeyField()
+            ? geoNearStage->getKeyField()->fullPath()
+            : extractGeoNearFieldFromIndexes(expCtx->getOperationContext(), collection)};
 
     // Create a PlanExecutor whose query is the "near" predicate on 'nearFieldName' combined with
     // the optional "query" argument in the $geoNear stage.
@@ -2095,7 +2096,7 @@ void PipelineD::performBoundedSortOptimization(PlanStage* rootStage,
             tassert(6434901,
                     "we must erase a $sort stage and replace it with a bounded sort stage",
                     strncmp((*iter)->getSourceName(),
-                            DocumentSourceSort::kStageName.rawData(),
+                            DocumentSourceSort::kStageName.data(),
                             DocumentSourceSort::kStageName.length()) == 0);
             pipeline->_sources.erase(iter);
             pipeline->stitch();

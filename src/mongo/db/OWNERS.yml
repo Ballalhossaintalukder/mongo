@@ -42,6 +42,13 @@ filters:
   - "default_baton*":
     approvers:
       - 10gen/server-networking-and-observability
+  - "diagnostic_printers_test.cpp":
+    approvers:
+      - 10gen/query-integration-observability
+  - "keypattern.h":
+    approvers:
+      - 10gen/query-optimization
+      - 10gen/query-execution
   - "field_parser*":
     approvers:
       - 10gen/server-programmability
@@ -51,9 +58,6 @@ filters:
   - "index_names.*":
     approvers:
       - 10gen/query-execution-write-exec
-  - "json.*":
-    approvers:
-      - 10gen/server-programmability
   - "keys_collection*":
     approvers:
       - 10gen/server-cluster-scalability
@@ -125,7 +129,7 @@ filters:
       - 10gen/server-cluster-scalability
   - "repair*":
     approvers:
-      - 10gen/server-storage-engine-integration
+      - 10gen/server-storage-engine-api
   - "throw_hook*":
     approvers:
       - 10gen/server-programmability
@@ -195,7 +199,7 @@ filters:
       - 10gen/server-catalog-and-routing
   - "startup_recovery*":
     approvers:
-      - 10gen/server-storage-engine-integration
+      - 10gen/server-storage-engine-api
   - "field_ref*":
     approvers:
       - 10gen/query-optimization
@@ -300,11 +304,14 @@ filters:
       - 10gen/server-networking-and-observability
   - "periodic_runner_cache_pressure_rollback*":
     approvers:
-      - 10gen/server-rss-sydney
+      - 10gen/server-storage-engine-api
   - "startup_warnings_mongod_thp_test*":
     approvers:
       - 10gen/server-workload-scheduling
   - "namespace_string*":
+    approvers:
+      - 10gen/server-catalog-and-routing
+  - "database_name*":
     approvers:
       - 10gen/server-catalog-and-routing
   - "rs_local_client*":
@@ -316,3 +323,6 @@ filters:
   - "validate_api_parameters*":
     approvers:
       - 10gen/query-optimization
+  - "cursor_in_use_info*":
+    approvers:
+      - 10gen/query-execution

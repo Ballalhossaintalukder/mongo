@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -50,10 +45,17 @@
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/executor/scoped_task_executor.h"
 #include "mongo/executor/task_executor.h"
+#include "mongo/s/async_requests_sender.h"
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cancellation.h"
 #include "mongo/util/future.h"
+
+#include <memory>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -87,6 +89,8 @@ private:
         boost::optional<TimeseriesOptions> timeSeriesOptions;
         // The targeting namespace can be different from the original namespace in some cases, like
         // time-series collections.
+        //
+        // TODO SERVER-105548 remove nsForTargeting once 9.0 becomes last LTS
         NamespaceString nsForTargeting;
     };
 

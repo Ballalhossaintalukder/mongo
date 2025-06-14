@@ -92,6 +92,7 @@ DEFAULTS = {
     "mongocryptd_set_parameters": [],
     "mongo_set_parameters": [],
     "mrlog": None,
+    "multiversion_dirs": DEFAULT_MULTIVERSION_DIRS,
     "no_journal": False,
     "num_clients_per_fixture": 1,
     "use_tenant_client": False,
@@ -108,7 +109,8 @@ DEFAULTS = {
     "run_no_feature_flag_tests": False,
     "additional_feature_flags": None,
     "additional_feature_flags_file": None,
-    "disable_feature_flags": None,
+    "excluded_feature_flags": None,
+    "disable_unreleased_ifr_flags": False,
     "seed": int(time.time() * 256),  # Taken from random.py code in Python 2.7.
     "service_executor": None,
     "shell_conn_string": None,
@@ -122,6 +124,7 @@ DEFAULTS = {
     "shell_seed": None,
     "storage_engine": "wiredTiger",
     "storage_engine_cache_size_gb": None,
+    "storage_engine_cache_size_pct": None,
     "mozjs_js_gc_zeal": None,
     "suite_files": "with_server",
     "tag_files": [],
@@ -144,6 +147,7 @@ DEFAULTS = {
     "shell_tls_certificate_key_file": None,
     "mongos_tls_certificate_key_file": None,
     "mongod_tls_certificate_key_file": None,
+    "validate_selector_paths": True,
     # Internal testing options.
     "internal_params": [],
     # Evergreen options.
@@ -338,6 +342,9 @@ DBPATH_PREFIX = None
 # The path to the dbtest executable used by resmoke.py.
 DBTEST_EXECUTABLE = None
 
+# Directories to search for multiversion binaries
+MULTIVERSION_DIRS = []
+
 # If set to "tests", then resmoke.py will output the tests that would be run by each suite (without
 # actually running them).
 DRY_RUN = None
@@ -485,9 +492,9 @@ RUN_NO_FEATURE_FLAG_TESTS = None
 ADDITIONAL_FEATURE_FLAGS_FILE = None
 
 # List of feature flags to disable
-DISABLE_FEATURE_FLAGS = None
+DISABLED_FEATURE_FLAGS = None
 
-# List of enabled feature flags.
+# List of feature flags to enable.
 ENABLED_FEATURE_FLAGS = []
 
 # The path to the mongo executable used by resmoke.py.
@@ -630,6 +637,10 @@ STORAGE_ENGINE = None
 # If set, then all mongod's started by resmoke.py and by the mongo shell will use the specified
 # storage engine cache size.
 STORAGE_ENGINE_CACHE_SIZE = None
+
+# If set, then all mongod's started by resmoke.py and by the mongo shell will use the specified
+# storage engine cache size.
+STORAGE_ENGINE_CACHE_SIZE_PCT = None
 
 # Yaml suites that specify how tests should be executed.
 SUITE_FILES = None
@@ -779,3 +790,6 @@ CONFIG_FUZZER_ENCRYPTION_OPTS = None
 # we need a way to provide the JS_GC_ZEAL setting provided as part of the mongo_mozjs_opts
 # exclusively to mongod/mongos.
 MOZJS_JS_GC_ZEAL = None
+
+# If resmoke should check that all paths in suite config selectors are valid.
+VALIDATE_SELECTOR_PATHS = True

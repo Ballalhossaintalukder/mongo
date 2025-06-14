@@ -29,23 +29,18 @@
 
 #include "mongo/db/pipeline/document_source_internal_unpack_bucket.h"
 
+#include <cstddef>
+#include <cstdint>
+
+#include <s2cellid.h>
+
 #include <absl/container/flat_hash_map.h>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <s2cellid.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <iterator>
-#include <list>
-#include <ostream>
-#include <string>
-#include <tuple>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -91,6 +86,13 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <algorithm>
+#include <iterator>
+#include <list>
+#include <ostream>
+#include <string>
+#include <tuple>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -283,8 +285,8 @@ boost::intrusive_ptr<DocumentSourceGroup> createBucketGroupForReorder(
             expCtx.get(), field.firstElement(), expCtx->variablesParseState));
     };
 
-    auto newGroup = DocumentSourceGroup::create(expCtx, groupByExpr, std::move(accumulators));
-
+    auto newGroup =
+        DocumentSourceGroup::create(expCtx, groupByExpr, std::move(accumulators), false);
     // The $first accumulator is compatible with SBE.
     newGroup->setSbeCompatibility(SbeCompatibility::noRequirements);
 
@@ -424,7 +426,7 @@ boost::intrusive_ptr<Expression> rewriteMetaFieldPaths(
         Expression::parseOperand(pExpCtx.get(), obj.firstElement(), pExpCtx->variablesParseState);
 
     auto renameMap =
-        StringMap<std::string>{{metaField.value(), timeseries::kBucketMetaFieldName.toString()}};
+        StringMap<std::string>{{metaField.value(), std::string{timeseries::kBucketMetaFieldName}}};
     SubstituteFieldPathWalker walker{renameMap};
     auto mutatedExpr = expression_walker::walk<Expression>(clonedExpr.get(), &walker);
     if (!mutatedExpr) {
@@ -492,16 +494,16 @@ std::unique_ptr<AccumulationExpression> rewriteCountGroupAccm(
         return {};
     }
 
-    std::string controlCountField = timeseries::kControlFieldNamePrefix.toString() +
-        timeseries::kBucketControlCountFieldName.toString();
+    std::string controlCountField = std::string{timeseries::kControlFieldNamePrefix} +
+        std::string{timeseries::kBucketControlCountFieldName};
 
     auto ifExpr = ExpressionCompare::create(
         pExpCtx,
         ExpressionCompare::CmpOp::GTE,
         ExpressionFieldPath::createPathFromString(
             pExpCtx,
-            timeseries::kControlFieldNamePrefix.toString() +
-                timeseries::kBucketControlVersionFieldName.toString(),
+            std::string{timeseries::kControlFieldNamePrefix} +
+                std::string{timeseries::kBucketControlVersionFieldName},
             pExpCtx->variablesParseState),
         ExpressionConstant::create(pExpCtx,
                                    Value(timeseries::kTimeseriesControlCompressedSortedVersion)));
@@ -545,7 +547,7 @@ std::unique_ptr<AccumulationExpression> rewriteMinMaxGroupAccm(
     if (path.getPathLength() <= 1) {
         return {};
     }
-    const auto& accFieldName = path.getFieldName(1).toString();
+    const auto& accFieldName = std::string{path.getFieldName(1)};
     if (!bucketUnpacker.providesFieldWithoutModification(accFieldName)) {
         return {};
     }
@@ -642,6 +644,7 @@ DocumentSourceInternalUnpackBucket::DocumentSourceInternalUnpackBucket(
     bool fixedBuckets,
     boost::optional<bool> sbeCompatible)
     : DocumentSource(kStageNameInternal, expCtx),
+      exec::agg::Stage(kStageNameInternal, expCtx),
       _assumeNoMixedSchemaData(assumeNoMixedSchemaData),
       _fixedBuckets(fixedBuckets),
       _bucketUnpacker(std::move(bucketUnpacker)),
@@ -683,7 +686,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
     uassert(5346500,
             str::stream() << "$_internalUnpackBucket specification must be an object, got: "
                           << specElem.type(),
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
 
     // If neither "include" nor "exclude" is specified, the default is "exclude": [] and
     // if that's the case, no field will be added to 'bucketSpec.fieldSet' in the for-loop below.
@@ -714,13 +717,13 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
             uassert(5346501,
                     str::stream() << "include or exclude field must be an array, got: "
                                   << elem.type(),
-                    elem.type() == BSONType::Array);
+                    elem.type() == BSONType::array);
 
             for (auto&& elt : elem.embeddedObject()) {
                 uassert(5346502,
                         str::stream() << "include or exclude field element must be a string, got: "
                                       << elt.type(),
-                        elt.type() == BSONType::String);
+                        elt.type() == BSONType::string);
                 auto field = elt.valueStringData();
                 uassert(5346503,
                         "include or exclude field element must be a single-element field path",
@@ -737,12 +740,12 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
         } else if (fieldName == kAssumeNoMixedSchemaData) {
             uassert(6067202,
                     str::stream() << "assumeClean field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             assumeClean = elem.boolean();
         } else if (fieldName == timeseries::kTimeFieldName) {
             uassert(5346504,
                     str::stream() << "timeField field must be a string, got: " << elem.type(),
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             auto timeField = elem.str();
             // TODO SERVER-98589: Remove when BSON field name type is implemented.
             uassert(9568701,
@@ -753,7 +756,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
         } else if (fieldName == timeseries::kMetaFieldName) {
             uassert(5346505,
                     str::stream() << "metaField field must be a string, got: " << elem.type(),
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             auto metaField = elem.str();
             uassert(5545700,
                     str::stream() << "metaField field must be a single-element field path",
@@ -767,7 +770,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
             uassert(5510600,
                     str::stream() << "bucketMaxSpanSeconds field must be an integer, got: "
                                   << elem.type(),
-                    elem.type() == BSONType::NumberInt);
+                    elem.type() == BSONType::numberInt);
             uassert(5510601,
                     "bucketMaxSpanSeconds field must be greater than zero",
                     elem._numberInt() > 0);
@@ -777,14 +780,14 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
             uassert(5509900,
                     str::stream() << "computedMetaProjFields field must be an array, got: "
                                   << elem.type(),
-                    elem.type() == BSONType::Array);
+                    elem.type() == BSONType::array);
 
             for (auto&& elt : elem.embeddedObject()) {
                 uassert(5509901,
                         str::stream()
                             << "computedMetaProjFields field element must be a string, got: "
                             << elt.type(),
-                        elt.type() == BSONType::String);
+                        elt.type() == BSONType::string);
                 auto field = elt.valueStringData();
                 uassert(5509902,
                         "computedMetaProjFields field element must be a single-element field path",
@@ -799,42 +802,42 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
             uassert(6460208,
                     str::stream() << kIncludeMinTimeAsMetadata
                                   << " field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             bucketSpec.includeMinTimeAsMetadata = elem.boolean();
         } else if (fieldName == kIncludeMaxTimeAsMetadata) {
             uassert(6460209,
                     str::stream() << kIncludeMaxTimeAsMetadata
                                   << " field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             bucketSpec.includeMaxTimeAsMetadata = elem.boolean();
         } else if (fieldName == kUsesExtendedRange) {
             uassert(6646901,
                     str::stream() << kUsesExtendedRange
                                   << " field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             bucketSpec.setUsesExtendedRange(elem.boolean());
         } else if (fieldName == kEventFilter) {
             uassert(7026902,
                     str::stream() << kEventFilter
                                   << " field must be an object, got: " << elem.type(),
-                    elem.type() == BSONType::Object);
+                    elem.type() == BSONType::object);
             eventFilterBson = elem.Obj();
         } else if (fieldName == kWholeBucketFilter) {
             uassert(7026903,
                     str::stream() << kWholeBucketFilter
                                   << " field must be an object, got: " << elem.type(),
-                    elem.type() == BSONType::Object);
+                    elem.type() == BSONType::object);
             wholeBucketFilterBson = elem.Obj();
         } else if (fieldName == kFixedBuckets) {
             uassert(7823300,
                     str::stream() << kFixedBuckets << " field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             fixedBuckets = elem.boolean();
         } else if (fieldName == kSbeCompatible) {
             uassert(8796100,
                     str::stream() << kSbeCompatible
                                   << " field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             if (elem.boolean() == false) {
                 expCtx->setSbeCompatibility(SbeCompatibility::notCompatible);
                 sbeCompatible = false;
@@ -868,7 +871,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
     uassert(5612400,
             str::stream() << "$_unpackBucket specification must be an object, got: "
                           << specElem.type(),
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
 
     BucketSpec bucketSpec;
     auto hasTimeField = false;
@@ -880,7 +883,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
             auto timeField = elem.str();
             uassert(5612401,
                     str::stream() << "timeField field must be a string, got: " << elem.type(),
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             // TODO SERVER-98589: Remove when BSON field name type is implemented.
             uassert(9568703,
                     str::stream() << "timeField must not contain an embedded null byte",
@@ -890,7 +893,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
         } else if (fieldName == timeseries::kMetaFieldName) {
             uassert(5612402,
                     str::stream() << "metaField field must be a string, got: " << elem.type(),
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             auto metaField = elem.str();
             uassert(5612403,
                     str::stream() << "metaField field must be a single-element field path",
@@ -903,7 +906,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalUnpackBucket::createF
         } else if (fieldName == kAssumeNoMixedSchemaData) {
             uassert(6067203,
                     str::stream() << "assumeClean field must be a bool, got: " << elem.type(),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
             assumeClean = elem.boolean();
         } else {
             uasserted(5612404,
@@ -1110,7 +1113,7 @@ DocumentSourceInternalUnpackBucket::pushDownComputedMetaProjection(
     auto& metaName = _bucketUnpacker.getMetaField().value();
     auto [addFieldsSpec, deleteStage] =
         nextTransform->extractComputedProjections(metaName,
-                                                  timeseries::kBucketMetaFieldName.toString(),
+                                                  std::string{timeseries::kBucketMetaFieldName},
                                                   BucketUnpacker::reservedBucketFieldNames);
     if (addFieldsSpec.isEmpty()) {
         return boost::none;
@@ -1331,6 +1334,7 @@ DocumentSourceInternalUnpackBucket::rewriteGroupStage(Pipeline::SourceContainer:
         DocumentSourceGroup::create(pExpCtx,
                                     rewrittenIdExpression,
                                     std::move(accumulationStatementsBucket),
+                                    groupPtr->willBeMerged(),
                                     groupPtr->getMaxMemoryUsageBytes());
 
     // The exprs used in the rewritten group might or might not be supported by SBE, so we have to
@@ -1528,8 +1532,8 @@ tryCreateBucketLevelSortGroup(boost::intrusive_ptr<ExpressionContext> expCtx,
     auto newSortStage = DocumentSourceSort::create(expCtx, SortPattern(*maybeSortPattern, expCtx));
     auto newAccState = AccumulationStatement::parseAccumulationStatement(
         expCtx.get(), maybeAcc->firstElement(), expCtx->variablesParseState);
-    auto newGroupStage =
-        DocumentSourceGroup::create(expCtx, groupStage->getIdExpression(), {newAccState});
+    auto newGroupStage = DocumentSourceGroup::create(
+        expCtx, groupStage->getIdExpression(), {newAccState}, groupStage->willBeMerged());
 
     // The bucket-level group uses $first/$last accumulators that are supported by SBE.
     newGroupStage->setSbeCompatibility(SbeCompatibility::noRequirements);
@@ -1646,9 +1650,9 @@ bool DocumentSourceInternalUnpackBucket::optimizeLastpoint(Pipeline::SourceConta
     // Try to insert bucket-level $sort and $group stages before we unpack any buckets. We ensure
     // that the generated $group preserves all bucket fields, so that the $_internalUnpackBucket
     // stage and the original $group stage can read them.
-    std::vector<std::string> fieldsToInclude{timeseries::kBucketMetaFieldName.toString(),
-                                             timeseries::kBucketControlFieldName.toString(),
-                                             timeseries::kBucketDataFieldName.toString()};
+    std::vector<std::string> fieldsToInclude{std::string{timeseries::kBucketMetaFieldName},
+                                             std::string{timeseries::kBucketControlFieldName},
+                                             std::string{timeseries::kBucketDataFieldName}};
     const auto& computedMetaProjFields = _bucketUnpacker.bucketSpec().computedMetaProjFields();
     std::copy(computedMetaProjFields.begin(),
               computedMetaProjFields.end(),

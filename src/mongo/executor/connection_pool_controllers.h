@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <functional>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/executor/connection_pool.h"
 #include "mongo/executor/connection_pool_stats.h"
@@ -42,6 +36,12 @@
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <cstddef>
+#include <functional>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 namespace mongo::executor {
 /**
@@ -87,6 +87,14 @@ public:
 
     Milliseconds toRefreshTimeout() const override {
         return getPoolOptions().refreshRequirement;
+    }
+
+    size_t connectionRequestsMaxQueueDepth() const override {
+        return getPoolOptions().connectionRequestsMaxQueueDepth;
+    }
+
+    size_t maxConnections() const override {
+        return _maxLoader();
     }
 
     StringData name() const override {

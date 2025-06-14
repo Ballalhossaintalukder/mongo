@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/exec/collection_scan.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -42,7 +36,6 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/client.h"
-#include "mongo/db/exec/collection_scan.h"
 #include "mongo/db/exec/collection_scan_common.h"
 #include "mongo/db/exec/filter.h"
 #include "mongo/db/exec/working_set.h"
@@ -61,6 +54,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/admission_context.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -158,6 +159,11 @@ CollectionScan::CollectionScan(ExpressionContext* expCtx,
         tassert(6521003,
                 "Expected forward collection scan with 'resumeScanPoint'",
                 params.direction == CollectionScanParams::FORWARD);
+    }
+
+    // Set up 'OplogWaitConfig' if we are scanning the oplog.
+    if (collPtr && collPtr->ns().isOplog()) {
+        _oplogWaitConfig = OplogWaitConfig();
     }
 }
 
@@ -258,25 +264,21 @@ PlanStage::StageState CollectionScan::doWork(WorkingSetID* out) {
         [&] {
             if (needToMakeCursor) {
                 const bool forward = _params.direction == CollectionScanParams::FORWARD;
-
                 if (forward && _params.shouldWaitForOplogVisibility) {
-                    // Forward, non-tailable scans from the oplog need to wait until all oplog
-                    // entries before the read begins to be visible. This isn't needed for reverse
-                    // scans because we only hide oplog entries from forward scans, and it isn't
-                    // necessary for tailing cursors because they ignore EOF and will eventually see
-                    // all writes. Forward, non-tailable scans are the only case where a meaningful
-                    // EOF will be seen that might not include writes that finished before the read
-                    // started. This also must be done before we create the cursor as that is when
-                    // we establish the endpoint for the cursor. Also call abandonSnapshot to make
-                    // sure that we are using a fresh storage engine snapshot while waiting.
-                    // Otherwise, we will end up reading from the snapshot where the oplog entries
-                    // are not yet visible even after the wait.
-                    invariant(!_params.tailable && collPtr->ns().isOplog());
+                    tassert(9478714, "Must have oplog wait config configured", _oplogWaitConfig);
+                    if (_oplogWaitConfig->shouldWaitForOplogVisibility()) {
+                        tassert(9478701,
+                                "We should only request yield for a tailable oplog scan",
+                                !_params.tailable && collPtr->ns().isOplog());
 
-                    shard_role_details::getRecoveryUnit(opCtx())->abandonSnapshot();
-                    auto storageEngine = opCtx()->getServiceContext()->getStorageEngine();
-                    storageEngine->waitForAllEarlierOplogWritesToBeVisible(
-                        opCtx(), collPtr->getRecordStore());
+                        // Perform wait during yield. Note that we mark this as having waited before
+                        // actually waiting so that we can distinguish waiting for oplog visiblity
+                        // from a WriteConflictException when handling this yield.
+                        _oplogWaitConfig->setWaitedForOplogVisibility();
+                        LOGV2_DEBUG(
+                            9478711, 2, "Oplog scan triggering yield to wait for visibility");
+                        return NEED_YIELD;
+                    }
                 }
 
                 try {
@@ -435,7 +437,7 @@ void CollectionScan::setLatestOplogEntryTimestamp(const Record& record) {
             str::stream() << "CollectionScan was asked to track latest operation time, "
                              "but found a result without a valid 'ts' field: "
                           << record.data.toBson().toString(),
-            tsElem.type() == BSONType::bsonTimestamp);
+            tsElem.type() == BSONType::timestamp);
     LOGV2_DEBUG(550450,
                 5,
                 "Setting _latestOplogEntryTimestamp to the max of the timestamp of the current "

@@ -29,21 +29,11 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <deque>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
-#include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/storage/backup_block.h"
@@ -53,6 +43,16 @@
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/storage_engine.h"
+
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -70,22 +70,21 @@ public:
 
     Status createRecordStore(const NamespaceString& nss,
                              StringData ident,
-                             KeyFormat keyFormat = KeyFormat::Long,
-                             bool isTimeseries = false,
-                             const BSONObj& storageEngineCollectionOptions = BSONObj()) override {
+                             const RecordStore::Options& options) override {
         return Status::OK();
     }
 
     std::unique_ptr<RecordStore> getRecordStore(OperationContext* opCtx,
                                                 const NamespaceString& nss,
                                                 StringData ident,
-                                                const CollectionOptions& options) override;
+                                                const RecordStore::Options& options,
+                                                boost::optional<UUID> uuid) override;
 
-    std::unique_ptr<RecordStore> getTemporaryRecordStore(OperationContext* opCtx,
+    std::unique_ptr<RecordStore> getTemporaryRecordStore(RecoveryUnit& ru,
                                                          StringData ident,
                                                          KeyFormat keyFormat) override;
 
-    std::unique_ptr<RecordStore> makeTemporaryRecordStore(OperationContext* opCtx,
+    std::unique_ptr<RecordStore> makeTemporaryRecordStore(RecoveryUnit& ru,
                                                           StringData ident,
                                                           KeyFormat keyFormat) override;
 
@@ -104,13 +103,14 @@ public:
     }
 
     std::unique_ptr<SortedDataInterface> getSortedDataInterface(OperationContext* opCtx,
+                                                                RecoveryUnit& ru,
                                                                 const NamespaceString& nss,
                                                                 const UUID& uuid,
                                                                 StringData ident,
                                                                 const IndexConfig& config,
                                                                 KeyFormat keyFormat) override;
 
-    Status dropIdent(RecoveryUnit* ru,
+    Status dropIdent(RecoveryUnit& ru,
                      StringData ident,
                      bool identHasSizeInfo,
                      const StorageEngine::DropIdentCallback& onDrop) override {
@@ -143,7 +143,7 @@ public:
         return std::vector<std::string>();
     }
 
-    void cleanShutdown() override {}
+    void cleanShutdown(bool memLeakAllowed) override {}
 
     void setJournalListener(JournalListener* jl) override {}
 
@@ -213,7 +213,7 @@ public:
 
     void unpinOldestTimestamp(const std::string& requestingServiceName) override {}
 
-    bool underCachePressure() override {
+    bool underCachePressure(int concurrentWriteOuts, int concurrentReadOuts) override {
         return false;
     }
 

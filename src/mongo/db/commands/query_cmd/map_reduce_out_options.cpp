@@ -28,22 +28,23 @@
  */
 
 
-#include <boost/none.hpp>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/commands/query_cmd/map_reduce_out_options.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/commands/query_cmd/map_reduce_out_options.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/debug_util.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -56,9 +57,9 @@ using namespace std::string_literals;
 Rarely shardedDeprecationSampler;
 
 MapReduceOutOptions MapReduceOutOptions::parseFromBSON(const BSONElement& element) {
-    if (element.type() == BSONType::String) {
+    if (element.type() == BSONType::string) {
         return MapReduceOutOptions(boost::none, element.str(), OutputType::Replace, false);
-    } else if (element.type() == BSONType::Object) {
+    } else if (element.type() == BSONType::object) {
         const auto obj = element.embeddedObject();
         // The inline option is allowed alone.
         if (const auto inMemory = obj["inline"]) {
@@ -76,7 +77,7 @@ MapReduceOutOptions MapReduceOutOptions::parseFromBSON(const BSONElement& elemen
             if (const auto sharded = obj["sharded"]) {
                 uassert(ErrorCodes::BadValue,
                         "sharded field value must be boolean",
-                        sharded.type() == Bool);
+                        sharded.type() == BSONType::boolean);
                 uassert(
                     ErrorCodes::BadValue, "sharded field value must be true", sharded.boolean());
                 if (shardedDeprecationSampler.tick()) {
@@ -94,7 +95,7 @@ MapReduceOutOptions MapReduceOutOptions::parseFromBSON(const BSONElement& elemen
                 uassert(ErrorCodes::BadValue,
                         "'"s + element.fieldName() +
                             "' supports only string consisting of output collection name",
-                        element.type() == BSONType::String);
+                        element.type() == BSONType::string);
                 return element.str();
             };
             if (const auto replace = obj["replace"])
@@ -112,7 +113,7 @@ MapReduceOutOptions MapReduceOutOptions::parseFromBSON(const BSONElement& elemen
             if (const auto db = obj["db"]) {
                 uassert(ErrorCodes::BadValue,
                         "db field value must be string",
-                        db.type() == BSONType::String);
+                        db.type() == BSONType::string);
                 uassert(ErrorCodes::CommandNotSupported,
                         "cannot target internal database as output",
                         !(NamespaceStringUtil::deserialize(boost::none,
@@ -130,7 +131,7 @@ MapReduceOutOptions MapReduceOutOptions::parseFromBSON(const BSONElement& elemen
         if (const auto nonAtomic = obj["nonAtomic"]) {
             uassert(ErrorCodes::BadValue,
                     "nonAtomic field value must be boolean",
-                    nonAtomic.type() == Bool);
+                    nonAtomic.type() == BSONType::boolean);
             uassert(
                 ErrorCodes::BadValue, "nonAtomic field value must be true", nonAtomic.boolean());
         } else {

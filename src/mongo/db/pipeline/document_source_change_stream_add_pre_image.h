@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <set>
-#include <string>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -50,6 +43,13 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/assert_util.h"
+
+#include <set>
+#include <string>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -96,9 +96,10 @@ public:
      * Only modifies: "fullDocumentBeforeChange" and "preImageId".
      */
     GetModPathsReturn getModifiedPaths() const final {
-        return {GetModPathsReturn::Type::kFiniteSet,
-                {kFullDocumentBeforeChangeFieldName.toString(), kPreImageIdFieldName.toString()},
-                {}};
+        return {
+            GetModPathsReturn::Type::kFiniteSet,
+            {std::string{kFullDocumentBeforeChangeFieldName}, std::string{kPreImageIdFieldName}},
+            {}};
     }
 
     StageConstraints constraints(Pipeline::SplitState pipeState) const final {
@@ -121,7 +122,7 @@ public:
     }
 
     DepsTracker::State getDependencies(DepsTracker* deps) const override {
-        deps->fields.insert(DocumentSourceChangeStream::kPreImageIdField.toString());
+        deps->fields.insert(std::string{DocumentSourceChangeStream::kPreImageIdField});
         // This stage does not restrict the output fields to a finite set, and has no impact on
         // whether metadata is available or needed.
         return DepsTracker::State::SEE_NEXT;
@@ -132,7 +133,13 @@ public:
     Value doSerialize(const SerializationOptions& opts = SerializationOptions{}) const final;
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
+    }
+
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
     }
 
 private:

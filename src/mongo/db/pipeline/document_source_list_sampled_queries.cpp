@@ -29,14 +29,9 @@
 
 #include "mongo/db/pipeline/document_source_list_sampled_queries.h"
 
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/sharded_agg_helpers_targeting_policy.h"
 #include "mongo/db/query/allowed_contexts.h"
@@ -46,6 +41,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -66,7 +67,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceListSampledQueries::createFro
             nss.isAdminDB() && nss.isCollectionlessAggregateNS());
     uassert(6876001,
             str::stream() << kStageName << " must take a nested object but found: " << specElem,
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
     auto spec = DocumentSourceListSampledQueriesSpec::parse(IDLParserContext(kStageName),
                                                             specElem.embeddedObject());
 
@@ -90,6 +91,8 @@ DocumentSource::GetNextResult DocumentSourceListSampledQueries::doGetNext() {
         }
         try {
             _pipeline = Pipeline::makePipeline(stages, foreignExpCtx);
+            _execPipeline =
+                exec::agg::buildPipeline(_pipeline->getSources(), _pipeline->getContext());
         } catch (ExceptionFor<ErrorCodes::NamespaceNotFound>& ex) {
             LOGV2(7807800,
                   "Failed to create aggregation pipeline to list sampled queries",
@@ -98,7 +101,7 @@ DocumentSource::GetNextResult DocumentSourceListSampledQueries::doGetNext() {
         }
     }
 
-    if (auto doc = _pipeline->getNext()) {
+    if (auto doc = _execPipeline->getNext()) {
         auto queryDoc = SampledQueryDocument::parse(
             IDLParserContext(DocumentSourceListSampledQueries::kStageName), doc->toBson());
         DocumentSourceListSampledQueriesResponse response;
@@ -111,13 +114,13 @@ DocumentSource::GetNextResult DocumentSourceListSampledQueries::doGetNext() {
 
 void DocumentSourceListSampledQueries::detachFromOperationContext() {
     if (_pipeline) {
-        _pipeline->detachFromOperationContext();
+        _execPipeline->detachFromOperationContext();
     }
 }
 
 void DocumentSourceListSampledQueries::reattachToOperationContext(OperationContext* opCtx) {
     if (_pipeline) {
-        _pipeline->reattachToOperationContext(opCtx);
+        _execPipeline->reattachToOperationContext(opCtx);
     }
 }
 
@@ -127,7 +130,7 @@ DocumentSourceListSampledQueries::LiteParsed::parse(const NamespaceString& nss,
                                                     const LiteParserOptions& options) {
     uassert(6876000,
             str::stream() << kStageName << " must take a nested object but found: " << specElem,
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
     uassert(ErrorCodes::IllegalOperation,
             str::stream() << kStageName << " is not supported on a standalone mongod",
             serverGlobalParams.clusterRole.hasExclusively(ClusterRole::RouterServer) ||

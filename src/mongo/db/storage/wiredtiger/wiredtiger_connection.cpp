@@ -27,19 +27,10 @@
  *    it in the license file.
  */
 
-#include <cerrno>
-#include <cstdlib>
-
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <iterator>
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/storage/storage_parameters_gen.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_global_options_gen.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
@@ -49,15 +40,30 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <functional>
+#include <iterator>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
 
 namespace mongo {
 
+WiredTigerConnection::WiredTigerConnection(WiredTigerKVEngineBase* engine, int32_t sessionCacheMax)
+    : WiredTigerConnection(engine->getConn(), engine->getClockSource(), sessionCacheMax, engine) {}
+
 WiredTigerConnection::WiredTigerConnection(WT_CONNECTION* conn,
                                            ClockSource* cs,
+                                           int32_t sessionCacheMax,
                                            WiredTigerKVEngineBase* engine)
-    : _conn(conn), _clockSource(cs), _engine(engine) {
+    : _conn(conn), _clockSource(cs), _sessionCacheMax(sessionCacheMax), _engine(engine) {
     uassertStatusOK(_compiledConfigurations.compileAll(_conn));
     uassert(9728400,
             "wiredTigerCursorCacheSize parameter value must be <= 0",
@@ -198,6 +204,10 @@ WiredTigerManagedSession WiredTigerConnection::getUninterruptibleSession() {
     return WiredTigerManagedSession(std::make_unique<WiredTigerSession>(this, _epoch.load()));
 }
 
+int32_t WiredTigerConnection::getSessionCacheMax() const {
+    return _sessionCacheMax;
+}
+
 void WiredTigerConnection::_releaseSession(std::unique_ptr<WiredTigerSession> session) {
     invariant(session);
 
@@ -239,7 +249,10 @@ void WiredTigerConnection::_releaseSession(std::unique_ptr<WiredTigerSession> se
     session->setIdleExpireTime(_clockSource->now());
     {
         stdx::lock_guard<stdx::mutex> lock(_cacheLock);
-        _sessions.emplace_back(std::move(session));
+
+        if (static_cast<int32_t>(_sessions.size()) < _sessionCacheMax) {
+            _sessions.emplace_back(std::move(session));
+        }
     }
 
     if (_engine) {
@@ -251,6 +264,15 @@ WT_SESSION* WiredTigerConnection::_openSession(WiredTigerSession* session,
                                                WT_EVENT_HANDLER* handler,
                                                const char* config) {
     return _openSessionInternal(session, handler, config, _conn);
+}
+
+WT_SESSION* WiredTigerConnection::_openSession(WiredTigerSession* session,
+                                               WT_EVENT_HANDLER* handler,
+                                               StatsCollectionPermit& permit,
+                                               const char* config) {
+    invariant(permit.conn());
+    invariant(handler);
+    return _openSessionInternal(session, handler, config, permit.conn());
 }
 
 WT_SESSION* WiredTigerConnection::_openSession(WiredTigerSession* session,

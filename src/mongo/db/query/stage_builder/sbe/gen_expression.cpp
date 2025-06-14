@@ -35,18 +35,6 @@
 #include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <limits>
-#include <map>
-#include <numeric>
-#include <stack>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
@@ -78,6 +66,18 @@
 #include "mongo/db/query/stage_builder/sbe/sbexpr_helpers.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <numeric>
+#include <stack>
+#include <string>
+#include <utility>
+#include <vector>
 
 
 namespace mongo::stage_builder {
@@ -424,7 +424,7 @@ public:
     void visit(const ExpressionInternalOwningShard* expr) final {}
     void visit(const ExpressionInternalIndexKey* expr) final {}
     void visit(const ExpressionInternalKeyStringValue* expr) final {}
-    void visit(const ExpressionUUID* expr) final {}
+    void visit(const ExpressionCreateUUID* expr) final {}
 
 private:
     ExpressionVisitorContext* _context;
@@ -607,7 +607,7 @@ public:
     void visit(const ExpressionInternalOwningShard* expr) final {}
     void visit(const ExpressionInternalIndexKey* expr) final {}
     void visit(const ExpressionInternalKeyStringValue* expr) final {}
-    void visit(const ExpressionUUID* expr) final {}
+    void visit(const ExpressionCreateUUID* expr) final {}
 
 private:
     ExpressionVisitorContext* _context;
@@ -2260,7 +2260,7 @@ public:
     }
 
     void visit(const ExpressionInternalRawSortKey* expr) final {
-        unsupportedExpression(ExpressionInternalRawSortKey::kName.rawData());
+        unsupportedExpression(ExpressionInternalRawSortKey::kName.data());
     }
     void visit(const ExpressionMap* expr) final {
         unsupportedExpression("$map");
@@ -2280,20 +2280,20 @@ public:
         switch (expr->getMetaType()) {
             case DocumentMetadataFields::MetaType::kSearchScore:
                 pushMetadataABT(_context->state.data->metadataSlots.searchScoreSlot,
-                                getBSONTypeMask(BSONType::NumberDouble) |
-                                    getBSONTypeMask(BSONType::NumberLong));
+                                getBSONTypeMask(BSONType::numberDouble) |
+                                    getBSONTypeMask(BSONType::numberLong));
                 break;
             case DocumentMetadataFields::MetaType::kSearchHighlights:
                 pushMetadataABT(_context->state.data->metadataSlots.searchHighlightsSlot,
-                                getBSONTypeMask(BSONType::Array));
+                                getBSONTypeMask(BSONType::array));
                 break;
             case DocumentMetadataFields::MetaType::kSearchScoreDetails:
                 pushMetadataABT(_context->state.data->metadataSlots.searchDetailsSlot,
-                                getBSONTypeMask(BSONType::Object));
+                                getBSONTypeMask(BSONType::object));
                 break;
             case DocumentMetadataFields::MetaType::kSearchSequenceToken:
                 pushMetadataABT(_context->state.data->metadataSlots.searchSequenceToken,
-                                getBSONTypeMask(BSONType::String));
+                                getBSONTypeMask(BSONType::string));
                 break;
             default:
                 unsupportedExpression("$meta");
@@ -3399,9 +3399,9 @@ public:
         unsupportedExpression("$setField");
     }
 
-    void visit(const ExpressionUUID* expr) final {
-        // TODO(SERVER-101161): Support $uuid in SBE.
-        unsupportedExpression("$uuid");
+    void visit(const ExpressionCreateUUID* expr) final {
+        // TODO(SERVER-101161): Support $createUUID in SBE.
+        unsupportedExpression("$createUUID");
     }
 
     void visit(const ExpressionTsSecond* expr) final {
@@ -3599,11 +3599,10 @@ private:
                 _context->state.env->getAccessor(timeZoneDBSlot)->getViewOfValue();
             auto timezoneDB = sbe::value::getTimeZoneDBView(timezoneDBVal);
             uassert(5157900,
-                    str::stream() << "$" << exprName.toString()
-                                  << " parameter 'timezone' must be a string",
+                    str::stream() << "$" << exprName << " parameter 'timezone' must be a string",
                     sbe::value::isString(timezoneTag));
             uassert(5157901,
-                    str::stream() << "$" << exprName.toString()
+                    str::stream() << "$" << exprName
                                   << " parameter 'timezone' must be a valid timezone",
                     sbe::vm::isValidTimezone(timezoneTag, timezoneVal, timezoneDB));
             auto [timezoneObjTag, timezoneObjVal] = sbe::value::makeCopyTimeZone(
@@ -3616,13 +3615,13 @@ private:
             inputValidationCases.emplace_back(
                 generateABTNonStringCheck(makeVariable(timezoneName)),
                 makeABTFail(ErrorCodes::Error{5157902},
-                            str::stream() << "$" << exprName.toString()
+                            str::stream() << "$" << std::string{exprName}
                                           << " parameter 'timezone' must be a string"));
             inputValidationCases.emplace_back(
                 makeNot(makeABTFunction(
                     "isTimezone", makeABTVariable(timeZoneDBSlot), makeVariable(timezoneName))),
                 makeABTFail(ErrorCodes::Error{5157903},
-                            str::stream() << "$" << exprName.toString()
+                            str::stream() << "$" << std::string{exprName}
                                           << " parameter 'timezone' must be a valid timezone"));
             arguments.push_back(makeABTVariable(timeZoneDBSlot));
             arguments.push_back(makeVariable(timezoneName));
@@ -3636,7 +3635,7 @@ private:
             {std::move(dateName), std::move(timezoneName), funcName},
             abt::makeSeq(std::move(dateExpression),
                          std::move(timezoneExpression),
-                         abt::make<abt::FunctionCall>(exprName.toString(), std::move(arguments))),
+                         abt::make<abt::FunctionCall>(std::string{exprName}, std::move(arguments))),
             buildABTMultiBranchConditionalFromCaseValuePairs(std::move(inputValidationCases),
                                                              abt::Constant::nothing())));
     }
@@ -3694,7 +3693,7 @@ private:
                               makeABTFunction(exprName, makeVariable(argName))}},
             makeABTFail(ErrorCodes::Error{7157800},
                         str::stream()
-                            << "$" << exprName.toString() << " supports only numeric types"));
+                            << "$" << std::string{exprName} << " supports only numeric types"));
 
         pushABT(abt::make<abt::Let>(
             std::move(argName), std::move(arg), std::move(genericTrigonometricExpr)));
@@ -3765,12 +3764,12 @@ private:
             {ABTCaseValuePair{generateABTNullMissingOrUndefined(argName), abt::Constant::null()},
              ABTCaseValuePair{makeNot(std::move(checkIsNumber)),
                               makeABTFail(ErrorCodes::Error{7157802},
-                                          str::stream() << "$" << exprName.toString()
+                                          str::stream() << "$" << std::string{exprName}
                                                         << " supports only numeric types")},
              ABTCaseValuePair{generateABTNaNCheck(argName), std::move(variable)},
              ABTCaseValuePair{std::move(checkBounds), std::move(trigonometricExpr)}},
             makeABTFail(ErrorCodes::Error{7157803},
-                        str::stream() << "Cannot apply $" << exprName.toString()
+                        str::stream() << "Cannot apply $" << std::string{exprName}
                                       << ", value must be in " << lowerBound.printLowerBound()
                                       << ", " << upperBound.printUpperBound()));
 
@@ -4008,12 +4007,12 @@ private:
             // To match classic engine semantics, $setEquals and $setIsSubset should throw an error
             // for any non-array arguments including null and missing values.
             if (setOp == SetOperation::Equals || setOp == SetOperation::IsSubset) {
-                return makeIf(
-                    makeFillEmptyTrue(std::move(checkNotArrayAnyArgument)),
-                    makeABTFail(ErrorCodes::Error{7158100},
-                                str::stream()
-                                    << "All operands of $" << operatorName << " must be arrays."),
-                    abt::make<abt::FunctionCall>(setFunctionName.toString(), std::move(variables)));
+                return makeIf(makeFillEmptyTrue(std::move(checkNotArrayAnyArgument)),
+                              makeABTFail(ErrorCodes::Error{7158100},
+                                          str::stream() << "All operands of $" << operatorName
+                                                        << " must be arrays."),
+                              abt::make<abt::FunctionCall>(std::string{setFunctionName},
+                                                           std::move(variables)));
             } else {
                 return buildABTMultiBranchConditionalFromCaseValuePairs(
                     {ABTCaseValuePair{std::move(checkNullAnyArgument), abt::Constant::null()},
@@ -4022,7 +4021,8 @@ private:
                                                   str::stream()
                                                       << "All operands of $" << operatorName
                                                       << " must be arrays.")}},
-                    abt::make<abt::FunctionCall>(setFunctionName.toString(), std::move(variables)));
+                    abt::make<abt::FunctionCall>(std::string{setFunctionName},
+                                                 std::move(variables)));
             }
         }();
 
@@ -4082,7 +4082,7 @@ private:
 
         auto makeError = [exprName](int errorCode, StringData message) {
             return makeABTFail(ErrorCodes::Error{errorCode},
-                               str::stream() << "$" << exprName.toString() << ": " << message);
+                               str::stream() << "$" << std::string{exprName} << ": " << message);
         };
 
         auto makeRegexFunctionCall = [&](abt::ABT compiledRegex) {
@@ -4132,7 +4132,7 @@ private:
                 abt::make<abt::If>(
                     makeABTFunction("typeMatch"_sd,
                                     makeVariable(patternVar),
-                                    abt::Constant::int32(getBSONTypeMask(BSONType::RegEx))),
+                                    abt::Constant::int32(getBSONTypeMask(BSONType::regEx))),
                     makeABTFunction("getRegexPattern"_sd, makeVariable(patternVar)),
                     makeError(5126601,
                               "regex pattern must have either string or BSON RegEx type")));
@@ -4143,7 +4143,7 @@ private:
                 auto optionsArgument = abt::make<abt::If>(
                     makeABTFunction("typeMatch"_sd,
                                     makeVariable(patternVar),
-                                    abt::Constant::int32(getBSONTypeMask(BSONType::RegEx))),
+                                    abt::Constant::int32(getBSONTypeMask(BSONType::regEx))),
                     makeABTFunction("getRegexFlags"_sd, makeVariable(patternVar)),
                     makeABTConstant(""_sd));
                 auto compiledRegex = makeABTFunction(
@@ -4209,7 +4209,7 @@ private:
                     abt::make<abt::If>(
                         makeABTFunction("typeMatch"_sd,
                                         makeVariable(patternVar),
-                                        abt::Constant::int32(getBSONTypeMask(BSONType::RegEx))),
+                                        abt::Constant::int32(getBSONTypeMask(BSONType::regEx))),
                         abt::make<abt::Let>(
                             bsonPatternVar,
                             makeABTFunction("getRegexFlags", makeVariable(patternVar)),
@@ -4432,11 +4432,15 @@ SbExpr generateExpressionFieldPath(StageBuilderState& state,
             return b.makeNothingConstant();
         } else {
             auto slot = state.getBuiltinVarSlot(varId);
-            uassert(5611301,
-                    str::stream() << "Builtin variable '$$" << fieldPath.fullPath()
-                                  << "' (id=" << varId << ") is not available",
-                    slot.has_value());
-
+            if (!slot.has_value()) {
+                std::stringstream message;
+                message << "Builtin variable '$$" << fieldPath.fullPath() << "' (id=" << varId
+                        << ") is not available";
+                if (varId == Variables::kUserRolesId && !enableAccessToUserRoles.load()) {
+                    message << " as the server is not configured to accept it";
+                }
+                uasserted(5611301, message.str());
+            }
             inputExpr = SbExpr{SbSlot{*slot}};
         }
     } else {
@@ -4517,7 +4521,7 @@ SbExpr generateExpressionCompare(StageBuilderState& state,
     // need to explicitly check for 'bsonUndefined' type because it is considered equal to
     // "Nothing" according to MQL semantics.
     auto generateExists = [&](SbLocalVar var) {
-        auto undefinedTypeMask = static_cast<int32_t>(getBSONTypeMask(BSONType::Undefined));
+        auto undefinedTypeMask = static_cast<int32_t>(getBSONTypeMask(BSONType::undefined));
         return b.makeBinaryOp(
             abt::Operations::And,
             b.makeFunction("exists"_sd, var),

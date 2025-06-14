@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <deque>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -66,12 +55,24 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/assert_util.h"
 
+#include <cstddef>
+#include <deque>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * Constructs and returns Documents from the BSONObj objects produced by a supplied PlanExecutor.
  */
-class DocumentSourceCursor : public DocumentSource {
+class DocumentSourceCursor : public DocumentSource, public exec::agg::Stage {
 public:
     /**
      * Interface for acquiring and releasing catalog resources needed for DS Cursor.
@@ -209,6 +210,8 @@ protected:
                          ResumeTrackingType resumeTrackingType = ResumeTrackingType::kNone);
 
     GetNextResult doGetNext() final;
+
+    void doForceSpill() final;
 
     ~DocumentSourceCursor() override;
 

@@ -26,18 +26,17 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include "mongo/db/s/resharding/resharding_coordinator.h"
-
 #include "mongo/db/generic_argument_util.h"
 #include "mongo/db/repl/wait_for_majority_service.h"
 #include "mongo/db/s/balancer/balance_stats.h"
 #include "mongo/db/s/balancer/balancer_policy.h"
 #include "mongo/db/s/config/sharding_catalog_manager.h"
+#include "mongo/db/s/resharding/resharding_coordinator.h"
 #include "mongo/db/s/resharding/resharding_coordinator_commit_monitor.h"
+#include "mongo/db/s/resharding/resharding_coordinator_dao.h"
 #include "mongo/db/s/resharding/resharding_coordinator_observer.h"
 #include "mongo/db/s/resharding/resharding_coordinator_service.h"
 #include "mongo/db/s/resharding/resharding_coordinator_service_external_state.h"
-#include "mongo/db/s/resharding/resharding_coordinator_service_util.h"
 #include "mongo/db/s/resharding/resharding_future_util.h"
 #include "mongo/db/s/resharding/resharding_server_parameters_gen.h"
 #include "mongo/db/s/resharding/resharding_util.h"
@@ -162,8 +161,7 @@ ReshardingCoordinator::ReshardingCoordinator(
     _metrics->onStateTransition(boost::none, coordinatorDoc.getState());
 }
 
-void ReshardingCoordinator::_installCoordinatorDoc(
-    const ReshardingCoordinatorDocument& doc) {
+void ReshardingCoordinator::_installCoordinatorDoc(const ReshardingCoordinatorDocument& doc) {
     invariant(doc.getReshardingUUID() == _coordinatorDoc.getReshardingUUID());
     _coordinatorDoc = doc;
 }
@@ -615,7 +613,7 @@ ExecutorFuture<void> ReshardingCoordinator::_runReshardingOp(
                 [&](const BSONObj& data) {
                     auto ns = data.getStringField("sourceNamespace");
                     return ns.empty() ? true
-                                      : ns.toString() ==
+                                      : std::string{ns} ==
                             NamespaceStringUtil::serialize(_coordinatorDoc.getSourceNss(),
                                                            SerializationContext::stateDefault());
                 });
@@ -890,29 +888,23 @@ void ReshardingCoordinator::_insertCoordDocAndChangeOrigCollEntry() {
             _coordinatorDoc.getState() == CoordinatorStateEnum::kQuiesced) {
             _ctHolder->abort();
         }
+    } else {
+        auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
+        reshardingPauseCoordinatorBeforeInitializing.pauseWhileSetAndNotCanceled(
+            opCtx.get(), _ctHolder->getStepdownToken());
+        ReshardingCoordinatorDocument updatedCoordinatorDoc = _coordinatorDoc;
+        updatedCoordinatorDoc.setState(CoordinatorStateEnum::kInitializing);
+        resharding::insertCoordDocAndChangeOrigCollEntry(
+            opCtx.get(), _metrics.get(), updatedCoordinatorDoc);
+        installCoordinatorDocOnStateTransition(opCtx.get(), updatedCoordinatorDoc);
 
-        return;
-    }
-
-    auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
-    reshardingPauseCoordinatorBeforeInitializing.pauseWhileSetAndNotCanceled(
-        opCtx.get(), _ctHolder->getStepdownToken());
-    ReshardingCoordinatorDocument updatedCoordinatorDoc = _coordinatorDoc;
-    updatedCoordinatorDoc.setState(CoordinatorStateEnum::kInitializing);
-    resharding::insertCoordDocAndChangeOrigCollEntry(
-        opCtx.get(), _metrics.get(), updatedCoordinatorDoc);
-    installCoordinatorDocOnStateTransition(opCtx.get(), updatedCoordinatorDoc);
-
-    {
-        // Note: don't put blocking or interruptible code in this block.
-        const bool isSameKeyResharding =
-            _coordinatorDoc.getForceRedistribution() && *_coordinatorDoc.getForceRedistribution();
         _coordinatorDocWrittenPromise.emplaceValue();
-        // We need to call setIsSameKeyResharding first so the metrics can count same key resharding
-        // correctly.
-        _metrics->setIsSameKeyResharding(isSameKeyResharding);
-        _metrics->onStarted();
     }
+
+    const bool isSameKeyResharding =
+        _coordinatorDoc.getForceRedistribution() && *_coordinatorDoc.getForceRedistribution();
+    _metrics->setIsSameKeyResharding(isSameKeyResharding);
+    _metrics->onStarted();
 
     pauseAfterInsertCoordinatorDoc.pauseWhileSet();
 }
@@ -1012,7 +1004,10 @@ ReshardingApproxCopySize computeApproxCopySize(OperationContext* opCtx,
 
 ExecutorFuture<void> ReshardingCoordinator::_awaitAllDonorsReadyToDonate(
     const std::shared_ptr<executor::ScopedTaskExecutor>& executor) {
-    if (_coordinatorDoc.getState() > CoordinatorStateEnum::kPreparingToDonate) {
+    auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
+    resharding::DaoStorageClientImpl daoClient;
+    if (_coordinatorDao.getPhase(opCtx.get(), &daoClient, _coordinatorDoc.getReshardingUUID()) >
+        CoordinatorStateEnum::kPreparingToDonate) {
         return ExecutorFuture<void>(**executor, Status::OK());
     }
 
@@ -1033,10 +1028,20 @@ ExecutorFuture<void> ReshardingCoordinator::_awaitAllDonorsReadyToDonate(
                 auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
                 return computeApproxCopySize(opCtx.get(), coordinatorDocChangedOnDisk);
             }();
-            _updateCoordinatorDocStateAndCatalogEntries(CoordinatorStateEnum::kCloning,
-                                                        coordinatorDocChangedOnDisk,
-                                                        highestMinFetchTimestamp,
-                                                        approxCopySize);
+
+            _updateCoordinatorDocStateAndCatalogEntries(
+                [=, this](OperationContext* opCtx, resharding::DaoStorageClient* client) {
+                    auto now = resharding::getCurrentTime();
+                    auto updatedDocument = _coordinatorDao.transitionToCloningPhase(
+                        opCtx,
+                        client,
+                        now,
+                        highestMinFetchTimestamp,
+                        approxCopySize,
+                        _coordinatorDoc.getReshardingUUID());
+                    _metrics->setStartFor(ReshardingMetrics::TimedPhase::kCloning, now);
+                    return updatedDocument;
+                });
         })
         .then([this] {
             return resharding::waitForMajority(_ctHolder->getAbortToken(),
@@ -1159,7 +1164,10 @@ ExecutorFuture<void> ReshardingCoordinator::_fetchAndPersistNumDocumentsToCloneF
 
 ExecutorFuture<void> ReshardingCoordinator::_awaitAllRecipientsFinishedCloning(
     const std::shared_ptr<executor::ScopedTaskExecutor>& executor) {
-    if (_coordinatorDoc.getState() > CoordinatorStateEnum::kCloning) {
+    auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
+    resharding::DaoStorageClientImpl daoClient;
+    if (_coordinatorDao.getPhase(opCtx.get(), &daoClient, _coordinatorDoc.getReshardingUUID()) >
+        CoordinatorStateEnum::kCloning) {
         return ExecutorFuture<void>(**executor, Status::OK());
     }
 
@@ -1183,12 +1191,18 @@ ExecutorFuture<void> ReshardingCoordinator::_awaitAllRecipientsFinishedCloning(
                     _ctHolder->getAbortToken(),
                     coordinatorDocChangedOnDisk);
             }
-
-            return coordinatorDocChangedOnDisk;
         })
-        .then([this](ReshardingCoordinatorDocument coordinatorDocChangedOnDisk) {
-            this->_updateCoordinatorDocStateAndCatalogEntries(CoordinatorStateEnum::kApplying,
-                                                              coordinatorDocChangedOnDisk);
+        .then([this] {
+            this->_updateCoordinatorDocStateAndCatalogEntries(
+                [=, this](OperationContext* opCtx, resharding::DaoStorageClient* client) {
+                    auto now = resharding::getCurrentTime();
+                    auto updatedDocument = _coordinatorDao.transitionToApplyingPhase(
+                        opCtx, client, now, _coordinatorDoc.getReshardingUUID());
+
+                    _metrics->setEndFor(ReshardingMetrics::TimedPhase::kCloning, now);
+                    _metrics->setStartFor(ReshardingMetrics::TimedPhase::kApplying, now);
+                    return updatedDocument;
+                });
         })
         .then([this] {
             return resharding::waitForMajority(_ctHolder->getAbortToken(),
@@ -1205,10 +1219,13 @@ void ReshardingCoordinator::_startCommitMonitor(
     _commitMonitor = std::make_shared<resharding::CoordinatorCommitMonitor>(
         _metrics,
         _coordinatorDoc.getSourceNss(),
+        resharding::extractShardIdsFromParticipantEntries(_coordinatorDoc.getDonorShards()),
         resharding::extractShardIdsFromParticipantEntries(_coordinatorDoc.getRecipientShards()),
         **executor,
         _ctHolder->getCommitMonitorToken(),
-        _coordinatorDoc.getDemoMode() ? 0 : resharding::gReshardingDelayBeforeRemainingOperationTimeQueryMillis.load());
+        _coordinatorDoc.getDemoMode()
+            ? 0
+            : resharding::gReshardingDelayBeforeRemainingOperationTimeQueryMillis.load());
 
     _commitMonitorQuiesced = _commitMonitor->waitUntilRecipientsAreWithinCommitThreshold()
                                  .thenRunOn(**executor)
@@ -1265,17 +1282,22 @@ ExecutorFuture<void> ReshardingCoordinator::_awaitAllRecipientsFinishedApplying(
             }
 
             // set the criticalSectionExpiresAt on the coordinator doc
+            const auto now = (*executor)->now();
             const auto criticalSectionTimeout =
                 Milliseconds(resharding::gReshardingCriticalSectionTimeoutMillis.load());
-            const auto criticalSectionExpiresAt = (*executor)->now() + criticalSectionTimeout;
+            const auto criticalSectionExpiresAt = now + criticalSectionTimeout;
 
-            ReshardingCoordinatorDocument updatedCSExpirationDoc = _coordinatorDoc;
-            updatedCSExpirationDoc.setCriticalSectionExpiresAt(criticalSectionExpiresAt);
-            this->_updateCoordinatorDocStateAndCatalogEntries(CoordinatorStateEnum::kBlockingWrites,
-                                                              updatedCSExpirationDoc);
-
-            _metrics->setStartFor(ReshardingMetrics::TimedPhase::kCriticalSection,
-                                  resharding::getCurrentTime());
+            _updateCoordinatorDocStateAndCatalogEntries(
+                [=, this](OperationContext* opCtx, resharding::DaoStorageClient* client) {
+                    auto updatedDocument = _coordinatorDao.transitionToBlockingWritesPhase(
+                        opCtx,
+                        client,
+                        now,
+                        criticalSectionExpiresAt,
+                        _coordinatorDoc.getReshardingUUID());
+                    _metrics->setStartFor(ReshardingMetrics::TimedPhase::kCriticalSection, now);
+                    return updatedDocument;
+                });
         })
         .then([this] {
             return resharding::waitForMajority(_ctHolder->getAbortToken(),
@@ -1583,10 +1605,23 @@ void ReshardingCoordinator::_updateCoordinatorDocStateAndCatalogEntries(
 
     auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
     resharding::writeStateTransitionAndCatalogUpdatesThenBumpCollectionPlacementVersions(
-        opCtx.get(), _metrics.get(), updatedCoordinatorDoc);
+        opCtx.get(), _metrics.get(), updatedCoordinatorDoc, boost::none);
 
     // Update in-memory coordinator doc
-    installCoordinatorDocOnStateTransition(opCtx.get(), updatedCoordinatorDoc);
+    installCoordinatorDocOnStateTransition(
+        opCtx.get(),
+        resharding::getCoordinatorDoc(opCtx.get(), _coordinatorDoc.getReshardingUUID()));
+}
+
+void ReshardingCoordinator::_updateCoordinatorDocStateAndCatalogEntries(
+    resharding::PhaseTransitionFn phaseTransitionFn) {
+    auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
+    resharding::writeStateTransitionAndCatalogUpdatesThenBumpCollectionPlacementVersions(
+        opCtx.get(), _metrics.get(), _coordinatorDoc, std::move(phaseTransitionFn));
+
+    installCoordinatorDocOnStateTransition(
+        opCtx.get(),
+        resharding::getCoordinatorDoc(opCtx.get(), _coordinatorDoc.getReshardingUUID()));
 }
 
 void ReshardingCoordinator::_removeOrQuiesceCoordinatorDocAndRemoveReshardingFields(
@@ -1594,7 +1629,8 @@ void ReshardingCoordinator::_removeOrQuiesceCoordinatorDocAndRemoveReshardingFie
     auto updatedCoordinatorDoc = resharding::removeOrQuiesceCoordinatorDocAndRemoveReshardingFields(
         opCtx,
         _metrics.get(),
-        resharding::tryGetCoordinatorDoc(opCtx, _coordinatorDoc.getReshardingUUID()).value_or(_coordinatorDoc),
+        resharding::tryGetCoordinatorDoc(opCtx, _coordinatorDoc.getReshardingUUID())
+            .value_or(_coordinatorDoc),
         abortReason);
 
     // Update in-memory coordinator doc.
@@ -1975,10 +2011,12 @@ void ReshardingCoordinator::_logStatsOnCompletion(bool success) {
     totalsBuilder.append("totalOplogsApplied", totalOplogsApplied);
     totalsBuilder.append("maxDonorIndexes", maxDonorIndexes);
     totalsBuilder.append("maxRecipientIndexes", maxRecipientIndexes);
+    totalsBuilder.append("numberOfIndexesDelta", maxRecipientIndexes - maxDonorIndexes);
     statsBuilder.append("totals", totalsBuilder.obj());
 
     bool hadCriticalSection = false;
-    if (auto criticalSectionInterval = _metrics->getIntervalFor(resharding_metrics::TimedPhase::kCriticalSection)) {
+    if (auto criticalSectionInterval =
+            _metrics->getIntervalFor(resharding_metrics::TimedPhase::kCriticalSection)) {
         criticalSectionBuilder.append("interval", criticalSectionInterval->toBSON());
         hadCriticalSection = true;
     }
@@ -1987,7 +2025,8 @@ void ReshardingCoordinator::_logStatsOnCompletion(bool success) {
         hadCriticalSection = true;
     }
     if (hadCriticalSection) {
-        criticalSectionBuilder.append("totalWritesDuringCriticalSection", totalWritesDuringCriticalSection);
+        criticalSectionBuilder.append("totalWritesDuringCriticalSection",
+                                      totalWritesDuringCriticalSection);
         statsBuilder.append("criticalSection", criticalSectionBuilder.obj());
     }
 

@@ -32,19 +32,6 @@
 
 #include <absl/container/node_hash_map.h>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <cstddef>
-#include <functional>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -72,6 +59,19 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 
+#include <cstddef>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 namespace mongo {
 namespace dps = ::mongo::bson;
@@ -94,9 +94,9 @@ void ExpressionKeysPrivate::validateDocumentCommon(const CollectionPtr& collecti
                 StringData field = keyElem.fieldName();
                 StringData userField;
 
-                if (field.startsWith(timeseries::kControlMaxFieldNamePrefix)) {
+                if (field.starts_with(timeseries::kControlMaxFieldNamePrefix)) {
                     userField = field.substr(timeseries::kControlMaxFieldNamePrefix.size());
-                } else if (field.startsWith(timeseries::kControlMinFieldNamePrefix)) {
+                } else if (field.starts_with(timeseries::kControlMinFieldNamePrefix)) {
                     userField = field.substr(timeseries::kControlMinFieldNamePrefix.size());
                 }
 
@@ -158,7 +158,7 @@ void ExpressionKeysPrivate::getHashKeys(SharedBufferFragmentBuilder& pooledBuffe
     key_string::PooledBuilder keyString(pooledBufferBuilder, keyStringVersion, ordering);
     for (auto&& indexEntry : keyPattern) {
         auto indexPath = indexEntry.fieldNameStringData();
-        auto* cstr = indexPath.rawData();
+        auto* cstr = indexPath.data();
         auto fieldVal = dps::extractElementAtOrArrayAlongDottedPath(obj, cstr);
 
         // If we hit an array while traversing the path, 'cstr' will point to the path component
@@ -172,7 +172,7 @@ void ExpressionKeysPrivate::getHashKeys(SharedBufferFragmentBuilder& pooledBuffe
         // upgrade, allowing users to recover from the possible index corruption. The old behaviour
         // before SERVER-44050 was to store 'null' index key if we encountered an array along the
         // index field path. We will use the same logic in the context of removing index keys.
-        if (ignoreArraysAlongPath && fieldVal.type() == BSONType::Array && !remainingPath.empty()) {
+        if (ignoreArraysAlongPath && fieldVal.type() == BSONType::array && !remainingPath.empty()) {
             fieldVal = nullObj.firstElement();
         }
 
@@ -183,7 +183,7 @@ void ExpressionKeysPrivate::getHashKeys(SharedBufferFragmentBuilder& pooledBuffe
                               << indexPath.substr(0,
                                                   indexPath.size() - remainingPath.size() -
                                                       !remainingPath.empty()),
-                fieldVal.type() != BSONType::Array);
+                fieldVal.type() != BSONType::array);
 
         BSONObj fieldValObj;
         if (fieldVal.eoo()) {

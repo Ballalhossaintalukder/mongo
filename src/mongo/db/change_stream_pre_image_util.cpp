@@ -29,16 +29,6 @@
 
 #include "mongo/db/change_stream_pre_image_util.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <string>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -62,6 +52,17 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <variant>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -247,7 +248,7 @@ Date_t getCurrentTimeForPreImageRemoval(OperationContext* opCtx) {
         // Populate the current time for time based expiration of pre-images.
         if (auto currentTimeElem = data["currentTimeForTimeBasedExpiration"]) {
             const BSONType bsonType = currentTimeElem.type();
-            if (bsonType == BSONType::String) {
+            if (bsonType == BSONType::string) {
                 auto stringDate = currentTimeElem.String();
                 currentTime = dateFromISOString(stringDate).getValue();
             } else {
@@ -256,7 +257,7 @@ Date_t getCurrentTimeForPreImageRemoval(OperationContext* opCtx) {
                             << "Expected type for 'currentTimeForTimeBasedExpiration' is "
                                "'date' or a 'string' representation of ISODate, but found: "
                             << bsonType,
-                        bsonType == BSONType::Date);
+                        bsonType == BSONType::date);
 
                 currentTime = currentTimeElem.Date();
             }

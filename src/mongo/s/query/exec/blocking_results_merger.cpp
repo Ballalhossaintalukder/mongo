@@ -27,21 +27,21 @@
  *    it in the license file.
  */
 
+#include "mongo/s/query/exec/blocking_results_merger.h"
+
+#include "mongo/db/curop.h"
+#include "mongo/db/query/find_common.h"
+#include "mongo/logv2/log.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/decorable.h"
+#include "mongo/util/scopeguard.h"
+
 #include <future>
 
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 
-#include "mongo/db/curop.h"
-#include "mongo/db/query/find_common.h"
-#include "mongo/logv2/log.h"
-#include "mongo/s/query/exec/blocking_results_merger.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/decorable.h"
-#include "mongo/util/scopeguard.h"
-
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
-
 
 namespace mongo {
 
@@ -58,6 +58,10 @@ BlockingResultsMerger::~BlockingResultsMerger() = default;
 
 const AsyncResultsMergerParams& BlockingResultsMerger::asyncResultsMergerParams() const {
     return _arm->params();
+}
+
+void BlockingResultsMerger::setInitialHighWaterMark(const BSONObj& highWaterMark) {
+    _arm->setInitialHighWaterMark(highWaterMark);
 }
 
 StatusWith<stdx::cv_status> BlockingResultsMerger::doWaiting(

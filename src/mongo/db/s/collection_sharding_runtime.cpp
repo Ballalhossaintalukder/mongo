@@ -29,15 +29,6 @@
 
 #include "mongo/db/s/collection_sharding_runtime.h"
 
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -54,6 +45,7 @@
 #include "mongo/db/repl/read_concern_level.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/range_deleter_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/executor/task_executor_pool.h"
@@ -63,7 +55,6 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
@@ -71,6 +62,14 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -108,9 +107,8 @@ boost::optional<ShardVersion> getOperationReceivedVersion(OperationContext* opCt
 
 // This shard version is used as the received version in StaleConfigInfo since we do not have
 // information about the received version of the operation.
-ShardVersion ShardVersionPlacementIgnoredNoIndexes() {
-    return ShardVersionFactory::make(ChunkVersion::IGNORED(),
-                                     boost::optional<CollectionIndexes>(boost::none));
+ShardVersion ShardVersionPlacementIgnored() {
+    return ShardVersionFactory::make(ChunkVersion::IGNORED());
 }
 
 // Checks that the overall collection 'timestamp' is valid for the current transaction (i.e. this
@@ -262,7 +260,7 @@ ScopedCollectionDescription CollectionShardingRuntime::getCollectionDescription(
     uassert(
         StaleConfigInfo(_nss,
                         receivedShardVersion ? *receivedShardVersion
-                                             : ShardVersionPlacementIgnoredNoIndexes(),
+                                             : ShardVersionPlacementIgnored(),
                         boost::none /* wantedVersion */,
                         ShardingState::get(_serviceContext)->shardId()),
         str::stream() << "sharding status of collection " << _nss.toStringForErrorMsg()
@@ -271,11 +269,6 @@ ScopedCollectionDescription CollectionShardingRuntime::getCollectionDescription(
         optMetadata);
 
     return {std::move(optMetadata)};
-}
-
-boost::optional<ShardingIndexesCatalogCache> CollectionShardingRuntime::getIndexesInCritSec(
-    OperationContext* opCtx) const {
-    return _shardingIndexesCatalogInfo;
 }
 
 boost::optional<CollectionMetadata> CollectionShardingRuntime::getCurrentMetadataIfKnown() const {
@@ -324,7 +317,7 @@ void CollectionShardingRuntime::exitCriticalSectionNoChecks() {
 }
 
 boost::optional<SharedSemiFuture<void>> CollectionShardingRuntime::getCriticalSectionSignal(
-    OperationContext* opCtx, ShardingMigrationCriticalSection::Operation op) const {
+    ShardingMigrationCriticalSection::Operation op) const {
     return _critSec.getSignal(op);
 }
 
@@ -472,7 +465,7 @@ Status CollectionShardingRuntime::waitForClean(OperationContext* opCtx,
         }
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083515);
 }
 
 SharedSemiFuture<void> CollectionShardingRuntime::getOngoingQueriesCompletionFuture(
@@ -498,7 +491,7 @@ CollectionShardingRuntime::_getCurrentMetadataIfKnown(
             tassert(10016213, "MetadataManager must be initialized", _metadataManager);
             return _metadataManager->getActiveMetadata(atClusterTime, preserveRange);
     };
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083516);
 }
 
 std::shared_ptr<ScopedCollectionDescription::Impl>
@@ -521,9 +514,8 @@ CollectionShardingRuntime::_getMetadataWithVersionCheckAt(
         return kUntrackedCollection;
 
     // Assume that the received shard version was IGNORED if the current operation wasn't versioned
-    const auto& receivedShardVersion = optReceivedShardVersion
-        ? *optReceivedShardVersion
-        : ShardVersionPlacementIgnoredNoIndexes();
+    const auto& receivedShardVersion =
+        optReceivedShardVersion ? *optReceivedShardVersion : ShardVersionPlacementIgnored();
 
     alwaysThrowStaleConfigInfo.execute([&](const auto&) {
         uasserted(StaleConfigInfo(_nss,
@@ -563,31 +555,15 @@ CollectionShardingRuntime::_getMetadataWithVersionCheckAt(
 
     const auto& currentMetadata = optCurrentMetadata->get();
 
-    // We need to use isEnabledUseLatestFCVWhenUninitialized instead of isEnabled because
-    // this could run during startup while the FCV is still uninitialized.
-    const auto indexFeatureFlag =
-        feature_flags::gGlobalIndexesShardingCatalog.isEnabledUseLatestFCVWhenUninitialized(
-            VersionContext::getDecoration(opCtx),
-            serverGlobalParams.featureCompatibility.acquireFCVSnapshot());
     const auto wantedPlacementVersion = currentMetadata.getShardPlacementVersion();
-    const auto wantedCollectionIndexes =
-        indexFeatureFlag ? getCollectionIndexes(opCtx) : boost::none;
-    const auto wantedIndexVersion = wantedCollectionIndexes
-        ? boost::make_optional(wantedCollectionIndexes->indexVersion())
-        : boost::none;
-    const auto wantedShardVersion =
-        ShardVersionFactory::make(currentMetadata, wantedCollectionIndexes);
+    const auto wantedShardVersion = ShardVersionFactory::make(currentMetadata);
 
     const ChunkVersion receivedPlacementVersion = receivedShardVersion.placementVersion();
     const bool isPlacementVersionIgnored =
         ShardVersion::isPlacementVersionIgnored(receivedShardVersion);
-    const boost::optional<Timestamp> receivedIndexVersion = receivedShardVersion.indexVersion();
 
-    if ((wantedPlacementVersion.isWriteCompatibleWith(receivedPlacementVersion) &&
-         (!indexFeatureFlag || receivedIndexVersion == wantedIndexVersion)) ||
-        (isPlacementVersionIgnored &&
-         (!wantedPlacementVersion.isSet() || !indexFeatureFlag ||
-          receivedIndexVersion == wantedIndexVersion))) {
+    if (wantedPlacementVersion.isWriteCompatibleWith(receivedPlacementVersion) ||
+        isPlacementVersionIgnored) {
         const auto timeOfLastIncomingChunkMigration = currentMetadata.getShardMaxValidAfter();
         const auto& placementConflictTime = receivedShardVersion.placementConflictTime();
         if (placementConflictTime &&
@@ -640,14 +616,8 @@ CollectionShardingRuntime::_getMetadataWithVersionCheckAt(
                                 << _nss.toStringForErrorMsg());
     }
 
-    if (indexFeatureFlag && wantedIndexVersion != receivedIndexVersion) {
-        uasserted(std::move(sci),
-                  str::stream() << "index version mismatch detected for "
-                                << _nss.toStringForErrorMsg());
-    }
-
     // Those are all the reasons the versions can mismatch
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083517);
 }
 
 void CollectionShardingRuntime::appendShardVersion(BSONObjBuilder* builder) const {
@@ -667,8 +637,8 @@ void CollectionShardingRuntime::setPlacementVersionRecoverRefreshFuture(
     _placementVersionInRecoverOrRefresh.emplace(std::move(future), std::move(cancellationSource));
 }
 
-boost::optional<SharedSemiFuture<void>>
-CollectionShardingRuntime::getPlacementVersionRecoverRefreshFuture(OperationContext* opCtx) const {
+boost::optional<SharedSemiFuture<void>> CollectionShardingRuntime::getMetadataRefreshFuture()
+    const {
     return _placementVersionInRecoverOrRefresh
         ? boost::optional<SharedSemiFuture<void>>(_placementVersionInRecoverOrRefresh->future)
         : boost::none;
@@ -677,59 +647,6 @@ CollectionShardingRuntime::getPlacementVersionRecoverRefreshFuture(OperationCont
 void CollectionShardingRuntime::resetPlacementVersionRecoverRefreshFuture() {
     invariant(_placementVersionInRecoverOrRefresh);
     _placementVersionInRecoverOrRefresh = boost::none;
-}
-
-boost::optional<CollectionIndexes> CollectionShardingRuntime::getCollectionIndexes(
-    OperationContext* opCtx) const {
-    _checkCritSecForIndexMetadata(opCtx);
-
-    return _shardingIndexesCatalogInfo
-        ? boost::make_optional(_shardingIndexesCatalogInfo->getCollectionIndexes())
-        : boost::none;
-}
-
-boost::optional<ShardingIndexesCatalogCache> CollectionShardingRuntime::getIndexes(
-    OperationContext* opCtx) const {
-    _checkCritSecForIndexMetadata(opCtx);
-    return _shardingIndexesCatalogInfo;
-}
-
-void CollectionShardingRuntime::addIndex(OperationContext* opCtx,
-                                         const IndexCatalogType& index,
-                                         const CollectionIndexes& collectionIndexes) {
-    if (_shardingIndexesCatalogInfo) {
-        _shardingIndexesCatalogInfo->add(index, collectionIndexes);
-    } else {
-        IndexCatalogTypeMap indexMap;
-        indexMap.emplace(index.getName(), index);
-        _shardingIndexesCatalogInfo.emplace(collectionIndexes, std::move(indexMap));
-    }
-}
-
-void CollectionShardingRuntime::removeIndex(OperationContext* opCtx,
-                                            const std::string& name,
-                                            const CollectionIndexes& collectionIndexes) {
-    tassert(7019500,
-            "Index information does not exist on CSR",
-            _shardingIndexesCatalogInfo.is_initialized());
-    _shardingIndexesCatalogInfo->remove(name, collectionIndexes);
-}
-
-void CollectionShardingRuntime::clearIndexes(OperationContext* opCtx) {
-    _shardingIndexesCatalogInfo = boost::none;
-}
-
-void CollectionShardingRuntime::replaceIndexes(OperationContext* opCtx,
-                                               const std::vector<IndexCatalogType>& indexes,
-                                               const CollectionIndexes& collectionIndexes) {
-    if (_shardingIndexesCatalogInfo) {
-        _shardingIndexesCatalogInfo = boost::none;
-    }
-    IndexCatalogTypeMap indexMap;
-    for (const auto& index : indexes) {
-        indexMap.emplace(index.getName(), index);
-    }
-    _shardingIndexesCatalogInfo.emplace(collectionIndexes, std::move(indexMap));
 }
 
 CollectionCriticalSection::CollectionCriticalSection(OperationContext* opCtx,
@@ -824,36 +741,6 @@ void CollectionShardingRuntime::_cleanupBeforeInstallingNewCollectionMetadata(
             }
         })
         .getAsync([](auto) {});
-}
-
-void CollectionShardingRuntime::_checkCritSecForIndexMetadata(OperationContext* opCtx) const {
-    if (repl::ReadConcernArgs::get(opCtx).getLevel() ==
-        repl::ReadConcernLevel::kAvailableReadConcern)
-        return;
-
-    const auto optReceivedShardVersion = getOperationReceivedVersion(opCtx, _nss);
-
-    // Assume that the received shard version was IGNORED if the current operation wasn't
-    // versioned
-    const auto& receivedShardVersion = optReceivedShardVersion
-        ? *optReceivedShardVersion
-        : ShardVersionPlacementIgnoredNoIndexes();
-    auto criticalSectionSignal =
-        _critSec.getSignal(shard_role_details::getLocker(opCtx)->isWriteLocked()
-                               ? ShardingMigrationCriticalSection::kWrite
-                               : ShardingMigrationCriticalSection::kRead);
-    std::string reason = _critSec.getReason() ? _critSec.getReason()->toString() : "unknown";
-    uassert(StaleConfigInfo(_nss,
-                            receivedShardVersion,
-                            boost::none /* wantedVersion */,
-                            ShardingState::get(opCtx)->shardId(),
-                            std::move(criticalSectionSignal),
-                            shard_role_details::getLocker(opCtx)->isWriteLocked()
-                                ? StaleConfigInfo::OperationType::kWrite
-                                : StaleConfigInfo::OperationType::kRead),
-            str::stream() << "The critical section for " << _nss.toStringForErrorMsg()
-                          << " is acquired with reason: " << reason,
-            !criticalSectionSignal);
 }
 
 CollectionShardingRuntime::ScopedSharedCollectionShardingRuntime::

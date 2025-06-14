@@ -14,19 +14,26 @@ mongo_cc_library(
     srcs = [
         "hello_metrics.cpp",
         "session.cpp",
+        "session_establishment_rate_limiter.cpp",
         "transport_layer.cpp",
+        "transport_options.cpp",
+        "transport_options_gen",
     ],
     hdrs = [
         "hello_metrics.h",
         "session.h",
+        "session_establishment_rate_limiter.h",
         "session_manager.h",
         "transport_layer.h",
+        "transport_options.h",
     ],
     deps = [
         "//src/mongo:base",
         "//src/mongo/db:connection_health_metrics_parameter",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:service_context",
         "//src/mongo/db:wire_version",  # TODO(SERVER-93876): Remove.
+        "//src/mongo/db/admission:rate_limiter",
+        "//src/mongo/util:future_util",
         "//src/mongo/util/net:ssl_manager",  # TODO(SERVER-93876): Remove.
     ],
 )
@@ -81,8 +88,6 @@ mongo_cc_library(
     name = "transport_layer",
     srcs = [
         "proxy_protocol_header_parser.cpp",
-        ":transport_options.cpp",
-        ":transport_options_gen",
         "//src/mongo/transport/asio:asio_session_impl.cpp",
         "//src/mongo/transport/asio:asio_session_manager.cpp",
         "//src/mongo/transport/asio:asio_tcp_fast_open.cpp",
@@ -119,6 +124,7 @@ mongo_cc_library(
         "//src/mongo/db/stats:counters",  # TODO(SERVER-93876): Remove.
         "//src/mongo/s:common_s",  # TODO(SERVER-93876): Remove.
         "//src/mongo/util:executor_stats",
+        "//src/mongo/util:processinfo",
         "//src/mongo/util/concurrency:spin_lock",  # TODO(SERVER-93876): Remove.
         "//src/mongo/util/net:ssl_manager",  # TODO(SERVER-93876): Remove.
         "//src/mongo/util/options_parser",  # TODO(SERVER-93876): Remove.
@@ -176,6 +182,7 @@ mongo_cc_library(
     ],
     deps = [
         "//src/mongo:base",
+        "//src/mongo/rpc:message",
         "//src/mongo/util/options_parser",
         "//src/third_party/snappy",
         "//src/third_party/zlib",  # TODO(SERVER-93876): Remove.
@@ -286,10 +293,12 @@ mongo_cc_library(
         ":message_compressor",
         ":service_executor",
         ":transport_layer_common",
+        "//src/mongo/db:error_labels",
         "//src/mongo/db:server_base",
         "//src/mongo/db:server_feature_flags",
         "//src/mongo/db:service_context",
         "//src/mongo/db:traffic_recorder",
+        "//src/mongo/db/admission:ingress_request_rate_limiter",
         "//src/mongo/db/query:command_request_response",
         "//src/mongo/db/stats:counters",
         "//src/mongo/rpc:client_metadata",

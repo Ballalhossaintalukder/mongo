@@ -28,18 +28,11 @@
  */
 
 
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/exec/cached_plan.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
-#include "mongo/db/concurrency/exception_util.h"
-#include "mongo/db/exec/cached_plan.h"
 #include "mongo/db/exec/multi_plan.h"
 #include "mongo/db/exec/plan_cache_util.h"
 #include "mongo/db/exec/trial_period_utils.h"
@@ -54,10 +47,18 @@
 #include "mongo/db/query/query_planner.h"
 #include "mongo/db/query/stage_builder/stage_builder_util.h"
 #include "mongo/db/stats/counters.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -228,8 +229,9 @@ Status CachedPlanStage::replan(const QueryPlannerParams& plannerParams,
     if (shouldCache) {
         // Deactivate the current cache entry.
         auto cache = CollectionQueryInfo::get(collectionPtr()).getPlanCache();
-        cache->deactivate(
+        size_t evictedCount = cache->deactivate(
             plan_cache_key_factory::make<PlanCacheKey>(*_canonicalQuery, collectionPtr()));
+        planCacheCounters.incrementClassicCachedPlansEvictedCounter(evictedCount);
     }
 
     // Use the query planning module to plan the whole query.

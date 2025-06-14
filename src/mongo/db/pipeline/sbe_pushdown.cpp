@@ -29,11 +29,6 @@
 
 #include "mongo/db/pipeline/sbe_pushdown.h"
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdlib>
-
 #include "mongo/db/pipeline/document_source_group.h"
 #include "mongo/db/pipeline/document_source_internal_projection.h"
 #include "mongo/db/pipeline/document_source_internal_replace_root.h"
@@ -54,6 +49,12 @@
 #include "mongo/db/query/query_feature_flags_gen.h"
 #include "mongo/db/query/query_utils.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstdlib>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -573,7 +574,7 @@ bool findSbeCompatibleStagesForPushdown(
 }  // namespace
 
 void finalizePipelineStages(Pipeline* pipeline, CanonicalQuery* canonicalQuery) {
-    if (!pipeline || pipeline->getSources().empty()) {
+    if (!pipeline || pipeline->empty()) {
         return;
     }
 
@@ -594,7 +595,7 @@ void attachPipelineStages(const MultipleCollectionAccessor& collections,
     tassert(9298700,
             "attachPipelineStages() must not be called multiple times on a query",
             canonicalQuery->cqPipeline().empty());
-    if (!pipeline || pipeline->getSources().empty()) {
+    if (!pipeline || pipeline->empty()) {
         return;
     }
 

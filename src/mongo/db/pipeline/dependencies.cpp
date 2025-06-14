@@ -27,22 +27,22 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <bitset>
-
+#include "mongo/db/pipeline/dependencies.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
-#include "mongo/db/pipeline/dependencies.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <bitset>
 #include <compare>
 
 namespace mongo {
 
-OrderedPathSet DepsTracker::simplifyDependencies(OrderedPathSet dependencies,
+OrderedPathSet DepsTracker::simplifyDependencies(const OrderedPathSet& dependencies,
                                                  TruncateToRootLevel truncateToRootLevel) {
     // The key operation here is folding dependencies into ancestor dependencies, wherever possible.
     // This is assisted by a special sort in OrderedPathSet that treats '.'
@@ -60,8 +60,8 @@ OrderedPathSet DepsTracker::simplifyDependencies(OrderedPathSet dependencies,
         FieldPath fp(path);
 
         if (truncateToRootLevel == TruncateToRootLevel::yes) {
-            last = fp.front().toString() + '.';
-            returnSet.insert(fp.front().toString());
+            last = std::string{fp.front()} + '.';
+            returnSet.insert(std::string{fp.front()});
         } else {
             last = path + '.';
             returnSet.insert(path);

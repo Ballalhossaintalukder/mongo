@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/database.h"
@@ -51,6 +44,14 @@
 #include "mongo/db/views/view.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -323,9 +324,6 @@ public:
     }
 
 protected:
-    // TODO SERVER-99582: Using the CollectionWriter updates the AutoGetCollection object to point
-    // to the new writable instance. We should ideally remove this if we can guarantee this is no
-    // longer necessary in order to bring parity with CollectionAcquisition.
     friend class CollectionWriter;
 
     AutoGetCollection(OperationContext* opCtx,
@@ -426,7 +424,7 @@ public:
     }
 
     const CollectionPtr& get() const {
-        return *_collection;
+        return _storedCollection;
     }
 
     // Returns writable Collection, any previous Collection that has been returned may be
@@ -439,12 +437,8 @@ private:
     CollectionAcquisition* _acquisition = nullptr;
     std::unique_ptr<ScopedLocalCatalogWriteFence> _fence;
 
-    // If this class is instantiated with the constructors that take UUID or nss we need somewhere
-    // to store the CollectionPtr used. But if it is instantiated with an AutoGetCollection then the
-    // lifetime of the object is managed there. To unify the two code paths we have a pointer that
-    // points to either the CollectionPtr in an AutoGetCollection or to a stored CollectionPtr in
-    // this instance. This can also be used to determine how we were instantiated.
-    const CollectionPtr* _collection = nullptr;
+    // Points to the current collection instance to use that is either the old read-only instance or
+    // the one we're modyfing.
     CollectionPtr _storedCollection;
     Collection* _writableCollection = nullptr;
 
@@ -470,7 +464,8 @@ class ReadSourceScope {
 public:
     ReadSourceScope(OperationContext* opCtx,
                     RecoveryUnit::ReadSource readSource,
-                    boost::optional<Timestamp> provided = boost::none);
+                    boost::optional<Timestamp> provided = boost::none,
+                    bool waitForOplog = false);
     ~ReadSourceScope();
 
 private:

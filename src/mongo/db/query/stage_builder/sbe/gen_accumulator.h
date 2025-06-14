@@ -29,13 +29,14 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
 #include "mongo/db/query/stage_builder/sbe/gen_helpers.h"
+
+#include <memory>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo::stage_builder {
 const StringData kAccumulatorCountName = "$count"_sd;
@@ -70,7 +71,7 @@ class AccumOp {
 public:
     AccumOp(std::string opName);
 
-    AccumOp(StringData opName) : AccumOp(opName.toString()) {}
+    AccumOp(StringData opName) : AccumOp(std::string{opName}) {}
 
     AccumOp(const AccumulationStatement& acc);
 

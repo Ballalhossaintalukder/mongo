@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/stats/storage_stats.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -56,7 +49,6 @@
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/db/s/balancer_stats_registry.h"
 #include "mongo/db/server_options.h"
-#include "mongo/db/stats/storage_stats.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/timeseries/bucket_catalog/bucket_catalog.h"
 #include "mongo/db/timeseries/bucket_catalog/global_bucket_catalog.h"
@@ -66,6 +58,15 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kFTDC
 
@@ -260,8 +261,8 @@ void _appendInProgressIndexesStats(OperationContext* opCtx,
     }
     result->append("nindexes", numIndexes);
 
-    auto it = indexCatalog->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished);
+    auto it = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady |
+                                             IndexCatalog::InclusionPolicy::kUnfinished);
     while (it->more()) {
         const IndexCatalogEntry* entry = it->next();
         const IndexDescriptor* descriptor = entry->descriptor();
@@ -269,7 +270,8 @@ void _appendInProgressIndexesStats(OperationContext* opCtx,
         invariant(iam);
 
         BSONObjBuilder bob;
-        if (iam->appendCustomStats(opCtx, &bob, scale)) {
+        if (iam->appendCustomStats(
+                opCtx, *shard_role_details::getRecoveryUnit(opCtx), &bob, scale)) {
             if (redactForQE) {
                 indexDetails.append(descriptor->indexName(), filterQEIndexStats(bob.obj()));
             } else {

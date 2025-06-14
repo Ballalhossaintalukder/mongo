@@ -27,10 +27,9 @@
  *    it in the license file.
  */
 
-#include "mongo/db/query/search/search_task_executors.h"
-
 #include "mongo/db/commands.h"
 #include "mongo/db/query/search/mongot_options.h"
+#include "mongo/db/query/search/search_task_executors.h"
 #include "mongo/executor/connection_pool_stats.h"
 
 namespace mongo {
@@ -98,7 +97,10 @@ public:
         auto hps = cmdObj["hostAndPort"].Array();
         auto mongotExec = executor::getMongotTaskExecutor(opCtx->getServiceContext());
         for (auto&& hp : hps) {
-            mongotExec->dropConnections(HostAndPort(hp.String()));
+            mongotExec->dropConnections(HostAndPort(hp.String()),
+                                        Status(ErrorCodes::PooledConnectionsDropped,
+                                               "Internal testing command to drop the connections "
+                                               "between the server and mongot"));
         }
         return true;
     }

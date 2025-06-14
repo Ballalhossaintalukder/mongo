@@ -29,20 +29,6 @@
 
 #include "mongo/db/matcher/expression_algo.h"
 
-#include <algorithm>
-#include <cmath>
-#include <compare>
-#include <cstddef>
-#include <iterator>
-#include <set>
-#include <type_traits>
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <s2cellid.h>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -53,7 +39,6 @@
 #include "mongo/db/exec/matcher/matcher_geo.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/db/geo/geometry_container.h"
-#include "mongo/db/matcher/expression.h"
 #include "mongo/db/matcher/expression_always_boolean.h"
 #include "mongo/db/matcher/expression_expr.h"
 #include "mongo/db/matcher/expression_geo.h"
@@ -68,6 +53,21 @@
 #include "mongo/db/query/collation/collation_index_key.h"
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <cmath>
+#include <compare>
+#include <cstddef>
+#include <iterator>
+#include <set>
+#include <type_traits>
+
+#include <s2cellid.h>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -313,7 +313,7 @@ bool _isSubsetOf(const MatchExpression* lhs, const ExistsMatchExpression* rhs) {
         const ComparisonMatchExpression* cme = static_cast<const ComparisonMatchExpression*>(lhs);
         // The CompareMatchExpression constructor prohibits creating a match expression with EOO or
         // Undefined types, so only need to ensure that the value is not of type jstNULL.
-        return cme->getData().type() != jstNULL;
+        return cme->getData().type() != BSONType::null;
     }
 
     switch (lhs->matchType()) {
@@ -337,31 +337,11 @@ bool _isSubsetOf(const MatchExpression* lhs, const ExistsMatchExpression* rhs) {
                 return false;
             }
 
-            if (internalQueryPlannerDisableDottedPathIsSubsetOfExistsTrue.load()) {
-                // If the path is dotted it is not safe to return true here because of the case
-                // where the document contains an array that doesn't contain objects at a point in
-                // the path where we want to access sub-objects (i.e. there are more elements to the
-                // path). For example:
-                // - Document: {a: []}
-                // - find({"a.b": {$ne: null}}) returns the document
-                // - find({"a.b": {$exists: true}}) does not
-                // So in this case, the {$ne: null} expression is NOT a subset of the $exists
-                // expression. It is also unsafe to return true if the path is dotted but has a
-                // numeric:
-                // - Document: {a: []}
-                // - find({"a.0": {$ne: null}}) returns the document
-                // - find({"a.0": {$exists: true}}) does not
-                // Therefore it is sufficient to just inspect the path for a dot here.
-                if (lhs->getChild(0)->path().find('.') != std::string::npos) {
-                    return false;
-                }
-            }
-
             switch (lhs->getChild(0)->matchType()) {
                 case MatchExpression::EQ: {
                     const ComparisonMatchExpression* cme =
                         static_cast<const ComparisonMatchExpression*>(lhs->getChild(0));
-                    return cme->getData().type() == jstNULL;
+                    return cme->getData().type() == BSONType::null;
                 }
                 case MatchExpression::MATCH_IN: {
                     const InMatchExpression* ime =
@@ -502,7 +482,7 @@ std::pair<unique_ptr<MatchExpression>, unique_ptr<MatchExpression>> splitMatchEx
 bool pathDependenciesAreExact(StringData key, const MatchExpression* expr) {
     DepsTracker columnDeps;
     match_expression::addDependencies(expr, &columnDeps);
-    return !columnDeps.needWholeDocument && columnDeps.fields == OrderedPathSet{key.toString()};
+    return !columnDeps.needWholeDocument && columnDeps.fields == OrderedPathSet{std::string{key}};
 }
 
 void addExpr(StringData path,
@@ -554,11 +534,11 @@ std::unique_ptr<MatchExpression> tryAddExpr(StringData path,
  */
 bool canCompareWith(const BSONElement& elem, bool isEQ) {
     const auto type = elem.type();
-    if (type == BSONType::MinKey || type == BSONType::MaxKey) {
+    if (type == BSONType::minKey || type == BSONType::maxKey) {
         // MinKey and MaxKey have special semantics for comparison to objects.
         return false;
     }
-    if (type == BSONType::Array || type == BSONType::Object) {
+    if (type == BSONType::array || type == BSONType::object) {
         return isEQ && elem.Obj().isEmpty();
     }
 
@@ -613,7 +593,7 @@ std::unique_ptr<MatchExpression> splitMatchExpressionForColumns(
             auto sub = checked_cast<const TypeMatchExpression*>(me);
             tassert(6430600,
                     "Not expecting to find EOO in a $type expression",
-                    !sub->typeSet().hasType(BSONType::EOO));
+                    !sub->typeSet().hasType(BSONType::eoo));
             return tryAddExpr(sub->path(), me, out);
         }
 
@@ -701,15 +681,17 @@ std::unique_ptr<MatchExpression> splitMatchExpressionForColumns(
 
 namespace expression {
 
-bool hasExistenceOrTypePredicateOnPath(const MatchExpression& expr, StringData path) {
+bool hasPredicateOnPaths(const MatchExpression& expr,
+                         mongo::MatchExpression::MatchType searchType,
+                         const stdx::unordered_set<std::string>& paths) {
     if (expr.getCategory() == MatchExpression::MatchCategory::kLeaf) {
-        return ((expr.matchType() == MatchExpression::MatchType::EXISTS ||
-                 expr.matchType() == MatchExpression::MatchType::TYPE_OPERATOR) &&
-                expr.path() == path);
+        const FieldRef* fieldRef = expr.fieldRef();
+        return ((expr.matchType() == searchType) &&
+                paths.contains(toStdStringViewForInterop(fieldRef->dottedField())));
     }
     for (size_t i = 0; i < expr.numChildren(); i++) {
         MatchExpression* child = expr.getChild(i);
-        if (hasExistenceOrTypePredicateOnPath(*child, path)) {
+        if (hasPredicateOnPaths(*child, searchType, paths)) {
             return true;
         }
     }
@@ -1144,7 +1126,7 @@ bool isIndependentOfImpl(E&& expr,
                 path = path.substr(0, dotPos);
             }
             if (auto it = truncated.find(path); it == truncated.end()) {
-                truncated.insert(path.toString());
+                truncated.insert(std::string{path});
             }
         }
         return areIndependent(truncated, depsTracker.fields);
@@ -1270,7 +1252,7 @@ void mapOver(MatchExpression* expr, NodeTraversalFunc func, std::string path) {
             path += ".";
         }
 
-        path += expr->path().toString();
+        path += std::string{expr->path()};
     }
 
     for (size_t i = 0; i < expr->numChildren(); i++) {
@@ -1367,7 +1349,7 @@ bool isPathPrefixOf(StringData first, StringData second) {
         return false;
     }
 
-    return second.startsWith(first) && second[first.size()] == '.';
+    return second.starts_with(first) && second[first.size()] == '.';
 }
 
 std::string filterMapToString(const StringMap<std::unique_ptr<MatchExpression>>& filterMap) {

@@ -163,7 +163,6 @@ class TestRunner(Subcommand):
         generate_multiversion_exclude_tags.generate_exclude_yaml(
             config.MULTIVERSION_BIN_VERSION,
             config.EXCLUDE_TAGS_FILE_PATH,
-            config.EXPANSIONS_FILE,
             self._resmoke_logger,
         )
 
@@ -1218,6 +1217,14 @@ class RunPlugin(PluginInterface):
         )
 
         parser.add_argument(
+            "--multiversionDir",
+            dest="multiversion_dirs",
+            action="append",
+            metavar="MULTIVERSION_DIR",
+            help="Directory to search for multiversion binaries. Can be specified multiple times.",
+        )
+
+        parser.add_argument(
             "--excludeWithAnyTags",
             action="append",
             dest="exclude_with_any_tags",
@@ -1658,7 +1665,7 @@ class RunPlugin(PluginInterface):
             dest="additional_feature_flags",
             action="append",
             metavar="featureFlag1, featureFlag2, ...",
-            help="Additional feature flags",
+            help="Additional feature flags to enable, even if they would be disabled by --disableUnreleasedIFRFlags.",
         )
 
         parser.add_argument(
@@ -1671,10 +1678,17 @@ class RunPlugin(PluginInterface):
 
         parser.add_argument(
             "--disableFeatureFlags",
-            dest="disable_feature_flags",
+            dest="excluded_feature_flags",
             action="append",
             metavar="featureFlag1, featureFlag2, ...",
-            help="Disable tests with certain feature flags",
+            help="Explicitly disable feature flags, even if they wouold be enabled by --runAllFeatureFlagTests.",
+        )
+
+        parser.add_argument(
+            "--disableUnreleasedIFRFlags",
+            dest="disable_unreleased_ifr_flags",
+            action="store_true",
+            help="Explicitly disable Incremental Rollout Feature (IFR) flags in the 'in_development' or 'rollout' state, even if they would be enabled by --runAllFeatureFlagTests.",
         )
 
         parser.add_argument(
@@ -1701,6 +1715,13 @@ class RunPlugin(PluginInterface):
             dest="test_selection_strategies_array",
             action="append",
             help="Specify test selection strategy. Can be specified multiple times.",
+        )
+
+        parser.add_argument(
+            "--noValidateSelectorPaths",
+            dest="validate_selector_paths",
+            action="store_false",
+            help="Skip validating that all paths in suite config selectors are valid.",
         )
 
         configure_resmoke.add_otel_args(parser)
@@ -1799,6 +1820,14 @@ class RunPlugin(PluginInterface):
             dest="storage_engine_cache_size_gb",
             metavar="CONFIG",
             help="Sets the storage engine cache size configuration" " setting for all mongod's.",
+        )
+
+        mongodb_server_options.add_argument(
+            "--storageEngineCacheSizePct",
+            dest="storage_engine_cache_size_pct",
+            metavar="CONFIG",
+            help="Sets the storage engine cache size configuration as a percentage"
+            " setting for all mongod's.",
         )
 
         mongodb_server_options.add_argument(

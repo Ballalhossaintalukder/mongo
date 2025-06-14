@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/catalog/collection.h"
+
 #include "mongo/db/transaction_resources.h"
 
 #include <boost/move/utility_core.hpp>
@@ -99,12 +100,6 @@ ConsistentCollection::ConsistentCollection(OperationContext* opCtx, const Collec
     }
     // If there's no collection there's no need for safety checks.
     if (!coll) {
-        return;
-    }
-    // TODO SERVER-94787: We currently special case the oplog due to CollectionScan abandoning the
-    // snapshot in order to wait for earlier oplog writes. This should go away once the ticket is
-    // fixed.
-    if (coll->ns().isOplog()) {
         return;
     }
     // If the collection is locked then it is safe to assume it is consistent with the snapshot

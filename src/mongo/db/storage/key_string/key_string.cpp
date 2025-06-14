@@ -29,16 +29,6 @@
 
 #include "mongo/db/storage/key_string/key_string.h"
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <cfloat>
-#include <cmath>
-#include <cstdlib>
-#include <fmt/format.h>
-#include <limits>
-#include <memory>
-#include <type_traits>
-
 #include "mongo/base/data_cursor.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
@@ -54,6 +44,17 @@
 #include "mongo/util/decimal_counter.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/shared_buffer.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+#include <memory>
+#include <type_traits>
+
+#include <boost/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -224,51 +225,51 @@ size_t numBytesForInt(uint8_t ctype) {
 
 uint8_t bsonTypeToGenericKeyStringType(BSONType type) {
     switch (type) {
-        case MinKey:
+        case BSONType::minKey:
             return CType::kMinKey;
 
-        case EOO:
-        case jstNULL:
+        case BSONType::eoo:
+        case BSONType::null:
             return CType::kNullish;
 
-        case Undefined:
+        case BSONType::undefined:
             return CType::kUndefined;
 
-        case NumberDecimal:
-        case NumberDouble:
-        case NumberInt:
-        case NumberLong:
+        case BSONType::numberDecimal:
+        case BSONType::numberDouble:
+        case BSONType::numberInt:
+        case BSONType::numberLong:
             return CType::kNumeric;
 
-        case mongo::String:
-        case Symbol:
+        case BSONType::string:
+        case BSONType::symbol:
             return CType::kStringLike;
 
-        case Object:
+        case BSONType::object:
             return CType::kObject;
-        case Array:
+        case BSONType::array:
             return CType::kArray;
-        case BinData:
+        case BSONType::binData:
             return CType::kBinData;
-        case jstOID:
+        case BSONType::oid:
             return CType::kOID;
-        case Bool:
+        case BSONType::boolean:
             return CType::kBool;
-        case Date:
+        case BSONType::date:
             return CType::kDate;
-        case bsonTimestamp:
+        case BSONType::timestamp:
             return CType::kTimestamp;
-        case RegEx:
+        case BSONType::regEx:
             return CType::kRegEx;
-        case DBRef:
+        case BSONType::dbRef:
             return CType::kDBRef;
 
-        case Code:
+        case BSONType::code:
             return CType::kCode;
-        case CodeWScope:
+        case BSONType::codeWScope:
             return CType::kCodeWithScope;
 
-        case MaxKey:
+        case BSONType::maxKey:
             return CType::kMaxKey;
     }
     MONGO_UNREACHABLE;
@@ -373,14 +374,14 @@ StringData readCStringWithNuls(BufReader* reader, std::string* scratch) {
     if (!reader->remaining() || reader->peek<unsigned char>() != 0xFF)
         return initial;  // Don't alloc or copy for simple case with no NUL bytes.
 
-    scratch->append(initial.rawData(), initial.size());
+    scratch->append(initial.data(), initial.size());
     while (reader->remaining() && reader->peek<unsigned char>() == 0xFF) {
         // Each time we enter this loop it means we hit a NUL byte encoded as "\x00\xFF".
         *scratch += '\0';
         reader->skip(1);
 
         const StringData nextPart = readCString(reader);
-        scratch->append(nextPart.rawData(), nextPart.size());
+        scratch->append(nextPart.data(), nextPart.size());
     }
 
     return *scratch;
@@ -845,9 +846,9 @@ template <class BufferT>
 void BuilderBase<BufferT>::_appendRegex(const BSONRegEx& val, bool invert) {
     _append(CType::kRegEx, invert);
     // note: NULL is not allowed in pattern or flags
-    _appendBytes(val.pattern.rawData(), val.pattern.size(), invert);
+    _appendBytes(val.pattern.data(), val.pattern.size(), invert);
     _append(int8_t(0), invert);
-    _appendBytes(val.flags.rawData(), val.flags.size(), invert);
+    _appendBytes(val.flags.data(), val.flags.size(), invert);
     _append(int8_t(0), invert);
 }
 
@@ -855,7 +856,7 @@ template <class BufferT>
 void BuilderBase<BufferT>::_appendDBRef(const BSONDBRef& val, bool invert) {
     _append(CType::kDBRef, invert);
     _append(endian::nativeToBig(int32_t(val.ns.size())), invert);
-    _appendBytes(val.ns.rawData(), val.ns.size(), invert);
+    _appendBytes(val.ns.data(), val.ns.size(), invert);
     _appendBytes(val.oid.view().view(), OID::kOIDSize, invert);
 }
 
@@ -1151,54 +1152,54 @@ void BuilderBase<BufferT>::_appendBsonValue(const BSONElement& elem,
                                             const StringData* name,
                                             const StringTransformFn& f) {
     if (name) {
-        _appendBytes(name->rawData(), name->size() + 1, invert);  // + 1 for NUL
+        _appendBytes(name->data(), name->size() + 1, invert);  // + 1 for NUL
     }
 
     switch (elem.type()) {
-        case MinKey:
-        case MaxKey:
-        case EOO:
-        case Undefined:
-        case jstNULL:
+        case BSONType::minKey:
+        case BSONType::maxKey:
+        case BSONType::eoo:
+        case BSONType::undefined:
+        case BSONType::null:
             _append(bsonTypeToGenericKeyStringType(elem.type()), invert);
             break;
 
-        case NumberDouble:
+        case BSONType::numberDouble:
             _appendNumberDouble(elem._numberDouble(), invert);
             break;
-        case String:
+        case BSONType::string:
             _appendString(elem.valueStringData(), invert, f);
             break;
-        case Object:
+        case BSONType::object:
             _appendObject(elem.Obj(), invert, f);
             break;
-        case Array:
+        case BSONType::array:
             _appendArray(BSONArray(elem.Obj()), invert, f);
             break;
-        case BinData: {
+        case BSONType::binData: {
             int len;
             const char* data = elem.binData(len);
             _appendBinData(BSONBinData(data, len, elem.binDataType()), invert);
             break;
         }
 
-        case jstOID:
+        case BSONType::oid:
             _appendOID(elem.__oid(), invert);
             break;
-        case Bool:
+        case BSONType::boolean:
             _appendBool(elem.boolean(), invert);
             break;
-        case Date:
+        case BSONType::date:
             _appendDate(elem.date(), invert);
             break;
 
-        case RegEx:
+        case BSONType::regEx:
             _appendRegex(BSONRegEx(elem.regex(), elem.regexFlags()), invert);
             break;
-        case DBRef:
+        case BSONType::dbRef:
             _appendDBRef(BSONDBRef(elem.dbrefNS(), elem.dbrefOID()), invert);
             break;
-        case Symbol:
+        case BSONType::symbol:
             if (f) {
                 keyStringAsserted(
                     ErrorCodes::CannotBuildIndexKeys,
@@ -1208,26 +1209,26 @@ void BuilderBase<BufferT>::_appendBsonValue(const BSONElement& elem,
             }
             _appendSymbol(elem.valueStringData(), invert);
             break;
-        case Code:
+        case BSONType::code:
             _appendCode(elem.valueStringData(), invert);
             break;
-        case CodeWScope: {
+        case BSONType::codeWScope: {
             _appendCodeWString(
                 BSONCodeWScope(StringData(elem.codeWScopeCode(), elem.codeWScopeCodeLen() - 1),
                                BSONObj(elem.codeWScopeScopeData())),
                 invert);
             break;
         }
-        case NumberInt:
+        case BSONType::numberInt:
             _appendNumberInt(elem._numberInt(), invert);
             break;
-        case bsonTimestamp:
+        case BSONType::timestamp:
             _appendTimestamp(elem.timestamp(), invert);
             break;
-        case NumberLong:
+        case BSONType::numberLong:
             _appendNumberLong(elem._numberLong(), invert);
             break;
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             _appendNumberDecimal(elem._numberDecimal(), invert);
             break;
     }
@@ -1239,9 +1240,9 @@ void BuilderBase<BufferT>::_appendBsonValue(const BSONElement& elem,
 template <class BufferT>
 void BuilderBase<BufferT>::_appendStringLike(StringData str, bool invert) {
     while (true) {
-        size_t firstNul = strnlen(str.rawData(), str.size());
+        size_t firstNul = strnlen(str.data(), str.size());
         // No NULs in string.
-        _appendBytes(str.rawData(), firstNul, invert);
+        _appendBytes(str.data(), firstNul, invert);
         if (firstNul == str.size() || firstNul == std::string::npos) {
             _append(int8_t(0), invert);
             break;

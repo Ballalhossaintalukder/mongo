@@ -28,9 +28,6 @@
  */
 
 
-#include <set>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -49,6 +46,7 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/read_concern_level.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/transaction/transaction_participant.h"
@@ -57,10 +55,12 @@
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/request_types/clone_catalog_data_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/str.h"
+
+#include <set>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -92,7 +92,7 @@ void cloneDatabase(OperationContext* opCtx,
     // Clone the non-ignored collections.
     std::set<std::string> clonedColls;
     Cloner cloner;
-    uassertStatusOK(cloner.copyDb(opCtx, dbName, from.toString(), trackedColls, &clonedColls));
+    uassertStatusOK(cloner.copyDb(opCtx, dbName, std::string{from}, trackedColls, &clonedColls));
     {
         BSONArrayBuilder cloneBarr = result.subarrayStart("clonedColls");
         cloneBarr.append(clonedColls);

@@ -29,14 +29,14 @@
 
 #include "mongo/s/client/num_hosts_targeted_metrics.h"
 
-#include <string>
-#include <utility>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/service_context.h"
 #include "mongo/util/decorable.h"
+
+#include <string>
+#include <utility>
 
 namespace mongo {
 namespace {
@@ -80,7 +80,7 @@ void NumHostsTargetedMetrics::addNumHostsTargeted(NumHostsTargetedMetrics::Query
     }
 }
 
-void NumHostsTargetedMetrics::appendSection(BSONObjBuilder* builder) {
+void NumHostsTargetedMetrics::report(BSONObjBuilder* builder) const {
     BSONObjBuilder numHostsTargetedStatsBuilder(builder->subobjStart("numHostsTargeted"));
     for (auto i = 0; i < kNumQueryType; i++) {
         auto& targetStat = _numHostsTargeted[i];

@@ -26,20 +26,38 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
+
 #pragma once
-#include <cstdint>
 
 #include "mongo/db/curop.h"
 #include "mongo/db/memory_tracking/memory_usage_tracker.h"
 
+#include <cstdint>
+
 namespace mongo {
 
-class ClientCursor;
-
 /**
- * A memory usage tracker class that aggregates memory statistics for the entire operation. Stages
- * that track memory will report to an instance of this class, which in turn will update statistics
- * in CurOp.
+ * A memory usage tracker class that aggregates memory statistics for the entire life of a query,
+ * including the initial request and subsequent getMore() invocations. Stages that track memory will
+ * report to an instance of this class, which in turn will update statistics in CurOp of the current
+ * operation.
+ *
+ * Between commands, the tracker is stashed on the cursor (ClientCursor on mongod, or
+ * ClusterClientCursor if we are on a router) if there is more data. The respective cursor manager
+ * classes take care of the stashing (CursorManager on mongod, or ClusterCursorManager on the
+ * router.)
+ *
+ * This class is instantiated on demand when building the stages, and its add() method is invoked as
+ * early as the constructor (accumulators call 'add(sizeof(*this))' at construction time) and as
+ * late as when destructors fire. Sometimes, on the router we have memory trackers for pipelines
+ * that won't actually be executed, because the pipelines are executed in another process. We may
+ * or may not have a valid opCtx pointer for these cases, and so will not report changes in memory
+ * usage to the Curop instance. Since the memory amounts involved will be small and not for
+ * pipelines that are actually executing, this is acceptable.
+ *
+ * For examples of correct usage of this class, see the C++ unit tests:
+ * - RunAggregateTest: TransferOperationMemoryUsageTracker
+ * - ClusterAggregateMemoryTrackingTest: MemoryTrackingWorksOnRouter
  */
 class OperationMemoryUsageTracker : public SimpleMemoryUsageTracker {
     OperationMemoryUsageTracker() = delete;
@@ -63,23 +81,23 @@ public:
         int64_t maxMemoryUsageBytes = std::numeric_limits<int64_t>::max());
 
     /**
-     * Look for an OperationMemoryUsageTracker on the given OperationContext. If there is one, move
-     * it to the cursor.
+     * Move the memory tracker out from the operation context, if there is one there. The caller
+     * will take ownership of the tracker.
      */
-    static void moveToCursorIfAvailable(OperationContext* opCtx, ClientCursor* cursor);
+    static std::unique_ptr<OperationMemoryUsageTracker> moveFromOpCtxIfAvailable(
+        OperationContext* opCtx);
 
     /**
-     * Look for an OperationMemoryUsageTracker on the given ClientCursor. If there is one, move it
-     * to the OperationContext.
+     * Passes ownership of the memory tracker from the caller to the given operation context.
      */
-    static void moveToOpCtxIfAvailable(ClientCursor* cursor, OperationContext* opCtx);
+    static void moveToOpCtxIfAvailable(OperationContext* opCtx,
+                                       std::unique_ptr<OperationMemoryUsageTracker> tracker);
 
     explicit OperationMemoryUsageTracker(OperationContext* opCtx) : _opCtx(opCtx) {}
 
-    static OperationMemoryUsageTracker* getFromClientCursor_forTest(ClientCursor* clientCursor);
-
 private:
     friend class RunAggregateTest;
+    friend class ClusterAggregateMemoryTrackingTest;
 
     static OperationMemoryUsageTracker* getOperationMemoryUsageTracker(OperationContext* opCtx);
 

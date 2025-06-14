@@ -30,25 +30,6 @@
 
 #include "mongo/db/service_entry_point_shard_role.h"
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <mutex>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -110,6 +91,7 @@
 #include "mongo/db/request_execution_context.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/sharding_initialization_waiter.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_statistics.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
@@ -124,7 +106,6 @@
 #include "mongo/db/stats/api_version_metrics.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/stats/read_preference_metrics.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/db/stats/server_read_concern_metrics.h"
 #include "mongo/db/stats/top.h"
 #include "mongo/db/tenant_id.h"
@@ -157,7 +138,6 @@
 #include "mongo/s/shard_version.h"
 #include "mongo/s/sharding_cluster_parameters_gen.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/transaction_router.h"
 #include "mongo/s/would_change_owning_shard_exception.h"
@@ -183,6 +163,25 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/testing_proctor.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -509,9 +508,6 @@ public:
             return Status::OK();
         }();
 
-        // Ensure the lifetime of `_scopedMetrics` ends here.
-        _scopedMetrics = boost::none;
-
         // Release the ingress admission ticket
         _admissionTicket = boost::none;
 
@@ -678,7 +674,6 @@ private:
     OperationSessionInfoFromClient _sessionOptions;
 
     boost::optional<RunCommandOpTimes> _runCommandOpTimes;
-    boost::optional<ResourceConsumption::ScopedMetricsCollector> _scopedMetrics;
     boost::optional<rpc::ImpersonatedClientSessionGuard> _clientSessionGuard;
     boost::optional<auth::SecurityTokenAuthenticationGuard> _tokenAuthorizationSessionGuard;
     bool _refreshedDatabase = false;
@@ -1300,7 +1295,8 @@ void RunCommandAndWaitForWriteConcern::_waitForWriteConcern(BSONObjBuilder& bb) 
         MONGO_unlikely(scoped.isActive())) {
         const BSONObj& data = scoped.getData();
         bb.append(data["writeConcernError"]);
-        if (data.hasField(kErrorLabelsFieldName) && data[kErrorLabelsFieldName].type() == Array) {
+        if (data.hasField(kErrorLabelsFieldName) &&
+            data[kErrorLabelsFieldName].type() == BSONType::array) {
             // Propagate error labels specified in the failCommand failpoint to the
             // OperationContext decoration to override getErrorLabels() behaviors.
             invariant(!errorLabelsOverride(opCtx));
@@ -1620,12 +1616,6 @@ void ExecCommandDatabase::_initiateCommand() {
     uassert(ErrorCodes::InvalidNamespace,
             fmt::format("Invalid database name: '{}'", dbName.toStringForErrorMsg()),
             DatabaseName::isValid(dbName, DatabaseName::DollarInDbNameBehavior::Allow));
-
-
-    // Connections from mongod or mongos clients (i.e. initial sync, mirrored reads, etc.) should
-    // not contribute to resource consumption metrics.
-    const bool collect = command->collectsResourceConsumptionMetrics() && !_isInternalClient();
-    _scopedMetrics.emplace(opCtx, dbName, collect);
 
     const auto allowTransactionsOnConfigDatabase =
         (serverGlobalParams.clusterRole.has(ClusterRole::ConfigServer) ||

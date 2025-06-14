@@ -49,6 +49,7 @@
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/transport/transport_layer.h"
+
 #include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
@@ -90,6 +91,7 @@ DocumentSourceInternalSearchMongotRemote::DocumentSourceInternalSearchMongotRemo
     std::shared_ptr<executor::TaskExecutor> taskExecutor,
     boost::optional<SearchQueryViewSpec> view)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _mergingPipeline(spec.getMergingPipeline().has_value()
                            ? mongo::Pipeline::parse(*spec.getMergingPipeline(), expCtx)
                            : nullptr),
@@ -106,7 +108,7 @@ DocumentSourceInternalSearchMongotRemote::DocumentSourceInternalSearchMongotRemo
 }
 
 const char* DocumentSourceInternalSearchMongotRemote::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Value DocumentSourceInternalSearchMongotRemote::addMergePipelineIfNeeded(
@@ -290,8 +292,8 @@ void DocumentSourceInternalSearchMongotRemote::tryToSetSearchMetaVar() {
         // Variables on the cursor must be an object.
         auto varsObj = Value(_cursor->getCursorVars().value());
         LOGV2_DEBUG(8569400, 4, "Setting meta vars", "varsObj"_attr = redact(varsObj.toString()));
-        auto metaVal = varsObj.getDocument().getField(
-            Variables::getBuiltinVariableName(Variables::kSearchMetaId));
+        std::string varName = Variables::getBuiltinVariableName(Variables::kSearchMetaId);
+        auto metaVal = varsObj.getDocument().getField(StringData{varName});
         if (!metaVal.missing()) {
             pExpCtx->variables.setReservedValue(Variables::kSearchMetaId, metaVal, true);
             if (metaVal.isObject()) {

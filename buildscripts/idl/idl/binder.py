@@ -297,7 +297,7 @@ def _compute_field_is_view(resolved_field, ctxt, symbols):
 
 
 def _compute_chained_item_is_view(struct, ctxt, symbols, chained_item):
-    # type: (syntax.Struct, errors.ParserContext, syntax.SymbolTable, Union[syntax.ChainedType, syntax.ChainedStruct]) -> bool
+    # type: (syntax.Struct, errors.ParserContext, syntax.SymbolTable, syntax.ChainedStruct) -> bool
     """Helper to compute is_view of chained types or structs."""
     resolved_chained_item = symbols.resolve_type_from_name(
         ctxt, struct, chained_item.name, chained_item.name
@@ -360,11 +360,6 @@ def _compute_struct_is_view(struct, ctxt, symbols):
         if _compute_field_is_view(resolved_field, ctxt, symbols):
             return True
 
-    if struct.chained_types:
-        for chained_type in struct.chained_types:
-            if _compute_chained_item_is_view(struct, ctxt, symbols, chained_type):
-                return True
-
     if struct.chained_structs:
         for chained_struct in struct.chained_structs:
             if _compute_chained_item_is_view(struct, ctxt, symbols, chained_struct):
@@ -412,6 +407,7 @@ def _bind_struct_common(ctxt, parsed_spec, struct, ast_struct):
     ast_struct.cpp_validator_func = struct.cpp_validator_func
     ast_struct.cpp_name = struct.cpp_name or struct.name
     ast_struct.qualified_cpp_name = _get_struct_qualified_cpp_name(struct)
+    ast_struct.mod_visibility = struct.mod_visibility
     ast_struct.allow_global_collection_name = struct.allow_global_collection_name
     ast_struct.non_const_getter = struct.non_const_getter
     ast_struct.is_command_reply = struct.is_command_reply
@@ -439,18 +435,6 @@ def _bind_struct_common(ctxt, parsed_spec, struct, ast_struct):
     # Validate naming restrictions
     if ast_struct.name.startswith("array<"):
         ctxt.add_array_not_valid_error(ast_struct, "struct", ast_struct.name)
-
-    # Merge chained types as chained fields
-    if struct.chained_types:
-        if ast_struct.strict:
-            ctxt.add_chained_type_no_strict_error(ast_struct, ast_struct.name)
-
-        for chained_type in struct.chained_types:
-            ast_field = _bind_chained_type(ctxt, parsed_spec, ast_struct, chained_type)
-            if ast_field and not _is_duplicate_field(
-                ctxt, chained_type.name, ast_struct.fields, ast_field
-            ):
-                ast_struct.fields.append(ast_field)
 
     # Merge chained structs as a chained struct and ignored fields
     for chained_struct in struct.chained_structs or []:
@@ -1296,37 +1280,6 @@ def _bind_field(ctxt, parsed_spec, field):
     return ast_field
 
 
-def _bind_chained_type(ctxt, parsed_spec, location, chained_type):
-    # type: (errors.ParserContext, syntax.IDLSpec, common.SourceLocation, syntax.ChainedType) -> ast.Field
-    """Bind the specified chained type."""
-    syntax_symbol = parsed_spec.symbols.resolve_type_from_name(
-        ctxt, location, chained_type.name, chained_type.name
-    )
-    if not syntax_symbol:
-        return None
-
-    if not isinstance(syntax_symbol, syntax.Type):
-        ctxt.add_chained_type_not_found_error(location, chained_type.name)
-        return None
-
-    idltype = cast(syntax.Type, syntax_symbol)
-
-    if len(idltype.bson_serialization_type) != 1 or idltype.bson_serialization_type[0] != "chain":
-        ctxt.add_chained_type_wrong_type_error(
-            location, chained_type.name, idltype.bson_serialization_type[0]
-        )
-        return None
-
-    ast_field = ast.Field(location.file_name, location.line, location.column)
-    ast_field.name = idltype.name
-    ast_field.cpp_name = chained_type.cpp_name
-    ast_field.description = idltype.description
-    ast_field.chained = True
-    ast_field.type = _bind_type(idltype)
-
-    return ast_field
-
-
 def _bind_chained_struct(ctxt, parsed_spec, ast_struct, chained_struct):
     # type: (errors.ParserContext, syntax.IDLSpec, ast.Struct, syntax.ChainedStruct) -> None
     """Bind the specified chained struct."""
@@ -1349,7 +1302,7 @@ def _bind_chained_struct(ctxt, parsed_spec, ast_struct, chained_struct):
             ast_struct, ast_struct.name, chained_struct.name
         )
 
-    if struct.chained_types or struct.chained_structs:
+    if struct.chained_structs:
         ctxt.add_chained_nested_struct_no_nested_error(
             ast_struct, ast_struct.name, chained_struct.name
         )
@@ -1402,6 +1355,7 @@ def _bind_globals(ctxt, parsed_spec):
             parsed_spec.globals.file_name, parsed_spec.globals.line, parsed_spec.globals.column
         )
         ast_global.cpp_namespace = parsed_spec.globals.cpp_namespace
+        ast_global.mod_visibility = parsed_spec.globals.mod_visibility
         ast_global.cpp_includes = parsed_spec.globals.cpp_includes
 
         if not ast_global.cpp_namespace.startswith("mongo"):
@@ -1461,6 +1415,7 @@ def _bind_enum(ctxt, idl_enum):
     ast_enum.name = idl_enum.name
     ast_enum.description = idl_enum.description
     ast_enum.type = idl_enum.type
+    ast_enum.mod_visibility = idl_enum.mod_visibility
     ast_enum.cpp_namespace = idl_enum.cpp_namespace
 
     enum_type_info = enum_types.get_type_info(idl_enum)
@@ -1519,6 +1474,7 @@ def _bind_server_parameter_class(ctxt, ast_param, param):
     ast_param.cpp_class.data = cls.data
     ast_param.cpp_class.override_ctor = cls.override_ctor
     ast_param.cpp_class.override_validate = cls.override_validate
+    ast_param.cpp_class.override_warn_if_deprecated = cls.override_warn_if_deprecated
 
     # If set_at is cluster, then set must be overridden. Otherwise, use the parsed value.
     ast_param.cpp_class.override_set = True if param.set_at == ["cluster"] else cls.override_set
@@ -1646,6 +1602,14 @@ def _is_ifr_feature_flag_enabled_by_default(feature_flag_phase):
     return feature_flag_phase != ast.FeatureFlagRolloutPhase.IN_DEVELOPMENT
 
 
+def _is_ifr_feature_flag_unreleased(feature_flag_phase):
+    # type: (ast.FeatureFlagRolloutPhase) -> bool
+    return (
+        feature_flag_phase == ast.FeatureFlagRolloutPhase.IN_DEVELOPMENT
+        or feature_flag_phase == ast.FeatureFlagRolloutPhase.ROLLOUT
+    )
+
+
 def _bind_ifr_feature_flag_default(ctxt, param, feature_flag_phase):
     # type: (errors.ParserContext, syntax.FeatureFlag, ast.FeatureFlagRolloutPhase) -> ast.Expression
 
@@ -1676,7 +1640,7 @@ def _bind_non_ifr_feature_flag_default(ctxt, param):
     expr_for_default = syntax.Expression(
         param.default.file_name, param.default.line, param.default.column
     )
-    if param.shouldBeFCVGated.literal == "true":
+    if param.fcv_gated.literal == "true":
         expr_for_default.expr = f'{param.default.literal}, "{param.version or ""}"_sd'
         if param.enable_on_transitional_fcv:
             expr_for_default.expr += ", true"
@@ -1690,7 +1654,7 @@ def _bind_non_ifr_feature_flag_default(ctxt, param):
 
 def _bind_feature_flag_cpp_vartype(ctxt, param, feature_flag_phase):
     # type: (errors.ParserContext, syntax.FeatureFlag, ast.FeatureFlagRolloutPhase) -> str
-    if param.shouldBeFCVGated.literal == "true":
+    if param.fcv_gated.literal == "true":
         # FCV flags must not also be IFR flags.
         if feature_flag_phase != ast.FeatureFlagRolloutPhase.NOT_FOR_INCREMENTAL_ROLLOUT:
             ctxt.add_illegally_fcv_gated_feature_flag(param)
@@ -1747,7 +1711,7 @@ def _bind_feature_flags(ctxt, param):
             ctxt.add_feature_flag_default_false_has_version(param)
             return None
 
-        if param.shouldBeFCVGated.literal == "true":
+        if param.fcv_gated.literal == "true":
             # Feature flags that default to true and should be FCV gated are required to have a
             # version.
             if param.default.literal == "true" and not param.version:
@@ -1923,6 +1887,17 @@ def is_feature_flag_enabled_by_default(feature_flag):
         )
     else:
         return feature_flag.default.literal == "true"
+
+
+def is_unreleased_incremental_rollout_feature_flag(feature_flag):
+    """Determine if an idl.FeatureFlag is an Incremental Feature Rollout (IFR) flag in the
+    'in_development' or 'rollout' state without validating its syntax.
+    """
+    # type: (syntax.FeatureFlag) -> bool
+
+    return feature_flag.incremental_rollout_phase and _is_ifr_feature_flag_unreleased(
+        ast.FeatureFlagRolloutPhase.bind(feature_flag.incremental_rollout_phase)
+    )
 
 
 def bind(parsed_spec):

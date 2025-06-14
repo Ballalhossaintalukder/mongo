@@ -27,6 +27,22 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/document_source_streaming_group.h"
+
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/exec/document_value/value.h"
+#include "mongo/db/exec/document_value/value_comparator.h"
+#include "mongo/db/pipeline/accumulation_statement.h"
+#include "mongo/db/pipeline/expression.h"
+#include "mongo/db/pipeline/expression_context.h"
+#include "mongo/db/pipeline/lite_parsed_document_source.h"
+#include "mongo/db/query/allowed_contexts.h"
+#include "mongo/platform/compiler.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/intrusive_counter.h"
+
 #include <algorithm>
 #include <iterator>
 #include <memory>
@@ -37,21 +53,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/exec/document_value/value_comparator.h"
-#include "mongo/db/pipeline/accumulation_statement.h"
-#include "mongo/db/pipeline/document_source_streaming_group.h"
-#include "mongo/db/pipeline/expression.h"
-#include "mongo/db/pipeline/expression_context.h"
-#include "mongo/db/pipeline/lite_parsed_document_source.h"
-#include "mongo/db/query/allowed_contexts.h"
-#include "mongo/platform/compiler.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
 
 namespace mongo {
 
@@ -68,7 +69,7 @@ ALLOCATE_DOCUMENT_SOURCE_ID(_internalStreamingGroup, DocumentSourceStreamingGrou
 constexpr StringData DocumentSourceStreamingGroup::kStageName;
 
 const char* DocumentSourceStreamingGroup::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 DocumentSource::GetNextResult DocumentSourceStreamingGroup::doGetNext() {
@@ -142,7 +143,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceStreamingGroup::createFromBso
     uassert(7026702,
             "streaming group must specify an array of monotonic id fields " +
                 kMonotonicIdFieldsSpecField,
-            monotonicIdFieldsElem.type() == Array);
+            monotonicIdFieldsElem.type() == BSONType::array);
     const auto& monotonicIdFields = monotonicIdFieldsElem.Array();
     const auto& idFieldNames = groupStage->_groupProcessor.getIdFieldNames();
     if (idFieldNames.empty()) {
@@ -157,7 +158,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceStreamingGroup::createFromBso
         for (const auto& fieldNameElem : monotonicIdFields) {
             uassert(7026704,
                     kMonotonicIdFieldsSpecField + " elements must be strings",
-                    fieldNameElem.type() == String);
+                    fieldNameElem.type() == BSONType::string);
             StringData fieldName = fieldNameElem.valueStringData();
             auto it = std::find(idFieldNames.begin(), idFieldNames.end(), fieldName);
             uassert(7026705, "id field not found", it != idFieldNames.end());

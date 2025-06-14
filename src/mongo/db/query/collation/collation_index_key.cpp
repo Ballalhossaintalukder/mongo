@@ -27,9 +27,7 @@
  *    it in the license file.
  */
 
-#include <stack>
-#include <utility>
-
+#include "mongo/db/query/collation/collation_index_key.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -38,10 +36,12 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/basic_types_gen.h"
-#include "mongo/db/query/collation/collation_index_key.h"
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <stack>
+#include <utility>
 
 namespace mongo {
 
@@ -98,22 +98,22 @@ void translateElement(StringData fieldName,
                       BSONObjBuilder* out,
                       TranslateStack* ctxStack) {
     switch (element.type()) {
-        case BSONType::String: {
+        case BSONType::string: {
             out->append(fieldName,
                         collator->getComparisonKey(element.valueStringData()).getKeyData());
             return;
         }
-        case BSONType::Object: {
+        case BSONType::object: {
             invariant(ctxStack);
             ctxStack->emplace(BSONObjIterator(element.Obj()), &out->subobjStart(fieldName));
             return;
         }
-        case BSONType::Array: {
+        case BSONType::array: {
             invariant(ctxStack);
             ctxStack->emplace(BSONObjIterator(element.Obj()), &out->subarrayStart(fieldName));
             return;
         }
-        case BSONType::Symbol: {
+        case BSONType::symbol: {
             uasserted(ErrorCodes::CannotBuildIndexKeys,
                       str::stream()
                           << "Cannot index type Symbol with a collation. Failed to index element: "
@@ -159,7 +159,7 @@ void CollationIndexKey::collationAwareIndexKeyAppend(BSONElement elt,
     if (elt.isABSONObj()) {
         translate(elt.Obj(),
                   collator,
-                  elt.type() == BSONType::Array ? &out->subarrayStart("") : &out->subobjStart(""));
+                  elt.type() == BSONType::array ? &out->subarrayStart("") : &out->subobjStart(""));
     } else {
         translateElement("", elt, collator, out, nullptr);
     }

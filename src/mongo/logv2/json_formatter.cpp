@@ -29,21 +29,6 @@
 
 #include "mongo/logv2/json_formatter.h"
 
-#include <boost/log/attributes/value_extraction.hpp>
-#include <boost/log/utility/formatting_ostream.hpp>
-#include <cstddef>
-#include <fmt/compile.h>
-#include <fmt/format.h>
-#include <functional>
-#include <iterator>
-#include <variant>
-
-#include <boost/cstdint.hpp>
-#include <boost/exception/exception.hpp>
-#include <boost/log/core/record_view.hpp>
-#include <boost/log/utility/formatting_ostream_fwd.hpp>
-#include <boost/log/utility/value_ref.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -57,6 +42,21 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
 #include "mongo/util/str_escape.h"
+
+#include <cstddef>
+#include <functional>
+#include <iterator>
+#include <variant>
+
+#include <boost/cstdint.hpp>
+#include <boost/exception/exception.hpp>
+#include <boost/log/attributes/value_extraction.hpp>
+#include <boost/log/core/record_view.hpp>
+#include <boost/log/utility/formatting_ostream.hpp>
+#include <boost/log/utility/formatting_ostream_fwd.hpp>
+#include <boost/log/utility/value_ref.hpp>
+#include <fmt/compile.h>
+#include <fmt/format.h>
 
 namespace mongo::logv2 {
 namespace {
@@ -152,7 +152,7 @@ struct JSONValueExtractor {
     template <typename Period>
     void operator()(const char* name, const Duration<Period>& value) {
         // A suffix is automatically prepended
-        dassert(!StringData(name).endsWith(value.mongoUnitSuffix()));
+        dassert(!StringData(name).ends_with(value.mongoUnitSuffix()));
         fmt::format_to(std::back_inserter(_buffer),
                        FMT_COMPILE(R"({}"{}{}":{})"),
                        _separator,
@@ -210,7 +210,7 @@ private:
                 str::UTF8SafeTruncation(_buffer.begin() + before, _buffer.end(), written);
 
             BSONObjBuilder truncationInfo = _truncated.subobjStart(name);
-            truncationInfo.append("type"_sd, typeName(BSONType::String));
+            truncationInfo.append("type"_sd, typeName(BSONType::string));
             truncationInfo.append("size"_sd, static_cast<int64_t>(wouldWrite));
             truncationInfo.done();
 
@@ -266,7 +266,7 @@ void JSONFormatter::format(fmt::memory_buffer& buffer,
         : (_maxAttributeSizeKB != 0 ? _maxAttributeSizeKB->loadRelaxed() * 1024
                                     : c::kDefaultMaxAttributeOutputSizeKB * 1024);
     auto write = [&](StringData s) {
-        buffer.append(s.rawData(), s.rawData() + s.size());
+        buffer.append(s.data(), s.data() + s.size());
     };
 
     struct CommaTracker {

@@ -29,16 +29,6 @@
 
 #include "mongo/db/pipeline/process_interface/shardsvr_process_interface.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <fmt/format.h>
-#include <typeinfo>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +40,7 @@
 #include "mongo/db/pipeline/document_source_cursor.h"
 #include "mongo/db/pipeline/document_source_merge.h"
 #include "mongo/db/pipeline/sharded_agg_helpers.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/executor/remote_command_response.h"
@@ -64,15 +55,12 @@
 #include "mongo/s/cluster_ddl.h"
 #include "mongo/s/cluster_write.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
 #include "mongo/s/router_role.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/write_ops/batch_write_exec.h"
 #include "mongo/s/write_ops/batched_command_request.h"
@@ -80,6 +68,16 @@
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
+
+#include <typeinfo>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -136,8 +134,7 @@ void ShardServerProcessInterface::checkRoutingInfoEpochOrThrow(
     auto receivedVersion = [&] {
         // Mark the cache entry routingInfo for the 'nss' if the entry is staler than
         // 'targetCollectionPlacementVersion'.
-        auto ignoreIndexVersion =
-            ShardVersionFactory::make(targetCollectionPlacementVersion, boost::none);
+        auto ignoreIndexVersion = ShardVersionFactory::make(targetCollectionPlacementVersion);
 
         catalogCache->onStaleCollectionVersion(nss, ignoreIndexVersion);
         return ignoreIndexVersion;
@@ -150,7 +147,7 @@ void ShardServerProcessInterface::checkRoutingInfoEpochOrThrow(
             ? routingInfo.getCollectionVersion().placementVersion()
             : ChunkVersion::UNSHARDED();
 
-        auto ignoreIndexVersion = ShardVersionFactory::make(foundVersion, boost::none);
+        auto ignoreIndexVersion = ShardVersionFactory::make(foundVersion);
         return ignoreIndexVersion;
     }();
 
@@ -486,11 +483,11 @@ void ShardServerProcessInterface::createTempCollection(OperationContext* opCtx,
 void ShardServerProcessInterface::createIndexesOnEmptyCollection(
     OperationContext* opCtx, const NamespaceString& ns, const std::vector<BSONObj>& indexSpecs) {
     sharding::router::CollectionRouter router(opCtx->getServiceContext(), ns);
-    router.route(
+    router.routeWithRoutingContext(
         opCtx,
         fmt::format("copying index for empty collection {}",
                     NamespaceStringUtil::serialize(ns, SerializationContext::stateDefault())),
-        [&](OperationContext* opCtx, const CollectionRoutingInfo& cri) {
+        [&](OperationContext* opCtx, RoutingContext& routingCtx) {
             BSONObjBuilder cmdBuilder;
             cmdBuilder.append("createIndexes", ns.coll());
             cmdBuilder.append("indexes", indexSpecs);
@@ -500,7 +497,7 @@ void ShardServerProcessInterface::createIndexesOnEmptyCollection(
             auto shardResponses = scatterGatherVersionedTargetByRoutingTable(
                 opCtx,
                 ns,
-                cri,
+                routingCtx,
                 cmdObj,
                 ReadPreferenceSetting(ReadPreference::PrimaryOnly),
                 Shard::RetryPolicy::kNoRetry,

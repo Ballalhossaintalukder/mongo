@@ -29,22 +29,22 @@
 
 #include "mongo/db/exec/document_value/document.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/container_hash/extensions.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <memory>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bson_depth.h"
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <memory>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/functional/hash.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 using boost::intrusive_ptr;
@@ -79,9 +79,9 @@ boost::optional<BSONElement> getNestedFieldHelperBSON(BSONElement elt,
         return elt;
     }
 
-    if (elt.type() == BSONType::Array) {
+    if (elt.type() == BSONType::array) {
         return boost::none;
-    } else if (elt.type() == BSONType::Object) {
+    } else if (elt.type() == BSONType::object) {
         auto subFieldElt = elt.embeddedObject()[fp.getFieldName(level)];
         return getNestedFieldHelperBSON(subFieldElt, fp, level + 1);
     }
@@ -192,7 +192,7 @@ Position DocumentStorage::findFieldInCache(T requested) const {
         Position pos = _hashTab[bucket];
         while (pos.found()) {
             const ValueElement& elem = getField(pos);
-            if (elem.nameLen == reqSize && memcmp(requested.rawData(), elem._name, reqSize) == 0) {
+            if (elem.nameLen == reqSize && memcmp(requested.data(), elem._name, reqSize) == 0) {
                 return pos;
             }
 
@@ -201,7 +201,7 @@ Position DocumentStorage::findFieldInCache(T requested) const {
         }
     } else {  // linear scan
         for (auto it = iteratorCacheOnly(); !it.atEnd(); it.advance()) {
-            if (it->nameLen == reqSize && memcmp(requested.rawData(), it->_name, reqSize) == 0) {
+            if (it->nameLen == reqSize && memcmp(requested.data(), it->_name, reqSize) == 0) {
                 return it.position();
             }
         }
@@ -294,7 +294,7 @@ template Value& DocumentStorage::appendField<StringData>(StringData, ValueElemen
 template Value& DocumentStorage::appendField<HashedFieldName>(HashedFieldName, ValueElement::Kind);
 
 // Call after adding field to _fields and increasing _numFields
-template <typename T>
+template <AnyFieldNameTypeButStdString T>
 void DocumentStorage::addFieldToHashTable(T field, Position pos) {
     ValueElement& elem = getField(pos);
     elem.nextCollision = Position();
@@ -501,10 +501,10 @@ void DocumentStorage::loadLazyMetadata() const {
                 _metadataFields.setGeoNearDistance(elem.Double());
             } else if (fieldName == Document::metaFieldGeoNearPoint) {
                 Value val;
-                if (elem.type() == BSONType::Array) {
+                if (elem.type() == BSONType::array) {
                     val = Value(BSONArray(elem.embeddedObject()));
                 } else {
-                    invariant(elem.type() == BSONType::Object);
+                    invariant(elem.type() == BSONType::object);
                     val = Value(elem.embeddedObject());
                 }
 
@@ -552,7 +552,7 @@ Document::Document(std::initializer_list<std::pair<StringData, ImplicitValue>> i
     *this = mutableDoc.freeze();
 }
 
-Document::Document(std::vector<std::pair<StringData, Value>> fields) {
+Document::Document(const std::vector<std::pair<StringData, Value>>& fields) {
     MutableDocument mutableDoc(fields.size());
     for (auto&& pair : fields)
         mutableDoc.addField(pair.first, pair.second);
@@ -727,14 +727,14 @@ boost::optional<Value> Document::getNestedScalarFieldNonCachingHelper(const Fiel
         if (auto val = _storage->getFieldCacheOnly(fieldName); val) {
             // Whether landing on an array (level + 1 == dottedField.getPathLength) or traversing an
             // array, return boost::none.
-            if (val->getType() == BSONType::Array)
+            if (val->getType() == BSONType::array)
                 return boost::none;
 
             if (level + 1 == dottedField.getPathLength()) {
                 return val;
             }
 
-            if (val->getType() == BSONType::Object) {
+            if (val->getType() == BSONType::object) {
                 return val->getDocument().getNestedScalarFieldNonCachingHelper(dottedField,
                                                                                level + 1);
             }
@@ -755,7 +755,7 @@ boost::optional<Value> Document::getNestedScalarFieldNonCachingHelper(const Fiel
         // 3. BSONElement::eoo --> path does not exist, so return an empty Value via
         // Value(BSONElement::eoo).
         // 4. boost::none --> encountered an array along the path, return boost::none.
-        if (maybeBsonElt && maybeBsonElt->type() != BSONType::Array)
+        if (maybeBsonElt && maybeBsonElt->type() != BSONType::array)
             return Value(*maybeBsonElt);
         return boost::none;
     }
@@ -786,7 +786,7 @@ static Value getNestedFieldHelper(const Document& doc,
         return doc.getField(pos);
 
     Value val = doc.getField(pos);
-    if (val.getType() != Object)
+    if (val.getType() != BSONType::object)
         return Value();
 
     return getNestedFieldHelper(val.getDocument(), fieldNames, positions, level + 1);
@@ -814,7 +814,7 @@ size_t Document::memUsageForSorter() const {
 void Document::hash_combine(size_t& seed, const StringDataComparator* stringComparator) const {
     for (DocumentStorageIterator it = storage().iterator(); !it.atEnd(); it.advance()) {
         StringData name = it->nameSD();
-        boost::hash_range(seed, name.rawData(), name.rawData() + name.size());
+        boost::hash_range(seed, name.data(), name.data() + name.size());
         it->val.hash_combine(seed, stringComparator);
     }
 }

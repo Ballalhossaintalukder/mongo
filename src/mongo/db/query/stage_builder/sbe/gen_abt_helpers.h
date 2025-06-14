@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/sbe/values/slot.h"
@@ -41,6 +37,11 @@
 #include "mongo/db/query/stage_builder/sbe/abt/syntax/expr.h"
 #include "mongo/db/query/stage_builder/sbe/abt/syntax/syntax.h"
 #include "mongo/db/query/stage_builder/sbe/sbexpr.h"
+
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
 
 namespace mongo::stage_builder {
 
@@ -75,12 +76,13 @@ abt::ABT makeBalancedTree(Builder builder, std::vector<abt::ABT> leaves) {
 abt::ABT makeBooleanOpTree(abt::Operations logicOp, std::vector<abt::ABT> leaves);
 
 inline auto makeABTFunction(StringData name, abt::ABTVector args) {
-    return abt::make<abt::FunctionCall>(name.toString(), std::move(args));
+    return abt::make<abt::FunctionCall>(std::string{name}, std::move(args));
 }
 
 template <typename... Args>
 inline auto makeABTFunction(StringData name, Args&&... args) {
-    return abt::make<abt::FunctionCall>(name.toString(), abt::makeSeq(std::forward<Args>(args)...));
+    return abt::make<abt::FunctionCall>(std::string{name},
+                                        abt::makeSeq(std::forward<Args>(args)...));
 }
 
 inline auto makeABTConstant(sbe::value::TypeTags tag, sbe::value::Value value) {

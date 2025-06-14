@@ -28,14 +28,7 @@
  */
 
 
-#include <cstddef>
-#include <tuple>
-
-#include <absl/container/inlined_vector.h>
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/stage_builder/sbe/gen_coll_scan.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -50,7 +43,6 @@
 #include "mongo/db/pipeline/dependencies.h"
 #include "mongo/db/query/record_id_bound.h"
 #include "mongo/db/query/stage_builder/sbe/builder.h"
-#include "mongo/db/query/stage_builder/sbe/gen_coll_scan.h"
 #include "mongo/db/query/stage_builder/sbe/gen_filter.h"
 #include "mongo/db/query/stage_builder/sbe/sbexpr_helpers.h"
 #include "mongo/db/repl/optime.h"
@@ -59,6 +51,15 @@
 #include "mongo/db/transaction_resources.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <tuple>
+
+#include <absl/container/inlined_vector.h>
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -421,7 +422,7 @@ std::pair<SbStage, PlanStageSlots> generateGenericCollScan(StageBuilderState& st
     boost::optional<SbSlot> oplogTsSlot;
     if (csn->shouldTrackLatestOplogTimestamp) {
         // Add the "ts" field to 'fields' if it's not already present.
-        std::string tsField = repl::OpTime::kTimestampFieldName.toString();
+        std::string tsField = std::string{repl::OpTime::kTimestampFieldName};
         fields = appendVectorUnique(std::move(fields), std::vector{std::move(tsField)});
 
         // Retrieve the "oplogTs" slot so we can pass it to makeScan() below.

@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <list>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/document_source.h"
@@ -41,6 +37,10 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/pipeline/lite_parsed_pipeline.h"
+
+#include <list>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -94,6 +94,17 @@ public:
 
         bool isSearchStage() const final {
             return true;
+        }
+
+        // TODO SERVER-103504 Remove once $rankFusion with mongot input pipelines is enabled on
+        // views.
+        bool hasMongotInputPipeline() const final {
+            for (auto& pipeline : this->_pipelines) {
+                if (pipeline.hasSearchStage()) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         bool isRankFusionStage() const final {

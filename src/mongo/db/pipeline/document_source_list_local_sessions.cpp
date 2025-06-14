@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_list_local_sessions.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
@@ -43,7 +39,6 @@
 #include "mongo/db/auth/user_name.h"
 #include "mongo/db/client.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/pipeline/document_source_list_local_sessions.h"
 #include "mongo/db/pipeline/document_source_list_sessions_gen.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/db/session/logical_session_id_helpers.h"
@@ -51,6 +46,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -89,7 +90,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceListLocalSessions::createFrom
 
 DocumentSourceListLocalSessions::DocumentSourceListLocalSessions(
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx, const ListSessionsSpec& spec)
-    : DocumentSource(kStageName, pExpCtx), _spec(spec) {
+    : DocumentSource(kStageName, pExpCtx), exec::agg::Stage(kStageName, pExpCtx), _spec(spec) {
     const auto& opCtx = pExpCtx->getOperationContext();
     _cache = LogicalSessionCache::get(opCtx);
     if (_spec.getAllUsers()) {
@@ -158,7 +159,7 @@ mongo::ListSessionsSpec mongo::listSessionsParseSpec(StringData stageName,
     uassert(ErrorCodes::TypeMismatch,
             str::stream() << stageName << " options must be specified in an object, but found: "
                           << typeName(spec.type()),
-            spec.type() == BSONType::Object);
+            spec.type() == BSONType::object);
 
     IDLParserContext ctx(stageName);
     auto ret = ListSessionsSpec::parse(ctx, spec.Obj());

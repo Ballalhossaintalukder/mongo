@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <map>
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -40,11 +35,15 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/keypattern.h"
 #include "mongo/db/shard_id.h"
-#include "mongo/platform/basic.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/chunk.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace mongo::chunks_test_util {
 

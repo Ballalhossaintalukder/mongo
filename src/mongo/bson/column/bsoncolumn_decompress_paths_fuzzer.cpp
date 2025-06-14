@@ -46,9 +46,9 @@ static bool isDataOnlyInterleaved(const char* binary, size_t size) {
 
     while (pos != end) {
         uint8_t control = *pos;
-        if (control == EOO) {
+        if (control == stdx::to_underlying(BSONType::eoo)) {
             // Reached the end of interleaved mode and this should be the end of the binary.
-            return *(++pos) == EOO;
+            return *(++pos) == stdx::to_underlying(BSONType::eoo);
         }
 
         if (bsoncolumn::isInterleavedStartControlByte(control)) {
@@ -97,7 +97,7 @@ static void findAllScalarPaths(std::vector<mongo::sbe::value::CellBlock::Path>& 
         // Array elements have a field that is their index in the array. We shouldn't
         // append that field in the 'Path'.
         if (!previousIsArray) {
-            path.push_back(sbe::value::CellBlock::Get{elem.fieldNameStringData().toString()});
+            path.push_back(sbe::value::CellBlock::Get{std::string{elem.fieldNameStringData()}});
         }
         path.push_back(sbe::value::CellBlock::Id{});
         paths.push_back(path);
@@ -106,7 +106,7 @@ static void findAllScalarPaths(std::vector<mongo::sbe::value::CellBlock::Path>& 
 
     BSONObj obj = elem.embeddedObject();
 
-    if (elem.type() == Array) {
+    if (elem.type() == BSONType::array) {
         // We only want to decompress an array if there is a single element.
         // TODO SERVER-90044 remove this condition.
         if (obj.nFields() != 1) {
@@ -118,7 +118,7 @@ static void findAllScalarPaths(std::vector<mongo::sbe::value::CellBlock::Path>& 
         // manually track when the element is an array element or an object.
         // If the next element is an object
         if (!previousIsArray) {
-            path.push_back(sbe::value::CellBlock::Get{elem.fieldNameStringData().toString()});
+            path.push_back(sbe::value::CellBlock::Get{std::string{elem.fieldNameStringData()}});
         }
         path.push_back(sbe::value::CellBlock::Traverse{});
         findAllScalarPaths(paths, obj.firstElement(), path, true);
@@ -129,7 +129,7 @@ static void findAllScalarPaths(std::vector<mongo::sbe::value::CellBlock::Path>& 
     for (auto&& newElem : obj) {
         auto nPath = path;
         if (!previousIsArray) {
-            nPath.push_back(sbe::value::CellBlock::Get{elem.fieldNameStringData().toString()});
+            nPath.push_back(sbe::value::CellBlock::Get{std::string{elem.fieldNameStringData()}});
             nPath.push_back(sbe::value::CellBlock::Traverse{});
         }
         findAllScalarPaths(paths, newElem, nPath, false);
@@ -201,7 +201,7 @@ extern "C" int LLVMFuzzerTestOneInput(const char* Data, size_t Size) {
                 continue;
             }
             // Must be an EOO element.
-            invariant(elem.type() == EOO,
+            invariant(elem.type() == BSONType::eoo,
                       str::stream() << "Iterator API returned data that was not an object nor EOO: "
                                     << elem.toString());
             BSONObjBuilder bob;

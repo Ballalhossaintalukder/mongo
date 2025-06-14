@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <string>
-
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -43,6 +40,8 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/tick_source.h"
 #include "mongo/util/time_support.h"
+
+#include <string>
 
 namespace mongo {
 
@@ -68,7 +67,7 @@ public:
             connectionId = client->getConnectionId();
             if (auto metadata = ClientMetadata::get(client)) {
                 clientMetadata = metadata->getDocument();
-                appName = metadata->getApplicationName().toString();
+                appName = std::string{metadata->getApplicationName()};
             }
         }
     };

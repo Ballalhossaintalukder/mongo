@@ -28,7 +28,7 @@
  */
 
 
-#include "mongo/platform/basic.h"
+#include "mongo/util/net/sockaddr.h"
 
 #include <iterator>
 #include <memory>
@@ -36,12 +36,12 @@
 #include <utility>
 #include <vector>
 
-#include "mongo/util/net/sockaddr.h"
-
 #if !defined(_WIN32)
-#include <arpa/inet.h>
 #include <cerrno>
+
 #include <netdb.h>
+
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -213,7 +213,7 @@ SockAddr::SockAddr(const sockaddr* other, socklen_t size) : addressSize(size), _
 }
 
 SockAddr::SockAddr(const sockaddr* other, socklen_t size, StringData hostOrIp)
-    : addressSize(size), _hostOrIp(hostOrIp.toString()), sa() {
+    : addressSize(size), _hostOrIp(std::string{hostOrIp}), sa() {
     memcpy(&sa, other, size);
     _isValid = true;
 }

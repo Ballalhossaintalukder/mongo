@@ -33,13 +33,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <functional>
-#include <memory>
-#include <type_traits>
-#include <utility>
-
-#include "mongo/db/repl/initial_sync/initial_syncer.h"
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -57,6 +50,7 @@
 #include "mongo/db/repl/initial_sync/collection_cloner.h"
 #include "mongo/db/repl/initial_sync/database_cloner.h"
 #include "mongo/db/repl/initial_sync/initial_sync_state.h"
+#include "mongo/db/repl/initial_sync/initial_syncer.h"
 #include "mongo/db/repl/initial_sync/initial_syncer_common_stats.h"
 #include "mongo/db/repl/initial_sync/initial_syncer_factory.h"
 #include "mongo/db/repl/oplog.h"
@@ -92,6 +86,11 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/version/releases.h"
+
+#include <functional>
+#include <memory>
+#include <type_traits>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplicationInitialSync
 
@@ -931,7 +930,7 @@ Status InitialSyncer::_scheduleGetBeginFetchingOpTime(
     // causing this query to return an inaccurate timestamp, we specify an afterClusterTime of the
     // defaultBeginFetchingOpTime so that we wait for all previous writes to be visible.
     BSONObjBuilder cmd;
-    cmd.append("find", NamespaceString::kSessionTransactionsTableNamespace.coll().toString());
+    cmd.append("find", std::string{NamespaceString::kSessionTransactionsTableNamespace.coll()});
     cmd.append("filter",
                BSON("state" << BSON("$in" << BSON_ARRAY(preparedState << inProgressState))));
     cmd.append("sort", BSON(SessionTxnRecord::kStartOpTimeFieldName << 1));

@@ -29,12 +29,12 @@
 
 #include "mongo/db/query/virtual_collection/external_record_store.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/virtual_collection/multi_bson_stream_cursor.h"
 #include "mongo/db/storage/record_store.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 // 'ident' is an identifer to WT table and a virtual collection does not have any persistent data
@@ -54,6 +54,11 @@ std::unique_ptr<SeekableRecordCursor> ExternalRecordStore::getCursor(OperationCo
     }
     tasserted(6968302, "MultiBsonStreamCursor does not support reverse scans");
     return nullptr;
+}
+std::unique_ptr<SeekableRecordCursor> ExternalRecordStore::getCursor(OperationContext* opCtx,
+                                                                     RecoveryUnit& ru,
+                                                                     bool forward) const {
+    return getCursor(opCtx, forward);
 }
 
 }  // namespace mongo

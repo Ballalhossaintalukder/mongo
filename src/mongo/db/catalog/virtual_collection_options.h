@@ -29,12 +29,12 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/pipeline/external_data_source_option_gen.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+#include <vector>
 
 namespace mongo {
 /**
@@ -49,7 +49,7 @@ struct ExternalDataSourceMetadata {
         : url(urlStr), storageType(storageTypeEnum), fileType(fileTypeEnum) {
         uassert(6968500,
                 fmt::format("File url must start with {}", kUrlProtocolFile),
-                urlStr.startsWith(kUrlProtocolFile));
+                urlStr.starts_with(kUrlProtocolFile));
         uassert(6968501, "Storage type must be 'pipe'", storageType == StorageTypeEnum::pipe);
         uassert(6968502, "File type must be 'bson'", fileType == FileTypeEnum::bson);
     }

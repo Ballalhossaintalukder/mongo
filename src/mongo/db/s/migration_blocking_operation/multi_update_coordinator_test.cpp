@@ -27,14 +27,13 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
+#include "mongo/db/s/migration_blocking_operation/multi_update_coordinator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
 #include "mongo/db/repl/primary_only_service_test_fixture.h"
-#include "mongo/db/s/migration_blocking_operation/multi_update_coordinator.h"
 #include "mongo/db/s/migration_blocking_operation/multi_update_coordinator_external_state.h"
 #include "mongo/db/s/migration_blocking_operation/multi_update_coordinator_gen.h"
 #include "mongo/db/s/primary_only_service_helpers/phase_transition_progress_gen.h"
@@ -44,6 +43,8 @@
 #include "mongo/logv2/log.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/util/fail_point.h"
+
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -432,8 +433,8 @@ protected:
     }
 
     Phase getPhase(const std::shared_ptr<Instance>& instance) {
-        auto phaseString =
-            getMetrics(instance).getObjectField("mutableFields").getStringField("phase").toString();
+        auto phaseString = std::string{
+            getMetrics(instance).getObjectField("mutableFields").getStringField("phase")};
         IDLParserContext errCtx("MultiUpdateCoordinatorTest::getPhase()");
         return MultiUpdateCoordinatorPhase_parse(errCtx, phaseString);
     }

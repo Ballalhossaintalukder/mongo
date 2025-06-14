@@ -28,18 +28,20 @@
  */
 
 
-#include <boost/filesystem/operations.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
 #include <cerrno>
 #include <exception>
 #include <fstream>  // IWYU pragma: keep
 #include <system_error>
 #include <vector>
 
+#include <boost/filesystem/operations.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 #ifdef __linux__  // Only needed by flushDirectory for Linux
-#include <boost/filesystem/path.hpp>
 #include <fcntl.h>
+
+#include <boost/filesystem/path.hpp>
 #endif
 
 #include "mongo/base/data_range.h"
@@ -192,7 +194,7 @@ Status StorageEngineMetadata::read() {
     // Validate 'storage.engine' field.
     BSONElement storageEngineElement =
         ::mongo::bson::extractElementAtDottedPath(obj, "storage.engine");
-    if (storageEngineElement.type() != mongo::String) {
+    if (storageEngineElement.type() != BSONType::string) {
         return Status(ErrorCodes::FailedToParse,
                       str::stream() << "The 'storage.engine' field in metadata must be a string: "
                                     << storageEngineElement.toString());
@@ -228,7 +230,7 @@ void flushMyDirectory(const boost::filesystem::path& file) {
     // if called without a fully qualified path it asserts; that makes mongoperf fail.
     // so make a warning. need a better solution longer term.
     // massert(13652, str::stream() << "Couldn't find parent dir for file: " << file.string(),);
-    if (!file.has_branch_path()) {
+    if (!file.has_parent_path()) {
         LOGV2(22283,
               "flushMyDirectory couldn't find parent dir for file",
               "file"_attr = file.generic_string());
@@ -236,7 +238,7 @@ void flushMyDirectory(const boost::filesystem::path& file) {
     }
 
 
-    boost::filesystem::path dir = file.branch_path();  // parent_path in new boosts
+    boost::filesystem::path dir = file.parent_path();
 
     LOGV2_DEBUG(22284, 1, "flushing directory {dir_string}", "dir_string"_attr = dir.string());
 

@@ -11,20 +11,20 @@
  *   uses_getmore_outside_of_transaction,
  *   assumes_read_preference_unchanged,
  *   does_not_support_transactions,
- *   # It is not yet supported by the classic hash_agg stage. TODO: Remove in SERVER-99174.
- *   featureFlagSbeFull,
  *   # releaseMemory needs special permission
  *   assumes_superuser_permissions,
+ *   # This test relies on query commands returning specific batch-sized responses.
+ *   assumes_no_implicit_cursor_exhaustion,
  * ]
  */
 
 import {assertArrayEq} from "jstests/aggregation/extras/utils.js";
-import {isTimeSeriesCollection} from "jstests/libs/cmd_object_utils.js";
 import {DiscoverTopology} from "jstests/libs/discover_topology.js";
 import {hasMergeCursors} from "jstests/libs/query/analyze_plan.js";
 import {
     accumulateServerStatusMetric,
-    assertReleaseMemoryFailedWithCode
+    assertReleaseMemoryFailedWithCode,
+    setAvailableDiskSpaceMode
 } from "jstests/libs/release_memory_util.js";
 import {setParameterOnAllHosts} from "jstests/noPassthrough/libs/server_parameter_helpers.js";
 
@@ -61,19 +61,6 @@ const pipeline = [{
     }
 }];
 
-// TODO: Remove this in SERVER-99174.
-if (isTimeSeriesCollection(db, coll.getName())) {
-    jsTestLog("Skipping test because Timeseries are not supported");
-    quit();
-}
-
-// TODO SERVER-99174. Allow pipeline to run when forceSpill has been implemented in classic engine.
-const explain = coll.explain().aggregate(pipeline);
-if (hasMergeCursors(explain)) {
-    jsTest.log(`Skipping test. Pipeline has $mergeCursors which use the classic engine.`);
-    quit();
-}
-
 // Get all the results to use as a reference.
 const expectedResults = coll.aggregate(pipeline, {"allowDiskUse": false}).toArray();
 
@@ -94,19 +81,22 @@ const expectedResults = coll.aggregate(pipeline, {"allowDiskUse": false}).toArra
     const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
     assert.commandWorked(releaseMemoryRes);
     assert.eq(releaseMemoryRes.cursorsReleased, [cursorId], releaseMemoryRes);
-    assert.lt(initialSpillCount, getSpillCounter());
 
     jsTest.log.info("Running getMore");
     const results = cursor.toArray();
-
     assertArrayEq({actual: results, expected: expectedResults});
+
+    // Check that the spill counter is incremented. Classic $setWindowFields updated counters only
+    // after the query was completed.
+    assert.lt(initialSpillCount, getSpillCounter());
+
     setServerParameter(memoryInitialValue);
 }
 
 // Run query with increased spilling to spill while creating the first batch.
 {
     jsTest.log(`Running spill in first batch`);
-    setServerParameter(1);
+    setServerParameter(1024);
 
     // Retrieve the first batch.
     jsTest.log.info("Running pipeline: ", pipeline[0]);
@@ -121,15 +111,43 @@ const expectedResults = coll.aggregate(pipeline, {"allowDiskUse": false}).toArra
     const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
     assert.commandWorked(releaseMemoryRes);
     assert.eq(releaseMemoryRes.cursorsReleased, [cursorId], releaseMemoryRes);
-    // When running against a sharded cluster, we cannot be sure that all shards have spilt in the
-    // first batch. Some of them might have spilt while other might, affecting the metric.
-    assert.lte(initialSpillCount, getSpillCounter());
 
     jsTest.log.info("Running getMore");
     const results = cursor.toArray();
-
     assertArrayEq({actual: results, expected: expectedResults});
+
+    // Check that the spill counter is incremented. Classic $setWindowFields updated counters only
+    // after the query was completed.
+    assert.lt(initialSpillCount, getSpillCounter());
+
     setServerParameter(memoryInitialValue);
+}
+
+// No disk space available for spilling.
+{
+    jsTest.log(`Running releaseMemory with no disk space available`);
+    const cursor = coll.aggregate(pipeline, {"allowDiskUse": true, cursor: {batchSize: 1}});
+    const cursorId = cursor.getId();
+
+    // Release memory (i.e., spill)
+    setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'alwaysOn');
+    const releaseMemoryCmd = {releaseMemory: [cursorId]};
+    jsTest.log.info("Running releaseMemory: ", releaseMemoryCmd);
+    const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
+    assert.commandWorked(releaseMemoryRes);
+    assertReleaseMemoryFailedWithCode(releaseMemoryRes, cursorId, ErrorCodes.OutOfDiskSpace);
+    setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'off');
+
+    jsTest.log.info("Running getMore");
+    assert.throwsWithCode(() => cursor.toArray(), ErrorCodes.CursorNotFound);
+}
+
+const explain = coll.explain().aggregate(pipeline);
+if (hasMergeCursors(explain)) {
+    // When `allowDiskUse` is false and a pipeline with `$mergeCursors` is used, operations
+    // might execute in `mongos`. So, the setWindowFields operation will be performed on `mongos`,
+    // and `forceSpill` will be disregarded.
+    quit();
 }
 
 // Disallow spilling in setWindowFields.
@@ -147,10 +165,9 @@ const expectedResults = coll.aggregate(pipeline, {"allowDiskUse": false}).toArra
     const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
     assert.commandWorked(releaseMemoryRes);
     assertReleaseMemoryFailedWithCode(
-        releaseMemoryRes, cursorId, ErrorCodes.QueryExceededMemoryLimitNoDiskUseAllowed);
+        releaseMemoryRes, cursorId, [ErrorCodes.QueryExceededMemoryLimitNoDiskUseAllowed, 5643008]);
 
     jsTest.log.info("Running getMore");
     const results = cursor.toArray();
-
     assertArrayEq({actual: results, expected: expectedResults});
 }

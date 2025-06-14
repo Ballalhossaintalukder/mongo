@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/db/auth/user_name.h"
@@ -67,6 +57,17 @@
 #include "mongo/util/concurrency/with_lock.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -199,6 +200,15 @@ public:
         }
 
         /**
+         * Returns a pointer to the ClusterClientCursor that this PinnedCursor owns. A cursor must
+         * be owned.
+         */
+        ClusterClientCursor* get() const {
+            invariant(_cursor);
+            return _cursor.get();
+        }
+
+        /**
          * Transfers ownership of the underlying cursor back to the manager, and detaches it from
          * the current OperationContext. A cursor must be owned, and a cursor will no longer be
          * owned after this method completes.
@@ -326,11 +336,13 @@ public:
          * ClusterClientCursorGuard; callers that want to assume ownership over the cursor directly
          * must unpack the cursor from the returned guard.
          */
-        ClusterClientCursorGuard releaseCursor(OperationContext* opCtx) {
+        ClusterClientCursorGuard releaseCursor(OperationContext* opCtx,
+                                               StringData commandName = "") {
             invariant(!_operationUsingCursor);
             invariant(_cursor);
             invariant(opCtx);
             _operationUsingCursor = opCtx;
+            _commandUsingCursor = std::string{commandName};
             return ClusterClientCursorGuard(opCtx, std::move(_cursor));
         }
 
@@ -346,6 +358,10 @@ public:
             return _operationUsingCursor;
         }
 
+        StringData getCommandUsingCursor() const {
+            return _commandUsingCursor;
+        }
+
         /**
          * Indicate that the cursor is no longer in use by an operation. Once this is called,
          * another operation may check the cursor out.
@@ -357,6 +373,7 @@ public:
 
             _cursor = std::move(cursor);
             _operationUsingCursor = nullptr;
+            _commandUsingCursor = "";
         }
 
         void setLastActive(Date_t lastActive) {
@@ -390,6 +407,7 @@ public:
          * Current operation using the cursor. Non-null if the cursor is checked out.
          */
         OperationContext* _operationUsingCursor = nullptr;
+        std::string _commandUsingCursor;
 
         /**
          * The UUID of the Client that opened the cursor.
@@ -477,7 +495,8 @@ public:
     StatusWith<PinnedCursor> checkOutCursor(CursorId cursorId,
                                             OperationContext* opCtx,
                                             AuthzCheckFn authChecker,
-                                            AuthCheck checkSessionAuth = kCheckSession);
+                                            AuthCheck checkSessionAuth = kCheckSession,
+                                            StringData commandName = "");
 
     /**
      * Moves the given cursor to the 'pinned' state, and transfers ownership of the cursor to the
@@ -493,7 +512,9 @@ public:
      * It does not check if the current client is authorized to use this cursor, assuming that this
      * check has already been done.
      */
-    StatusWith<PinnedCursor> checkOutCursorNoAuthCheck(CursorId cursorId, OperationContext* opCtx);
+    StatusWith<PinnedCursor> checkOutCursorNoAuthCheck(CursorId cursorId,
+                                                       OperationContext* opCtx,
+                                                       StringData commandName = "");
 
     /**
      * This method will find the given cursor, and if it exists, call 'authChecker', passing the

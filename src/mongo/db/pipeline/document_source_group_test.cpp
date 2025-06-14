@@ -27,29 +27,14 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <cstdint>
-#include <deque>
-#include <fmt/format.h>
-#include <fmt/ranges.h>
-#include <functional>
-#include <list>
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_group.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/json.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
@@ -60,7 +45,6 @@
 #include "mongo/db/pipeline/aggregate_command_gen.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/dependencies.h"
-#include "mongo/db/pipeline/document_source_group.h"
 #include "mongo/db/pipeline/document_source_mock.h"
 #include "mongo/db/pipeline/document_source_streaming_group.h"
 #include "mongo/db/pipeline/expression.h"
@@ -77,6 +61,24 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
+
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <list>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 
 namespace mongo {
 namespace {
@@ -148,7 +150,7 @@ TEST_F(DocumentSourceGroupTest, ShouldBeAbleToPauseLoading) {
     auto accExpr = parser(expCtx.get(), accumulatorArg.firstElement(), expCtx->variablesParseState);
     AccumulationStatement countStatement{"count", accExpr};
     auto group = DocumentSourceGroup::create(
-        expCtx, ExpressionConstant::create(expCtx.get(), Value(BSONNULL)), {countStatement});
+        expCtx, ExpressionConstant::create(expCtx.get(), Value(BSONNULL)), {countStatement}, false);
     auto mock =
         DocumentSourceMock::createForTest({DocumentSource::GetNextResult::makePauseExecution(),
                                            Document(),
@@ -229,7 +231,7 @@ TEST_F(DocumentSourceGroupTest, ShouldErrorIfNotAllowedToSpillToDiskAndResultSet
     auto groupByExpression =
         ExpressionFieldPath::parse(expCtx.get(), "$_id", expCtx->variablesParseState);
     auto group = DocumentSourceGroup::create(
-        expCtx, groupByExpression, {pushStatement}, maxMemoryUsageBytes);
+        expCtx, groupByExpression, {pushStatement}, false, maxMemoryUsageBytes);
 
     std::string largeStr(maxMemoryUsageBytes, 'x');
     auto mock = DocumentSourceMock::createForTest({Document{{"_id", 0}, {"largeStr", largeStr}},
@@ -302,7 +304,7 @@ TEST_F(DocumentSourceGroupTest, ShouldCorrectlyTrackMemoryUsageBetweenPauses) {
     auto groupByExpression =
         ExpressionFieldPath::parse(expCtx.get(), "$_id", expCtx->variablesParseState);
     auto group = DocumentSourceGroup::create(
-        expCtx, groupByExpression, {pushStatement}, maxMemoryUsageBytes);
+        expCtx, groupByExpression, {pushStatement}, false, maxMemoryUsageBytes);
 
     std::string largeStr(maxMemoryUsageBytes / 2, 'x');
     auto mock =
@@ -332,7 +334,7 @@ DEATH_TEST_REGEX_F(DocumentSourceGroupTest,
     auto accExpr = parser(expCtx.get(), accumulatorArg.firstElement(), expCtx->variablesParseState);
     AccumulationStatement countStatement{"count", accExpr};
     auto group = DocumentSourceGroup::create(
-        expCtx, ExpressionConstant::create(expCtx.get(), Value(BSONNULL)), {countStatement});
+        expCtx, ExpressionConstant::create(expCtx.get(), Value(BSONNULL)), {countStatement}, false);
 
     // Create a control event.
     MutableDocument doc(Document{{"_id", 0}});
@@ -363,22 +365,23 @@ DEATH_TEST_REGEX_F(DocumentSourceGroupTest,
     }
 })");
     auto group = DocumentSourceStreamingGroup::createFromBson(spec.firstElement(), expCtx);
+    auto stage = exec::agg::buildStage(group);
 
     // Create a control event.
     MutableDocument doc(Document{{"_id", 0}});
     doc.metadata().setChangeStreamControlEvent();
 
     auto mock = DocumentSourceMock::createForTest({doc.freeze()}, expCtx);
-    group->setSource(mock.get());
+    stage->setSource(mock.get());
 
-    ASSERT_THROWS_CODE(group->getNext(), AssertionException, 10358903);
+    ASSERT_THROWS_CODE(stage->getNext(), AssertionException, 10358903);
 }
 
 TEST_F(DocumentSourceGroupTest, ShouldReportSingleFieldGroupKeyAsARename) {
     auto expCtx = getExpCtx();
     VariablesParseState vps = expCtx->variablesParseState;
     auto groupByExpression = ExpressionFieldPath::parse(expCtx.get(), "$x", vps);
-    auto group = DocumentSourceGroup::create(expCtx, groupByExpression, {});
+    auto group = DocumentSourceGroup::create(expCtx, groupByExpression, {}, false);
     auto modifiedPathsRet = group->getModifiedPaths();
     ASSERT(modifiedPathsRet.type == DocumentSource::GetModPathsReturn::Type::kAllExcept);
     ASSERT_EQ(modifiedPathsRet.paths.size(), 0UL);
@@ -392,7 +395,7 @@ TEST_F(DocumentSourceGroupTest, ShouldReportMultipleFieldGroupKeysAsARename) {
     auto x = ExpressionFieldPath::parse(expCtx.get(), "$x", vps);
     auto y = ExpressionFieldPath::parse(expCtx.get(), "$y", vps);
     auto groupByExpression = ExpressionObject::create(expCtx.get(), {{"x", x}, {"y", y}});
-    auto group = DocumentSourceGroup::create(expCtx, groupByExpression, {});
+    auto group = DocumentSourceGroup::create(expCtx, groupByExpression, {}, false);
     auto modifiedPathsRet = group->getModifiedPaths();
     ASSERT(modifiedPathsRet.type == DocumentSource::GetModPathsReturn::Type::kAllExcept);
     ASSERT_EQ(modifiedPathsRet.paths.size(), 0UL);
@@ -405,7 +408,7 @@ TEST_F(DocumentSourceGroupTest, ShouldNotReportDottedGroupKeyAsARename) {
     auto expCtx = getExpCtx();
     VariablesParseState vps = expCtx->variablesParseState;
     auto xDotY = ExpressionFieldPath::parse(expCtx.get(), "$x.y", vps);
-    auto group = DocumentSourceGroup::create(expCtx, xDotY, {});
+    auto group = DocumentSourceGroup::create(expCtx, xDotY, {}, false);
     auto modifiedPathsRet = group->getModifiedPaths();
     ASSERT(modifiedPathsRet.type == DocumentSource::GetModPathsReturn::Type::kAllExcept);
     ASSERT_EQ(modifiedPathsRet.paths.size(), 0UL);
@@ -518,7 +521,8 @@ TEST_F(DocumentSourceGroupTest, CanHandleEmptyExpressionObject) {
     // ExpressionObject here.
     auto idExpression = ExpressionObject::create(getExpCtx().get(), {});
     std::vector<AccumulationStatement> accumulationStatements;
-    auto group = DocumentSourceGroup::create(getExpCtx(), idExpression, accumulationStatements);
+    auto group =
+        DocumentSourceGroup::create(getExpCtx(), idExpression, accumulationStatements, false);
     auto mock = DocumentSourceMock::createForTest({Document{{"_id"_sd, 0}}}, getExpCtx());
     group->setSource(mock.get());
     auto next = group->getNext();
@@ -527,36 +531,76 @@ TEST_F(DocumentSourceGroupTest, CanHandleEmptyExpressionObject) {
     ASSERT_DOCUMENT_EQ((Document{{"_id", Document{}}}), next.getDocument());
 }
 
-TEST_F(DocumentSourceGroupTest, CanOutputExectionStatsExplainWithoutProcessingDocuments) {
-    auto expCtx = getExpCtx();
-    expCtx->setExplain(ExplainOptions::Verbosity::kExecStats);
+TEST_F(DocumentSourceGroupTest, CanOutputExecutionStatsExplainWithoutProcessingDocuments) {
+    for (bool flagStatus : {false, true}) {
+        RAIIServerParameterControllerForTest featureFlagController("featureFlagQueryMemoryTracking",
+                                                                   flagStatus);
 
-    auto&& [parser, _1, _2, _3] = AccumulationStatement::getParser("$sum");
-    auto accumulatorArg = BSON("" << 1);
-    auto accExpr = parser(expCtx.get(), accumulatorArg.firstElement(), expCtx->variablesParseState);
-    AccumulationStatement countStatement{"count", accExpr};
+        auto expCtx = getExpCtx();
+        expCtx->setExplain(ExplainOptions::Verbosity::kExecStats);
 
-    auto group = DocumentSourceGroup::create(
-        expCtx, ExpressionConstant::create(expCtx.get(), Value(BSONNULL)), {countStatement});
-    group->dispose();
+        auto&& [parser, _1, _2, _3] = AccumulationStatement::getParser("$sum");
+        auto accumulatorArg = BSON("" << 1);
+        auto accExpr =
+            parser(expCtx.get(), accumulatorArg.firstElement(), expCtx->variablesParseState);
+        AccumulationStatement countStatement{"count", accExpr};
 
-    SerializationOptions explainOpts;
-    explainOpts.verbosity = expCtx->getExplain();
-    ASSERT_DOCUMENT_EQ(Document(fromjson(
-                           R"({
-                            $group: {
-                                _id: {$const: null},
-                                count: {$sum: {$const: 1}},
-                                $willBeMerged: false},
-                                maxAccumulatorMemoryUsageBytes: {count: 0},
-                                totalOutputDataSizeBytes: 0,
-                                usedDisk: false,
-                                spills: 0,
-                                spilledDataStorageSize: 0,
-                                numBytesSpilledEstimate: 0,
-                                spilledRecords: 0
-                            })")),
-                       group->serialize(explainOpts).getDocument());
+        auto group =
+            DocumentSourceGroup::create(expCtx,
+                                        ExpressionConstant::create(expCtx.get(), Value(BSONNULL)),
+                                        {countStatement},
+                                        false);
+        group->dispose();
+
+        SerializationOptions explainOpts;
+        explainOpts.verbosity = expCtx->getExplain();
+
+        BSONObjBuilder bob;
+        bob.appendElements(fromjson(R"({
+            $group: {
+                _id: {$const: null},
+                count: {$sum: {$const: 1}},
+                $willBeMerged: false
+            },
+            maxAccumulatorMemoryUsageBytes: {count: 0},
+            totalOutputDataSizeBytes: 0,
+            usedDisk: false,
+            spills: 0,
+            spilledDataStorageSize: 0,
+            spilledBytes: 0,
+            spilledRecords: 0
+        })"));
+
+        if (flagStatus) {
+            bob.append("maxUsedMemBytes", 0);
+        }
+
+        ASSERT_DOCUMENT_EQ(Document(bob.obj()), group->serialize(explainOpts).getDocument());
+    }
+}
+
+TEST_F(DocumentSourceGroupTest, CreateCorrectlyInheritsNeedsMergeValueFromExpCtx) {
+    for (auto needsMerge : {true, false}) {
+        auto expCtx = getExpCtx();
+
+        auto&& [parser, _1, _2, _3] = AccumulationStatement::getParser("$sum");
+        auto accumulatorArg = BSON("" << 1);
+        auto accExpr =
+            parser(expCtx.get(), accumulatorArg.firstElement(), expCtx->variablesParseState);
+        AccumulationStatement countStatement{"count", accExpr};
+
+        auto group =
+            DocumentSourceGroup::create(expCtx,
+                                        ExpressionConstant::create(expCtx.get(), Value(BSONNULL)),
+                                        {countStatement},
+                                        needsMerge);
+
+        if (needsMerge) {
+            ASSERT_TRUE(group->getGroupProcessor()->willBeMerged());
+        } else {
+            ASSERT_FALSE(group->getGroupProcessor()->willBeMerged());
+        }
+    }
 }
 
 TEST_F(DocumentSourceGroupTest, CorrectlyReportsTriviallyReferencedExprsFromID) {
@@ -676,8 +720,9 @@ TEST_F(DocumentSourceGroupTest, ShouldUpdateMemoryUsageTrackerDuringGroup) {
                 }
             })");
             auto src = DocumentSourceGroup::createFromBson(spec.firstElement(), expCtx.get());
-            src->setSource(mock.get());
-            return boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+            auto group = boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+            group->setSource(mock.get());
+            return group;
         }();
 
         GroupProcessor* groupProcessor = group->getGroupProcessor();
@@ -762,8 +807,9 @@ TEST_F(DocumentSourceGroupTest, ShouldUpdateCurOpStatsDuringGroup) {
                 }
             })");
         auto src = DocumentSourceGroup::createFromBson(spec.firstElement(), expCtx.get());
-        src->setSource(mock.get());
-        return boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+        auto group = boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+        group->setSource(mock.get());
+        return group;
     }();
 
     int64_t inUseMemoryBytes, maxUsedMemoryBytes;
@@ -861,8 +907,9 @@ TEST_F(DocumentSourceGroupTest, CurOpStatsAreNotUpdatedIfFeatureFlagOff) {
                 }
             })");
         auto src = DocumentSourceGroup::createFromBson(spec.firstElement(), expCtx.get());
-        src->setSource(mock.get());
-        return boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+        auto group = boost::dynamic_pointer_cast<DocumentSourceGroup>(src);
+        group->setSource(mock.get());
+        return group;
     }();
 
     int64_t inUseMemoryBytes, maxUsedMemoryBytes;
@@ -990,11 +1037,11 @@ protected:
         return static_cast<DocumentSourceGroupBase*>(_group.get());
     }
     /** Assert that iterator state accessors consistently report the source is exhausted. */
-    void assertEOF(const boost::intrusive_ptr<DocumentSource>& source) const {
+    void assertEOF(const boost::intrusive_ptr<exec::agg::Stage>& stage) const {
         // It should be safe to check doneness multiple times
-        ASSERT(source->getNext().isEOF());
-        ASSERT(source->getNext().isEOF());
-        ASSERT(source->getNext().isEOF());
+        ASSERT(stage->getNext().isEOF());
+        ASSERT(stage->getNext().isEOF());
+        ASSERT(stage->getNext().isEOF());
     }
 
     boost::intrusive_ptr<ExpressionContextForTest> ctx() const {
@@ -1289,7 +1336,7 @@ public:
         auto source = DocumentSourceMock::createForTest(inputData(), ctx());
         group()->setSource(source.get());
 
-        boost::intrusive_ptr<DocumentSource> sink = group();
+        boost::intrusive_ptr<exec::agg::Stage> sink = group();
         if (sharded) {
             sink = createMerger();
             // Serialize and re-parse the shard stage.
@@ -1319,7 +1366,7 @@ protected:
     virtual std::string expectedResultSetString() {
         return "[]";
     }
-    boost::intrusive_ptr<DocumentSource> createMerger() {
+    boost::intrusive_ptr<exec::agg::Stage> createMerger() {
         // Set up a group merger to simulate merging results in the router.  In this
         // case only one shard is in use.
         auto distributedPlanLogic = group()->distributedPlanLogic();
@@ -1329,9 +1376,9 @@ protected:
         auto mergingStage = *distributedPlanLogic->mergingStages.begin();
         ASSERT_NOT_EQUALS(group(), mergingStage);
         ASSERT_FALSE(static_cast<bool>(distributedPlanLogic->mergeSortPattern));
-        return mergingStage;
+        return exec::agg::buildStage(mergingStage);
     }
-    void checkResultSet(const boost::intrusive_ptr<DocumentSource>& sink) {
+    void checkResultSet(const boost::intrusive_ptr<exec::agg::Stage>& sink) {
         // Load the results from the DocumentSourceGroup and sort them by _id.
         IdMap resultSet;
         for (auto output = sink->getNext(); output.isAdvanced(); output = sink->getNext()) {
@@ -1500,7 +1547,7 @@ public:
         createGroup(BSON("_id" << "$x"
                                << "list" << BSON("$push" << "$y")));
         // Create a merger version of the source.
-        boost::intrusive_ptr<DocumentSource> group = createMerger();
+        boost::intrusive_ptr<exec::agg::Stage> group = createMerger();
         // Attach the merger to the synthetic shard results.
         group->setSource(source.get());
         // Check the merger's output.

@@ -28,19 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <mutex>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
+#include "mongo/db/s/resharding/resharding_txn_cloner.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -50,6 +38,8 @@
 #include "mongo/client/read_preference.h"
 #include "mongo/db/client.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -65,7 +55,6 @@
 #include "mongo/db/s/resharding/resharding_data_copy_util.h"
 #include "mongo/db/s/resharding/resharding_future_util.h"
 #include "mongo/db/s/resharding/resharding_server_parameters_gen.h"
-#include "mongo/db/s/resharding/resharding_txn_cloner.h"
 #include "mongo/db/s/resharding/resharding_txn_cloner_progress_gen.h"
 #include "mongo/db/s/session_catalog_migration_util.h"
 #include "mongo/db/service_context.h"
@@ -87,6 +76,21 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
@@ -162,15 +166,16 @@ std::unique_ptr<Pipeline, PipelineDeleter> ReshardingTxnCloner::_restartPipeline
     auto pipeline = _targetAggregationRequest(
         opCtx, *makePipeline(opCtx, std::move(mongoProcessInterface), progressLsid));
 
-    pipeline->detachFromOperationContext();
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+    execPipeline->detachFromOperationContext();
     pipeline.get_deleter().dismissDisposal();
     return pipeline;
 }
 
-boost::optional<SessionTxnRecord> ReshardingTxnCloner::_getNextRecord(OperationContext* opCtx,
-                                                                      Pipeline& pipeline) {
-    pipeline.reattachToOperationContext(opCtx);
-    ON_BLOCK_EXIT([&pipeline] { pipeline.detachFromOperationContext(); });
+boost::optional<SessionTxnRecord> ReshardingTxnCloner::_getNextRecord(
+    OperationContext* opCtx, Pipeline& pipeline, exec::agg::Pipeline& execPipeline) {
+    execPipeline.reattachToOperationContext(opCtx);
+    ON_BLOCK_EXIT([&execPipeline] { execPipeline.detachFromOperationContext(); });
 
     // The BlockingResultsMerger underlying by the $mergeCursors stage records how long the
     // recipient spent waiting for documents from the donor shard. It doing so requires the CurOp to
@@ -179,7 +184,7 @@ boost::optional<SessionTxnRecord> ReshardingTxnCloner::_getNextRecord(OperationC
     curOp->ensureStarted();
     ON_BLOCK_EXIT([curOp] { curOp->done(); });
 
-    auto doc = pipeline.getNext();
+    auto doc = execPipeline.getNext();
     return doc ? SessionTxnRecord::parse(IDLParserContext{"resharding config.transactions cloning"},
                                          doc->toBson())
                : boost::optional<SessionTxnRecord>{};
@@ -242,6 +247,7 @@ SemiFuture<void> ReshardingTxnCloner::run(
     std::shared_ptr<MongoProcessInterface> mongoProcessInterface_forTest) {
     struct ChainContext {
         std::unique_ptr<Pipeline, PipelineDeleter> pipeline;
+        std::unique_ptr<exec::agg::Pipeline> execPipeline;
         boost::optional<SessionTxnRecord> donorRecord;
         bool moreToCome = true;
         int progressCounter = 0;
@@ -258,6 +264,8 @@ SemiFuture<void> ReshardingTxnCloner::run(
                                             MONGO_unlikely(mongoProcessInterface_forTest)
                                                 ? mongoProcessInterface_forTest
                                                 : MongoProcessInterface::create(opCtx.get()));
+                       chainCtx->execPipeline = exec::agg::buildPipeline(
+                           chainCtx->pipeline->getSources(), chainCtx->pipeline->getContext());
                        chainCtx->donorRecord = boost::none;
                    }
 
@@ -268,8 +276,10 @@ SemiFuture<void> ReshardingTxnCloner::run(
                        ScopeGuard guard([&] {
                            chainCtx->pipeline->dispose(opCtx.get());
                            chainCtx->pipeline.reset();
+                           chainCtx->execPipeline.reset();
                        });
-                       chainCtx->donorRecord = _getNextRecord(opCtx.get(), *chainCtx->pipeline);
+                       chainCtx->donorRecord = _getNextRecord(
+                           opCtx.get(), *chainCtx->pipeline, *chainCtx->execPipeline);
                        guard.dismiss();
                    }
 
@@ -318,6 +328,7 @@ SemiFuture<void> ReshardingTxnCloner::run(
                 auto opCtx = factory.makeOperationContext(&cc());
                 chainCtx->pipeline->dispose(opCtx.get());
                 chainCtx->pipeline.reset();
+                chainCtx->execPipeline.reset();
             }
 
             return status.isOK() && !chainCtx->moreToCome;
@@ -343,6 +354,7 @@ SemiFuture<void> ReshardingTxnCloner::run(
 
                 chainCtx->pipeline->dispose(opCtx.get());
                 chainCtx->pipeline.reset();
+                chainCtx->execPipeline.reset();
             }
 
             // Propagate the result of the AsyncTry.

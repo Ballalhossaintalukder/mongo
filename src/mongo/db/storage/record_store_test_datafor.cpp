@@ -27,12 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <memory>
-#include <ostream>
-#include <string>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
@@ -43,12 +37,19 @@
 #include "mongo/db/storage/record_store_test_harness.h"
 #include "mongo/unittest/unittest.h"
 
+#include <cstddef>
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace {
 
 // Insert a record and verify its contents by calling dataFor()
 // on the returned RecordId.
-TEST(RecordStoreTestHarness, DataFor) {
+TEST(RecordStoreTest, DataFor) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -83,7 +84,7 @@ TEST(RecordStoreTestHarness, DataFor) {
 
 // Insert multiple records and verify their contents by calling dataFor()
 // on each of the returned RecordIds.
-TEST(RecordStoreTestHarness, DataForMultiple) {
+TEST(RecordStoreTest, DataForMultiple) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 

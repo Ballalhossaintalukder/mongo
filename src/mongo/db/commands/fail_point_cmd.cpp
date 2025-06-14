@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
@@ -46,6 +43,9 @@
 #include "mongo/s/request_types/wait_for_fail_point_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
+
+#include <memory>
+#include <string>
 
 namespace mongo {
 
@@ -143,7 +143,7 @@ public:
             uassert(ErrorCodes::FailedToParse,
                     "Missing maxTimeMs",
                     request().getGenericArguments().getMaxTimeMS());
-            const std::string failPointName = request().getCommandParameter().toString();
+            const std::string failPointName = std::string{request().getCommandParameter()};
             FailPoint* failPoint = globalFailPointRegistry().find(failPointName);
             if (failPoint == nullptr)
                 uasserted(ErrorCodes::FailPointSetFailed, failPointName + " not found");
@@ -182,6 +182,6 @@ public:
     }
 };
 
-MONGO_REGISTER_COMMAND(WaitForFailPointCommand).forRouter().forShard();
+MONGO_REGISTER_COMMAND(WaitForFailPointCommand).testOnly().forRouter().forShard();
 MONGO_REGISTER_COMMAND(FaultInjectCmd).testOnly().forRouter().forShard();
 }  // namespace mongo

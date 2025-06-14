@@ -34,12 +34,6 @@
 #include <boost/optional/optional.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -109,6 +103,12 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -953,15 +953,13 @@ TEST_F(AddShardTest, SuccessfullyAddReplicaSet) {
 
 // TODO (SERVER-100309): remove once 9.0 becomes last LTS.
 TEST_F(AddShardTest, SuccessfullyAddConfigShardOldPath) {
-    // Since unit tests always run with all feature flags enabled, manually disable the feature flag
-    // to maintain testing for old FCV.
     RAIIServerParameterControllerForTest featureFlagController(
-        "featureFlagSessionsCollectionCoordinatorOnConfigServer", false);
-    runSuccessfulConfigShardTest(true);
+        "featureFlagSessionsCollectionCoordinatorOnConfigServer", true);
+    runSuccessfulConfigShardTest(false);
 }
 
 TEST_F(AddShardTest, SuccessfullyAddConfigShard) {
-    runSuccessfulConfigShardTest(false);
+    runSuccessfulConfigShardTest(true);
 }
 
 TEST_F(AddShardTest, ReplicaSetExtraHostsDiscovered) {

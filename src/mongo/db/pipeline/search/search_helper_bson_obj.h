@@ -29,11 +29,12 @@
 
 #pragma once
 
-#include "document_source_list_search_indexes.h"
 #include "mongo/db/pipeline/search/document_source_list_search_indexes.h"
 #include "mongo/db/pipeline/search/document_source_search.h"
 #include "mongo/db/pipeline/search/document_source_search_meta.h"
 #include "mongo/db/pipeline/search/document_source_vector_search.h"
+
+#include "document_source_list_search_indexes.h"
 
 namespace mongo {
 
@@ -51,13 +52,10 @@ inline bool isMongotPipeline(const std::vector<BSONObj> pipeline) {
 }
 
 inline bool isStoredSource(const std::vector<BSONObj> pipeline) {
-
     if (pipeline.size() >= 1 && pipeline[0][DocumentSourceSearch::kStageName]) {
         auto searchStage = pipeline[0][DocumentSourceSearch::kStageName];
-        if (searchStage.isABSONObj() && searchStage.Obj().hasField("returnStoredSource") &&
-            searchStage["returnStoredSource"]) {
-            return true;
-        }
+        auto storedSourceElem = searchStage[mongot_cursor::kReturnStoredSourceArg];
+        return !storedSourceElem.eoo() && storedSourceElem.Bool();
     }
     return false;
 }

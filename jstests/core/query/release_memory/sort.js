@@ -8,14 +8,16 @@
  *   requires_fcv_82,
  *   requires_getmore,
  *   uses_getmore_outside_of_transaction,
+ *   # This test relies on query commands returning specific batch-sized responses.
+ *   assumes_no_implicit_cursor_exhaustion,
  * ]
  */
 
 import {DiscoverTopology} from "jstests/libs/discover_topology.js";
-import {getEngine} from "jstests/libs/query/analyze_plan.js";
 import {
     accumulateServerStatusMetric,
-    assertReleaseMemoryFailedWithCode
+    assertReleaseMemoryFailedWithCode,
+    setAvailableDiskSpaceMode
 } from "jstests/libs/release_memory_util.js";
 import {setParameterOnAllHosts} from "jstests/noPassthrough/libs/server_parameter_helpers.js";
 
@@ -68,10 +70,15 @@ const pipelines = [
         {$sort: {index: 1, padding: 1}},
         {$project: {padding: 0}},  // Secondary sort on padding prevents projection pushdown.
     ],
+    [
+        {$sort: {index: 1, padding: 1}},  // Will be pushed down to find.
+        {$project: {padding: 0}},         // Secondary sort on padding prevents projection pushdown.
+        {$_internalInhibitOptimization: {}},  // Prevents the pipeline from being eliminated.
+    ],
 ];
 
 for (let pipeline of pipelines) {
-    jsTestLog("Testing pipeline: " + tojson(pipeline));
+    jsTest.log.info("Testing pipeline: ", pipeline);
 
     let previousSpillCount = getSortSpillCounter();
     assertCursorSortedByIndex(coll.aggregate(pipeline));
@@ -119,6 +126,25 @@ for (let pipeline of pipelines) {
 
         assertCursorSortedByIndex(cursor);
         setServerParameter(sortMemoryLimitKnob, originalKnobValue);
+    }
+
+    // No disk space available for spilling.
+    {
+        jsTest.log(`Running releaseMemory with no disk space available`);
+        const cursor = coll.aggregate(pipeline, {"allowDiskUse": true, cursor: {batchSize: 1}});
+        const cursorId = cursor.getId();
+
+        // Release memory (i.e., spill)
+        setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'alwaysOn');
+        const releaseMemoryCmd = {releaseMemory: [cursorId]};
+        jsTest.log.info("Running releaseMemory: ", releaseMemoryCmd);
+        const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
+        assert.commandWorked(releaseMemoryRes);
+        assertReleaseMemoryFailedWithCode(releaseMemoryRes, cursorId, ErrorCodes.OutOfDiskSpace);
+        setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'off');
+
+        jsTest.log.info("Running getMore");
+        assert.throwsWithCode(() => cursor.toArray(), ErrorCodes.CursorNotFound);
     }
 }
 

@@ -29,12 +29,6 @@
 
 #include "mongo/db/pipeline/window_function/window_function_count.h"
 
-#include <boost/move/utility_core.hpp>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -48,6 +42,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::window_function {
 
@@ -67,7 +67,7 @@ boost::intrusive_ptr<window_function::Expression> parseCountWindowFunction(
                     !accumulatorName);
             uassert(ErrorCodes::FailedToParse,
                     "$count only accepts an empty object as input",
-                    arg.type() == BSONType::Object && arg.Obj().isEmpty());
+                    arg.type() == BSONType::object && arg.Obj().isEmpty());
 
             accumulatorName = argName;
         } else {

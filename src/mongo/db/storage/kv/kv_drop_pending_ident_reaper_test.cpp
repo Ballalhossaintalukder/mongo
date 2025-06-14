@@ -27,17 +27,10 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <functional>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/storage/kv/kv_drop_pending_ident_reaper.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
-#include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/namespace_string.h"
@@ -45,7 +38,6 @@
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/db/storage/ident.h"
 #include "mongo/db/storage/key_format.h"
-#include "mongo/db/storage/kv/kv_drop_pending_ident_reaper.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/sorted_data_interface.h"
@@ -53,6 +45,14 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <functional>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -62,7 +62,7 @@ namespace {
  */
 class KVEngineMock : public KVEngine {
 public:
-    Status dropIdent(RecoveryUnit* ru,
+    Status dropIdent(RecoveryUnit& ru,
                      StringData ident,
                      bool identHasSizeInfo,
                      const StorageEngine::DropIdentCallback& onDrop) override;
@@ -76,10 +76,12 @@ public:
     std::unique_ptr<RecordStore> getRecordStore(OperationContext* opCtx,
                                                 const NamespaceString& nss,
                                                 StringData ident,
-                                                const CollectionOptions& options) override {
+                                                const RecordStore::Options& options,
+                                                boost::optional<UUID> uuid) override {
         return {};
     }
     std::unique_ptr<SortedDataInterface> getSortedDataInterface(OperationContext* opCtx,
+                                                                RecoveryUnit& ru,
                                                                 const NamespaceString& nss,
                                                                 const UUID& uuid,
                                                                 StringData ident,
@@ -90,19 +92,17 @@ public:
 
     Status createRecordStore(const NamespaceString& nss,
                              StringData ident,
-                             KeyFormat keyFormat,
-                             bool isTimeseries,
-                             const BSONObj& storageEngineCollectionOptions) override {
+                             const RecordStore::Options& options) override {
         return Status::OK();
     }
 
-    std::unique_ptr<RecordStore> getTemporaryRecordStore(OperationContext* opCtx,
+    std::unique_ptr<RecordStore> getTemporaryRecordStore(RecoveryUnit& ru,
                                                          StringData ident,
                                                          KeyFormat keyFormat) override {
         return {};
     }
 
-    std::unique_ptr<RecordStore> makeTemporaryRecordStore(OperationContext* opCtx,
+    std::unique_ptr<RecordStore> makeTemporaryRecordStore(RecoveryUnit& ru,
                                                           StringData ident,
                                                           KeyFormat keyFormat) override {
         return {};
@@ -138,7 +138,7 @@ public:
     std::vector<std::string> getAllIdents(RecoveryUnit&) const override {
         return {};
     }
-    void cleanShutdown() override {}
+    void cleanShutdown(bool memLeakAllowed) override {}
     void setJournalListener(JournalListener* jl) override {}
     Timestamp getAllDurableTimestamp() const override {
         return {};
@@ -191,7 +191,7 @@ public:
         return true;
     }
 
-    bool underCachePressure() override {
+    bool underCachePressure(int concurrentWriteOuts, int concurrentReadOuts) override {
         return false;
     }
 
@@ -201,19 +201,19 @@ public:
     std::vector<std::string> droppedIdents;
 
     // Override to modify dropIdent() behavior.
-    using DropIdentFn = std::function<Status(RecoveryUnit*, StringData)>;
-    DropIdentFn dropIdentFn = [](RecoveryUnit*, StringData) {
+    using DropIdentFn = std::function<Status(RecoveryUnit&, StringData)>;
+    DropIdentFn dropIdentFn = [](RecoveryUnit&, StringData) {
         return Status::OK();
     };
 };
 
-Status KVEngineMock::dropIdent(RecoveryUnit* ru,
+Status KVEngineMock::dropIdent(RecoveryUnit& ru,
                                StringData ident,
                                bool identHasSizeInfo,
                                const StorageEngine::DropIdentCallback& onDrop) {
     auto status = dropIdentFn(ru, ident);
     if (status.isOK()) {
-        droppedIdents.push_back(ident.toString());
+        droppedIdents.push_back(std::string{ident});
     }
     return status;
 }
@@ -525,8 +525,7 @@ DEATH_TEST_F(KVDropPendingIdentReaperTest,
     ASSERT_EQUALS(dropTimestamp, *reaper.getEarliestDropTimestamp());
 
     // Make KVEngineMock::dropIndent() fail.
-    engine->dropIdentFn = [&identName](RecoveryUnit* ru, StringData identToDropName) {
-        ASSERT(ru);
+    engine->dropIdentFn = [&identName](RecoveryUnit& ru, StringData identToDropName) {
         ASSERT_EQUALS(identName, identToDropName);
         return Status(ErrorCodes::OperationFailed, "Mock KV engine dropIndent() failed.");
     };

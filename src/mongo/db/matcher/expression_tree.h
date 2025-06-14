@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/clonable_ptr.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -46,8 +40,15 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/util/assert_util.h"
 
+#include <cstddef>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/optional.hpp>
+
 /**
- * this contains all Expessions that define the structure of the tree
+ * this contains all Expressions that define the structure of the tree
  * they do not look at the structure of the documents themselves, just combine other things
  */
 namespace mongo {

@@ -29,11 +29,6 @@
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_index_util.h"
 
-#include <cerrno>
-
-#include <boost/move/utility_core.hpp>
-#include <wiredtiger.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -44,11 +39,16 @@
 #include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
-#include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <cerrno>
+
+#include <wiredtiger.h>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -99,16 +99,16 @@ bool WiredTigerIndexUtil::appendCustomStats(WiredTigerRecoveryUnit& ru,
 }
 
 StatusWith<int64_t> WiredTigerIndexUtil::compact(OperationContext* opCtx,
+                                                 WiredTigerRecoveryUnit& wtRu,
                                                  const std::string& uri,
                                                  const CompactOptions& options) {
-    auto& ru = *WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx));
-    WiredTigerConnection* connection = ru.getConnection();
+    WiredTigerConnection* connection = wtRu.getConnection();
     if (connection->isEphemeral()) {
         return 0;
     }
 
-    WiredTigerSession* s = ru.getSession();
-    ru.abandonSnapshot();
+    WiredTigerSession* s = wtRu.getSession();
+    wtRu.abandonSnapshot();
 
     StringBuilder config;
     config << "timeout=0";
@@ -142,19 +142,18 @@ StatusWith<int64_t> WiredTigerIndexUtil::compact(OperationContext* opCtx,
 }
 
 bool WiredTigerIndexUtil::isEmpty(OperationContext* opCtx,
+                                  WiredTigerRecoveryUnit& wtRu,
                                   const std::string& uri,
                                   uint64_t tableId) {
-    auto& wtRu = WiredTigerRecoveryUnit::get(*shard_role_details::getRecoveryUnit(opCtx));
     auto cursorParams = getWiredTigerCursorParams(wtRu, tableId);
     WiredTigerCursor curwrap(std::move(cursorParams), uri, *wtRu.getSession());
     WT_CURSOR* c = curwrap.get();
     if (!c)
         return true;
     int ret = wiredTigerPrepareConflictRetry(
-        *opCtx,
-        StorageExecutionContext::get(opCtx)->getPrepareConflictTracker(),
-        *shard_role_details::getRecoveryUnit(opCtx),
-        [&] { return c->next(c); });
+        *opCtx, StorageExecutionContext::get(opCtx)->getPrepareConflictTracker(), wtRu, [&] {
+            return c->next(c);
+        });
     if (ret == WT_NOTFOUND)
         return true;
     invariantWTOK(ret, c->session);

@@ -27,18 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/container/vector.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/storage_interface_impl.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -68,7 +57,6 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
-#include "mongo/db/repl/storage_interface_impl.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context_d_test_fixture.h"
 #include "mongo/db/storage/record_store.h"
@@ -81,6 +69,19 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <utility>
+
+#include <boost/container/vector.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace repl {
@@ -141,9 +142,8 @@ void createCollection(OperationContext* opCtx,
                       const NamespaceString& nss,
                       const CollectionOptions& options = generateOptionsWithUuid()) {
     writeConflictRetry(opCtx, "createCollection", nss, [&] {
-        Lock::DBLock dblk(opCtx, nss.dbName(), MODE_X);
-        OldClientContext ctx(opCtx, nss);
-        auto db = ctx.db();
+        AutoGetDb autodb(opCtx, nss.dbName(), MODE_X);
+        auto db = autodb.ensureDbExists(opCtx);
         ASSERT_TRUE(db);
         mongo::WriteUnitOfWork wuow(opCtx);
         auto coll = db->createCollection(opCtx, nss, options);
@@ -191,7 +191,8 @@ TimestampedBSONObj makeOplogEntry(OpTime opTime) {
 int64_t getIndexKeyCount(OperationContext* opCtx,
                          const IndexCatalog* cat,
                          const IndexDescriptor* desc) {
-    return cat->getEntry(desc)->accessMethod()->numKeys(opCtx);
+    return cat->getEntry(desc)->accessMethod()->numKeys(
+        opCtx, *shard_role_details::getRecoveryUnit(opCtx));
 }
 
 std::vector<InsertStatement> transformInserts(std::vector<BSONObj> docs) {
@@ -252,6 +253,16 @@ private:
     std::unique_ptr<DisableDocumentValidation> _ddv;
     ReplicationCoordinatorMock* _replicationCoordinatorMock = nullptr;
 };
+
+CollectionAcquisition getCollectionForRead(OperationContext* opCtx, const NamespaceString& nss) {
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     mongo::AcquisitionPrerequisites::kRead),
+        MODE_IS);
+}
 
 TEST_F(StorageInterfaceImplTest, ServiceContextDecorator) {
     auto serviceContext = getServiceContext();
@@ -542,8 +553,8 @@ TEST_F(StorageInterfaceImplTest, InsertMissingDocWorksOnExistingCappedCollection
     createCollection(opCtx, nss, opts);
     ASSERT_OK(storage.insertDocument(
         opCtx, nss, {BSON("_id" << 1), Timestamp(1)}, OpTime::kUninitializedTerm));
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, InsertDocWorksWithExistingCappedCollectionSpecifiedByUUID) {
@@ -559,8 +570,8 @@ TEST_F(StorageInterfaceImplTest, InsertDocWorksWithExistingCappedCollectionSpeci
                                      {nss.dbName(), *options.uuid},
                                      {BSON("_id" << 1), Timestamp(1)},
                                      OpTime::kUninitializedTerm));
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, InsertMissingDocWorksOnExistingCollection) {
@@ -570,8 +581,8 @@ TEST_F(StorageInterfaceImplTest, InsertMissingDocWorksOnExistingCollection) {
     createCollection(opCtx, nss);
     ASSERT_OK(storage.insertDocument(
         opCtx, nss, {BSON("_id" << 1), Timestamp(1)}, OpTime::kUninitializedTerm));
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, InsertMissingDocFailesIfCollectionIsMissing) {
@@ -595,17 +606,16 @@ TEST_F(StorageInterfaceImplTest, CreateCollectionWithIDIndexCommits) {
             storage.createCollectionForBulkLoading(nss, opts, makeIdIndexSpec(nss), indexes);
         ASSERT_OK(loaderStatus.getStatus());
         auto loader = std::move(loaderStatus.getValue());
-        std::vector<BSONObj> docs = {BSON("_id" << 1), BSON("_id" << 1), BSON("_id" << 2)};
-        ASSERT_OK(loader->insertDocuments(docs.begin(), docs.end(), [](const BSONObj& doc) {
-            return std::make_pair(RecordId(0), doc);
-        }));
+        BSONObj docs[] = {BSON("_id" << 1), BSON("_id" << 1), BSON("_id" << 2)};
+        ASSERT_OK(loader->insertDocuments(docs));
         ASSERT_OK(loader->commit());
     }
 
-    AutoGetCollectionForReadCommand coll(opCtx, nss);
-    ASSERT(coll);
-    ASSERT_EQ(coll->getRecordStore()->numRecords(), 2LL);
-    auto collIdxCat = coll->getIndexCatalog();
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT(coll.exists());
+    const auto& collPtr = coll.getCollectionPtr();
+    ASSERT_EQ(collPtr->getRecordStore()->numRecords(), 2LL);
+    auto collIdxCat = collPtr->getIndexCatalog();
     auto idIdxDesc = collIdxCat->findIdIndex(opCtx);
     auto count = getIndexKeyCount(opCtx, collIdxCat, idIdxDesc);
     ASSERT_EQ(count, 2LL);
@@ -622,25 +632,24 @@ void _testDestroyUncommitedCollectionBulkLoader(
         storage.createCollectionForBulkLoading(nss, opts, makeIdIndexSpec(nss), secondaryIndexes);
     ASSERT_OK(loaderStatus.getStatus());
     auto loader = std::move(loaderStatus.getValue());
-    std::vector<BSONObj> docs = {BSON("_id" << 1)};
-    ASSERT_OK(loader->insertDocuments(docs.begin(), docs.end(), [](const BSONObj& doc) {
-        return std::make_pair(RecordId(0), doc);
-    }));
+    BSONObj docs[] = {BSON("_id" << 1)};
+    ASSERT_OK(loader->insertDocuments(docs));
 
     // Destroy bulk loader.
     // Collection and ID index should not exist after 'loader' is destroyed.
     destroyLoaderFn(std::move(loader));
 
-    AutoGetCollectionForReadCommand coll(opCtx, nss);
+    const auto coll = getCollectionForRead(opCtx, nss);
+    const auto& collPtr = coll.getCollectionPtr();
 
     // Bulk loader is used to create indexes. The collection is not dropped when the bulk loader is
     // destroyed.
-    ASSERT_TRUE(coll);
-    ASSERT_EQ(1LL, coll->getRecordStore()->numRecords());
+    ASSERT_TRUE(coll.exists());
+    ASSERT_EQ(1LL, collPtr->getRecordStore()->numRecords());
 
     // IndexCatalog::numIndexesTotal() includes unfinished indexes. We need to ensure that
     // the bulk loader drops the unfinished indexes.
-    auto collIdxCat = coll->getIndexCatalog();
+    auto collIdxCat = collPtr->getIndexCatalog();
     ASSERT_EQUALS(0, collIdxCat->numIndexesTotal());
 }
 
@@ -697,15 +706,16 @@ TEST_F(StorageInterfaceImplTest, CreateOplogCreateCappedCollection) {
     StorageInterfaceImpl storage;
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("local.oplog.X");
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, nss);
+        ASSERT_FALSE(coll.exists());
     }
     ASSERT_OK(storage.createOplog(opCtx, nss));
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-        ASSERT_TRUE(autoColl.getCollection());
-        ASSERT_EQ(nss.toString_forTest(), autoColl.getCollection()->ns().toString_forTest());
-        ASSERT_TRUE(autoColl.getCollection()->isCapped());
+        const auto coll = getCollectionForRead(opCtx, nss);
+        const auto& collPtr = coll.getCollectionPtr();
+        ASSERT_TRUE(coll.exists());
+        ASSERT_EQ(nss.toString_forTest(), collPtr->ns().toString_forTest());
+        ASSERT_TRUE(collPtr->isCapped());
     }
 }
 
@@ -715,8 +725,8 @@ TEST_F(StorageInterfaceImplTest,
     StorageInterfaceImpl storage;
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("local.oplog.Y");
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, nss);
+        ASSERT_FALSE(coll.exists());
     }
 
     auto status = storage.createCollection(opCtx, nss, generateOptionsWithUuid());
@@ -729,14 +739,15 @@ TEST_F(StorageInterfaceImplTest, CreateCollectionFailsIfCollectionExists) {
     StorageInterfaceImpl storage;
     auto nss = makeNamespace(_agent);
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, nss);
+        ASSERT_FALSE(coll.exists());
     }
     ASSERT_OK(storage.createCollection(opCtx, nss, generateOptionsWithUuid()));
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-        ASSERT_TRUE(autoColl.getCollection());
-        ASSERT_EQ(nss.toString_forTest(), autoColl.getCollection()->ns().toString_forTest());
+        const auto coll = getCollectionForRead(opCtx, nss);
+        const auto& collPtr = coll.getCollectionPtr();
+        ASSERT_TRUE(coll.exists());
+        ASSERT_EQ(nss.toString_forTest(), collPtr->ns().toString_forTest());
     }
     auto status = storage.createCollection(opCtx, nss, generateOptionsWithUuid());
     ASSERT_EQUALS(ErrorCodes::NamespaceExists, status);
@@ -760,8 +771,8 @@ TEST_F(StorageInterfaceImplTest, DropCollectionWorksWithExistingEmptyCollection)
     auto nss = makeNamespace(_agent);
     createCollection(opCtx, nss);
     ASSERT_OK(storage.dropCollection(opCtx, nss));
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_FALSE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_FALSE(coll.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, DropCollectionWorksWithMissingCollection) {
@@ -770,7 +781,7 @@ TEST_F(StorageInterfaceImplTest, DropCollectionWorksWithMissingCollection) {
     auto nss = makeNamespace(_agent);
     ASSERT_FALSE(AutoGetDb(opCtx, nss.dbName(), MODE_IS).getDb());
     ASSERT_OK(storage.dropCollection(opCtx, nss));
-    ASSERT_FALSE(AutoGetCollectionForReadCommand(opCtx, nss).getCollection());
+    ASSERT_FALSE(getCollectionForRead(opCtx, nss).exists());
     // Database should not be created after running dropCollection.
     ASSERT_FALSE(AutoGetDb(opCtx, nss.dbName(), MODE_IS).getDb());
 }
@@ -785,10 +796,10 @@ TEST_F(StorageInterfaceImplTest, DropCollectionWorksWithSystemCollection) {
     StorageInterfaceImpl storage;
 
     ASSERT_OK(storage.createCollection(opCtx, nss, generateOptionsWithUuid()));
-    ASSERT_TRUE(AutoGetCollectionForReadCommand(opCtx, nss).getCollection());
+    ASSERT_TRUE(getCollectionForRead(opCtx, nss).exists());
 
     ASSERT_OK(storage.dropCollection(opCtx, nss));
-    ASSERT_FALSE(AutoGetCollectionForReadCommand(opCtx, nss).getCollection());
+    ASSERT_FALSE(getCollectionForRead(opCtx, nss).exists());
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionWorksWhenCollectionExists) {
@@ -800,11 +811,11 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionWorksWhenCollectionExists) {
 
     ASSERT_OK(storage.renameCollection(opCtx, nss, toNss, false));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_FALSE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_FALSE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_TRUE(autoColl2.getCollection());
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_TRUE(coll2.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionWithStayTempFalseMakesItNotTemp) {
@@ -818,12 +829,12 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionWithStayTempFalseMakesItNotTemp
 
     ASSERT_OK(storage.renameCollection(opCtx, nss, toNss, false));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_FALSE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_FALSE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_TRUE(autoColl2.getCollection());
-    ASSERT_FALSE(autoColl2->getCollectionOptions().temp);
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_TRUE(coll2.exists());
+    ASSERT_FALSE(coll2.getCollectionPtr()->getCollectionOptions().temp);
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionWithStayTempTrueMakesItTemp) {
@@ -837,12 +848,12 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionWithStayTempTrueMakesItTemp) {
 
     ASSERT_OK(storage.renameCollection(opCtx, nss, toNss, true));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_FALSE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_FALSE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_TRUE(autoColl2.getCollection());
-    ASSERT_TRUE(autoColl2->getCollectionOptions().temp);
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_TRUE(coll2.exists());
+    ASSERT_TRUE(coll2.getCollectionPtr()->getCollectionOptions().temp);
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionFailsBetweenDatabases) {
@@ -854,11 +865,11 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionFailsBetweenDatabases) {
 
     ASSERT_EQ(ErrorCodes::InvalidNamespace, storage.renameCollection(opCtx, nss, toNss, false));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_FALSE(autoColl2.getCollection());
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_FALSE(coll2.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionFailsWhenToCollectionAlreadyExists) {
@@ -871,11 +882,11 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionFailsWhenToCollectionAlreadyExi
 
     ASSERT_EQ(ErrorCodes::NamespaceExists, storage.renameCollection(opCtx, nss, toNss, false));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_TRUE(autoColl2.getCollection());
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_TRUE(coll2.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, RenameCollectionFailsWhenFromCollectionDoesNotExist) {
@@ -886,11 +897,11 @@ TEST_F(StorageInterfaceImplTest, RenameCollectionFailsWhenFromCollectionDoesNotE
 
     ASSERT_EQ(ErrorCodes::NamespaceNotFound, storage.renameCollection(opCtx, nss, toNss, false));
 
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_FALSE(autoColl.getCollection());
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_FALSE(coll.exists());
 
-    AutoGetCollectionForReadCommand autoColl2(opCtx, toNss);
-    ASSERT_FALSE(autoColl2.getCollection());
+    const auto coll2 = getCollectionForRead(opCtx, toNss);
+    ASSERT_FALSE(coll2.exists());
 }
 
 TEST_F(StorageInterfaceImplTest, FindDocumentsReturnsInvalidNamespaceIfCollectionIsMissing) {
@@ -938,10 +949,8 @@ TEST_F(StorageInterfaceImplTest, FindDocumentsReturnsIndexOptionsConflictIfIndex
                                                  << "partialFilterExpression" << BSON("y" << 1))};
         auto loader = unittest::assertGet(storage.createCollectionForBulkLoading(
             nss, generateOptionsWithUuid(), makeIdIndexSpec(nss), indexes));
-        std::vector<BSONObj> docs = {BSON("_id" << 1), BSON("_id" << 1), BSON("_id" << 2)};
-        ASSERT_OK(loader->insertDocuments(docs.begin(), docs.end(), [](const BSONObj& doc) {
-            return std::make_pair(RecordId(0), doc);
-        }));
+        BSONObj docs[] = {BSON("_id" << 1), BSON("_id" << 1), BSON("_id" << 2)};
+        ASSERT_OK(loader->insertDocuments(docs));
         ASSERT_OK(loader->commit());
     }
     auto indexName = "x_1"_sd;
@@ -3441,12 +3450,13 @@ TEST_F(StorageInterfaceImplTest, SetIndexIsMultikeySucceeds) {
     MultikeyPaths paths = {{1}};
     ASSERT_OK(storage.setIndexIsMultikey(
         opCtx, nss, *options.uuid, indexName, {}, paths, Timestamp(3, 3)));
-    AutoGetCollectionForReadCommand autoColl(opCtx, nss);
-    ASSERT_TRUE(autoColl.getCollection());
-    auto indexCatalog = autoColl.getCollection()->getIndexCatalog();
+    const auto coll = getCollectionForRead(opCtx, nss);
+    ASSERT_TRUE(coll.exists());
+    const auto& collPtr = coll.getCollectionPtr();
+    auto indexCatalog = collPtr->getIndexCatalog();
     auto entry = indexCatalog->findIndexByName(opCtx, indexName)->getEntry();
-    ASSERT(entry->isMultikey(opCtx, autoColl.getCollection()));
-    ASSERT(paths == entry->getMultikeyPaths(opCtx, autoColl.getCollection()));
+    ASSERT(entry->isMultikey(opCtx, collPtr));
+    ASSERT(paths == entry->getMultikeyPaths(opCtx, collPtr));
 }
 
 }  // namespace

@@ -30,15 +30,6 @@
 
 #include "mongo/db/repl/oplog_entry.h"
 
-#include <array>
-#include <boost/cstdint.hpp>
-#include <boost/optional.hpp>
-#include <fmt/format.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/index/index_descriptor.h"
@@ -49,6 +40,15 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <array>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -210,7 +210,7 @@ BSONObj MutableOplogEntry::makeCreateCollCmdObj(const NamespaceString& collectio
                                                 const CollectionOptions& options,
                                                 const BSONObj& idIndex) {
     BSONObjBuilder b;
-    b.append("create", collectionName.coll().toString());
+    b.append("create", std::string{collectionName.coll()});
     {
         // Don't store the UUID as part of the options, but instead only at the top level
         CollectionOptions optionsToStore = options;
@@ -257,25 +257,6 @@ ReplOperation MutableOplogEntry::makeCreateCommand(const NamespaceString nss,
     op.setNss(nss.getCommandNS());
     op.setUuid(options.uuid);
     op.setObject(makeCreateCollCmdObj(nss, options, idIndex));
-    return op;
-}
-
-ReplOperation MutableOplogEntry::makeCreateIndexesCommand(const NamespaceString nss,
-                                                          const UUID& uuid,
-                                                          const BSONObj& indexDoc) {
-    ReplOperation op;
-    op.setOpType(OpTypeEnum::kCommand);
-
-    op.setTid(nss.tenantId());
-    op.setNss(nss.getCommandNS());
-    op.setUuid(uuid);
-
-    BSONObjBuilder builder;
-    builder.append("createIndexes", nss.coll());
-    builder.appendElements(indexDoc);
-
-    op.setObject(builder.obj());
-
     return op;
 }
 
@@ -899,7 +880,7 @@ repl::OpTypeEnum OplogEntryParserNonStrict::getOpType() const {
     uassert(8881100,
             str::stream() << "Invalid '" << repl::OplogEntry::kOpTypeFieldName
                           << "' field type (expected String)",
-            opTypeElement.type() == BSONType::String);
+            opTypeElement.type() == BSONType::string);
     return repl::OpType_parse(IDLParserContext("ChangeStreamEntry.op"),
                               opTypeElement.checkAndGetStringData());
 }

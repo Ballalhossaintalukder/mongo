@@ -27,12 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -44,6 +38,7 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/database.h"
+#include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/client.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
 #include "mongo/db/concurrency/d_concurrency.h"
@@ -58,19 +53,27 @@
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/unittest/unittest.h"
 
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace PdfileTests {
 namespace Insert {
 
 class Base {
 public:
-    Base() : _lk(&_opCtx), _context(&_opCtx, nss()) {}
+    Base()
+        : _lk(&_opCtx),
+          _db(DatabaseHolder::get(&_opCtx)->openDb(&_opCtx, nss().dbName(), nullptr)) {}
 
     virtual ~Base() {
         if (!collection())
             return;
         WriteUnitOfWork wunit(&_opCtx);
-        _context.db()->dropCollection(&_opCtx, nss()).transitional_ignore();
+        _db->dropCollection(&_opCtx, nss()).transitional_ignore();
         wunit.commit();
     }
 
@@ -86,7 +89,7 @@ protected:
     const ServiceContext::UniqueOperationContext _opCtxPtr = cc().makeOperationContext();
     OperationContext& _opCtx = *_opCtxPtr;
     Lock::GlobalWrite _lk;
-    OldClientContext _context;
+    Database* _db;
 };
 
 class InsertNoId : public Base {
@@ -94,12 +97,11 @@ public:
     void run() {
         WriteUnitOfWork wunit(&_opCtx);
         BSONObj x = BSON("x" << 1);
-        ASSERT(x["_id"].type() == 0);
+        ASSERT(stdx::to_underlying(x["_id"].type()) == 0);
         CollectionPtr coll = CollectionPtr::CollectionPtr_UNSAFE(
             CollectionCatalog::get(&_opCtx)->lookupCollectionByNamespace(&_opCtx, nss()));
         if (!coll) {
-            coll = CollectionPtr::CollectionPtr_UNSAFE(
-                _context.db()->createCollection(&_opCtx, nss()));
+            coll = CollectionPtr::CollectionPtr_UNSAFE(_db->createCollection(&_opCtx, nss()));
         }
         ASSERT(coll);
         OpDebug* const nullOpDebug = nullptr;
@@ -109,7 +111,7 @@ public:
         StatusWith<BSONObj> fixed = fixDocumentForInsert(&_opCtx, x);
         ASSERT(fixed.isOK());
         x = fixed.getValue();
-        ASSERT(x["_id"].type() == jstOID);
+        ASSERT(x["_id"].type() == BSONType::oid);
         ASSERT_OK(collection_internal::insertDocument(
             &_opCtx, coll, InsertStatement(x), nullOpDebug, true));
         wunit.commit();
@@ -130,9 +132,9 @@ public:
         ASSERT(fixed.firstElement().number() == 1);
 
         BSONElement a = fixed["a"];
-        ASSERT(o["a"].type() == bsonTimestamp);
+        ASSERT(o["a"].type() == BSONType::timestamp);
         ASSERT(o["a"].timestampValue() == 0);
-        ASSERT(a.type() == bsonTimestamp);
+        ASSERT(a.type() == BSONType::timestamp);
         ASSERT(a.timestampValue() > 0);
     }
 };
@@ -155,15 +157,15 @@ public:
         ASSERT(fixed.firstElement().number() == 1);
 
         BSONElement a = fixed["a"];
-        ASSERT(o["a"].type() == bsonTimestamp);
+        ASSERT(o["a"].type() == BSONType::timestamp);
         ASSERT(o["a"].timestampValue() == 0);
-        ASSERT(a.type() == bsonTimestamp);
+        ASSERT(a.type() == BSONType::timestamp);
         ASSERT(a.timestampValue() > 0);
 
         BSONElement b = fixed["b"];
-        ASSERT(o["b"].type() == bsonTimestamp);
+        ASSERT(o["b"].type() == BSONType::timestamp);
         ASSERT(o["b"].timestampValue() == 0);
-        ASSERT(b.type() == bsonTimestamp);
+        ASSERT(b.type() == BSONType::timestamp);
         ASSERT(b.timestampValue() > 0);
     }
 };

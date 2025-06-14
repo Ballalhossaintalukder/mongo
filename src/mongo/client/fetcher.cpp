@@ -27,25 +27,26 @@
  *    it in the license file.
  */
 
-#include <mutex>
-#include <ostream>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/client/fetcher.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/client/dbclient_base.h"
-#include "mongo/client/fetcher.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <mutex>
+#include <ostream>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kExecutor
 
@@ -94,7 +95,7 @@ Status parseCursorResponse(const BSONObj& obj,
                       str::stream() << "cursor response must contain '" << kCursorFieldName << "."
                                     << kCursorIdFieldName << "' field: " << obj);
     }
-    if (cursorIdElement.type() != mongo::NumberLong) {
+    if (cursorIdElement.type() != BSONType::numberLong) {
         return Status(ErrorCodes::FailedToParse,
                       str::stream() << "'" << kCursorFieldName << "." << kCursorIdFieldName
                                     << "' field must be a 'long' but was a '"
@@ -109,7 +110,7 @@ Status parseCursorResponse(const BSONObj& obj,
                                     << "'" << kCursorFieldName << "." << kNamespaceFieldName
                                     << "' field: " << obj);
     }
-    if (namespaceElement.type() != mongo::String) {
+    if (namespaceElement.type() != BSONType::string) {
         return Status(ErrorCodes::FailedToParse,
                       str::stream() << "'" << kCursorFieldName << "." << kNamespaceFieldName
                                     << "' field must be a string: " << obj);
@@ -151,7 +152,7 @@ Status parseCursorResponse(const BSONObj& obj,
 
     BSONElement postBatchResumeToken = cursorObj.getField(kPostBatchResumeTokenFieldName);
     if (!postBatchResumeToken.eoo()) {
-        if (postBatchResumeToken.type() != BSONType::Object) {
+        if (postBatchResumeToken.type() != BSONType::object) {
             return Status(ErrorCodes::FailedToParse,
                           str::stream()
                               << "'" << kCursorFieldName << "." << kPostBatchResumeTokenFieldName

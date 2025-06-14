@@ -27,20 +27,21 @@
  *    it in the license file.
  */
 
-#include <absl/meta/type_traits.h>
-#include <tuple>
-#include <vector>
-
-#include <absl/container/flat_hash_map.h>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/db/exec/inclusion_projection_executor.h"
+
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_dependencies.h"
 #include "mongo/db/pipeline/expression_walker.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <tuple>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::projection_executor {
 using ComputedFieldsPolicy = ProjectionPolicies::ComputedFieldsPolicy;
@@ -162,10 +163,10 @@ std::pair<BSONObj, bool> InclusionNode::extractComputedProjectionsInProject(
         }
 
         const auto& topLevelFieldNames = topLevelDeps.get()[i];
-        if (topLevelFieldNames.size() == 1 && topLevelFieldNames.count(oldName.toString()) == 1) {
+        if (topLevelFieldNames.size() == 1 && topLevelFieldNames.count(std::string{oldName}) == 1) {
             // Substitute newName for oldName in the expression.
             StringMap<std::string> renames;
-            renames[oldName] = newName.toString();
+            renames[oldName] = std::string{newName};
             addFieldsExpressions.emplace_back(expressionIt->first,
                                               substituteInExpr(expressionIt->second, renames),
                                               replaceWithProjField);
@@ -179,7 +180,7 @@ std::pair<BSONObj, bool> InclusionNode::extractComputedProjectionsInProject(
     if (!addFieldsExpressions.empty()) {
         BSONObjBuilder bb;
         for (const auto& expressionSpec : addFieldsExpressions) {
-            auto&& fieldName = std::get<0>(expressionSpec).toString();
+            std::string fieldName{std::get<0>(expressionSpec)};
             auto oldExpr = std::get<1>(expressionSpec);
 
             // If the $addFields spec field name itself is using the old field name, then we need to
@@ -251,10 +252,10 @@ std::pair<BSONObj, bool> InclusionNode::extractComputedProjectionsInAddFields(
         }
 
         auto& topLevelFieldNames = topLevelDeps.get()[i];
-        if (topLevelFieldNames.size() == 1 && topLevelFieldNames.count(oldName.toString()) == 1) {
+        if (topLevelFieldNames.size() == 1 && topLevelFieldNames.count(std::string{oldName}) == 1) {
             // Substitute newName for oldName in the expression.
             StringMap<std::string> renames;
-            renames[oldName] = newName.toString();
+            renames[oldName] = std::string{newName};
             addFieldsExpressions.emplace_back(expressionIt->first,
                                               substituteInExpr(expressionIt->second, renames));
         } else {
@@ -265,7 +266,7 @@ std::pair<BSONObj, bool> InclusionNode::extractComputedProjectionsInAddFields(
     if (!addFieldsExpressions.empty()) {
         BSONObjBuilder bb;
         for (const auto& expressionSpec : addFieldsExpressions) {
-            auto&& fieldName = expressionSpec.first.toString();
+            auto&& fieldName = std::string{expressionSpec.first};
             auto expr = expressionSpec.second;
 
             // If the $addFields spec field name itself is using the old field name, then we need to

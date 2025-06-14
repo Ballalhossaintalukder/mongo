@@ -29,9 +29,10 @@
 
 #include "mongo/db/update_index_data.h"
 
+#include <cstddef>
+
 #include <absl/container/btree_set.h>
 #include <boost/container/small_vector.hpp>
-#include <cstddef>
 
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
 
@@ -44,7 +45,7 @@ void UpdateIndexData::addPath(const FieldRef& path) {
 }
 
 void UpdateIndexData::addPathComponent(StringData pathComponent) {
-    _pathComponents.insert(pathComponent.toString());
+    _pathComponents.insert(std::string{pathComponent});
 }
 
 void UpdateIndexData::setAllPathsIndexed() {

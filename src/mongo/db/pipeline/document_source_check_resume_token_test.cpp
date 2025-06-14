@@ -27,19 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <cstddef>
-#include <deque>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -49,7 +36,6 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/crypto/encryption_fields_gen.h"
-#include "mongo/db/catalog/clustered_collection_options_gen.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_mock.h"
 #include "mongo/db/exec/collection_scan.h"
@@ -89,6 +75,19 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <deque>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 using boost::intrusive_ptr;
 
@@ -149,6 +148,9 @@ public:
     bool restore(bool tolerateCappedRepositioning) override {
         return true;
     }
+    bool restore(RecoveryUnit& ru, bool tolerateCappedRepositioning) override {
+        return true;
+    }
     void detachFromOperationContext() override {}
     void reattachToOperationContext(OperationContext* opCtx) override {}
     void setSaveStorageCursorOnDetachFromOperationContext(bool) override {}
@@ -163,13 +165,13 @@ class ChangeStreamOplogCollectionMock : public CollectionMock {
 public:
     ChangeStreamOplogCollectionMock() : CollectionMock(NamespaceString::kRsOplogNamespace) {
         _recordStore = _devNullEngine.getRecordStore(
-            nullptr, NamespaceString::kRsOplogNamespace, "", {.uuid = UUID::gen()});
+            nullptr, NamespaceString::kRsOplogNamespace, "", RecordStore::Options{}, UUID::gen());
     }
 
     void push_back(Document doc) {
         // Every entry we push into the oplog should have both 'ts' and 'ns' fields.
-        invariant(doc["ts"].getType() == BSONType::bsonTimestamp);
-        invariant(doc["ns"].getType() == BSONType::String);
+        invariant(doc["ts"].getType() == BSONType::timestamp);
+        invariant(doc["ns"].getType() == BSONType::string);
         // Events should always be added in ascending ts order.
         auto lastTs =
             _records.empty() ? Timestamp(0, 0) : _records.back().data.toBson()["ts"].timestamp();

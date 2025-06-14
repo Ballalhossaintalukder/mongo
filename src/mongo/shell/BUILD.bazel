@@ -271,13 +271,18 @@ render_template(
 
 MONGOJS_CPP_JSFILES = [
     "assert.js",
+    "assert_global.js",
     "bulk_api.js",
+    "bulk_api_global.js",
     "check_log.js",
+    "check_log_global.js",
     "collection.js",
     "crud_api.js",
     "db.js",
+    "db_global.js",
     "explain_query.js",
     "explainable.js",
+    "explainable_global.js",
     "mongo.js",
     "prelude.js",
     "query.js",
@@ -289,6 +294,8 @@ MONGOJS_CPP_JSFILES = [
     ":error_codes_js",
 ]
 
+# Converts core JS file content into CPP structures to be loaded directly
+# into the native binary via bytecode upon startup.
 render_template(
     name = "mongojs_cpp",
     srcs = [
@@ -467,15 +474,6 @@ mongo_cc_binary(
     srcs = [
         "mongo.cpp",
     ],
-    exec_properties = select({
-        "@platforms//cpu:x86_64": {
-            "Pool": "large_mem_x86_64",
-        },
-        "@platforms//cpu:aarch64": {
-            "Pool": "large_memory_arm64",
-        },
-        "//conditions:default": {},
-    }),
     linkopts = select({
         "@platforms//os:linux": [
             "-ldl",

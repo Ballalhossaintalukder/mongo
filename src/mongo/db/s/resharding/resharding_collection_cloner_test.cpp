@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <deque>
-#include <functional>
-#include <string>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/s/resharding/resharding_collection_cloner.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +41,7 @@
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/hasher.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
@@ -61,7 +53,6 @@
 #include "mongo/db/s/metrics/sharding_data_transform_instance_metrics.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/resharding/recipient_resume_document_gen.h"
-#include "mongo/db/s/resharding/resharding_collection_cloner.h"
 #include "mongo/db/s/resharding/resharding_data_copy_util.h"
 #include "mongo/db/s/resharding/resharding_metrics.h"
 #include "mongo/db/s/resharding/resharding_server_parameters_gen.h"
@@ -84,6 +75,17 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -200,6 +202,7 @@ protected:
 
         _pipeline->addInitialSource(
             DocumentSourceMock::createForTest(sourceCollectionData, _pipeline->getContext()));
+        _execPipeline = exec::agg::buildPipeline(_pipeline->getSources(), _pipeline->getContext());
         _resumeTokenNum = 0;
     }
 
@@ -240,7 +243,7 @@ protected:
             const auto bson = chunkData.getDocument().toBson();
             ChunkRange range{bson.getField("_id").Obj().getOwned(),
                              bson.getField("max").Obj().getOwned()};
-            ShardId shard{bson.getField("shard").valueStringDataSafe().toString()};
+            ShardId shard{std::string{bson.getField("shard").valueStringDataSafe()}};
             chunks.emplace_back(_sourceUUID,
                                 std::move(range),
                                 ChunkVersion({epoch, Timestamp(1, 1)}, {1, 0}),
@@ -269,17 +272,18 @@ protected:
      */
     bool doOneBatch(OperationContext* opCtx,
                     Pipeline& pipeline,
+                    exec::agg::Pipeline& execPipeline,
                     TxnNumber& txnNum,
                     ShardId donorShard,
                     HostAndPort donorHost,
                     size_t batchSize) {
-        pipeline.reattachToOperationContext(opCtx);
-        ON_BLOCK_EXIT([&pipeline] { pipeline.detachFromOperationContext(); });
+        execPipeline.reattachToOperationContext(opCtx);
+        ON_BLOCK_EXIT([&execPipeline] { execPipeline.detachFromOperationContext(); });
         _advanceResumeToken(batchSize);
 
         std::vector<InsertStatement> batch;
         do {
-            auto doc = pipeline.getNext();
+            auto doc = execPipeline.getNext();
             if (!doc) {
                 break;
             }
@@ -318,7 +322,8 @@ protected:
         // Make the documents require multiple insert batches.
         const size_t batchSize = std::max(static_cast<int64_t>(1), expectedDocumentsCount / 2);
 
-        while (doOneBatch(opCtx, *_pipeline, txnNum, kMyShardName, _myHostAndPort, batchSize)) {
+        while (doOneBatch(
+            opCtx, *_pipeline, *_execPipeline, txnNum, kMyShardName, _myHostAndPort, batchSize)) {
             AutoGetCollection tempColl{opCtx, _tempNss, MODE_IX};
             ASSERT_EQ(tempColl->numRecords(opCtx), _metrics->getDocumentsProcessedCount());
             ASSERT_EQ(tempColl->dataSize(opCtx), _metrics->getBytesWrittenCount());
@@ -382,6 +387,7 @@ private:
     std::unique_ptr<ReshardingMetrics> _metrics;
     std::unique_ptr<ReshardingCollectionCloner> _cloner;
     std::unique_ptr<Pipeline, PipelineDeleter> _pipeline;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
     // Mock 'postBatchResumeToken'. Incremented every a mock batch is processed.
     int _resumeTokenNum = 0;
 };

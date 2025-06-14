@@ -27,11 +27,8 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/update/update_object_node.h"
-
-#include <memory>
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/update/field_checker.h"
@@ -39,6 +36,8 @@
 #include "mongo/db/update/update_array_node.h"
 #include "mongo/db/update/update_leaf_node.h"
 #include "mongo/util/str.h"
+
+#include <memory>
 
 namespace mongo {
 
@@ -74,19 +73,19 @@ StatusWith<std::string> parseArrayFilterIdentifier(
     }
 
     if (!identifier.empty()) {
-        foundIdentifiers.emplace(identifier.toString());
+        foundIdentifiers.emplace(std::string{identifier});
     }
 
-    return identifier.toString();
+    return std::string{identifier};
 }
 
 /**
  * Gets the child of 'element' named 'field', if it exists. Otherwise returns a non-ok element.
  */
 mutablebson::Element getChild(mutablebson::Element element, StringData field) {
-    if (element.getType() == BSONType::Object) {
+    if (element.getType() == BSONType::object) {
         return element[field];
-    } else if (element.getType() == BSONType::Array) {
+    } else if (element.getType() == BSONType::array) {
         auto indexFromField = str::parseUnsignedBase10Integer(field);
         if (indexFromField) {
             return element.findNthChild(*indexFromField);
@@ -127,7 +126,7 @@ void applyChild(const UpdateNode& child,
         // updating the 'pathTaken' FieldRef.
         updateNodeApplyParams->pathTaken->append(
             field,
-            applyParams->element.getType() == BSONType::Array
+            applyParams->element.getType() == BSONType::array
                 ? RuntimeUpdatePath::ComponentType::kArrayIndex
                 : RuntimeUpdatePath::ComponentType::kFieldName);
     } else {
@@ -175,7 +174,7 @@ void applyChild(const UpdateNode& child,
             applyParams->element = childElement;
             updateNodeApplyParams->pathTaken->append(
                 updateNodeApplyParams->pathToCreate->getPart(0),
-                applyParams->element.getType() == BSONType::Array
+                applyParams->element.getType() == BSONType::array
                     ? RuntimeUpdatePath::ComponentType::kArrayIndex
                     : RuntimeUpdatePath::ComponentType::kFieldName);
 
@@ -187,7 +186,7 @@ void applyChild(const UpdateNode& child,
                 invariant(applyParams->element.ok());
                 updateNodeApplyParams->pathTaken->append(
                     updateNodeApplyParams->pathToCreate->getPart(i),
-                    parentType == BSONType::Array ? RuntimeUpdatePath::ComponentType::kArrayIndex
+                    parentType == BSONType::array ? RuntimeUpdatePath::ComponentType::kArrayIndex
                                                   : RuntimeUpdatePath::ComponentType::kFieldName);
             }
 
@@ -234,7 +233,7 @@ StatusWith<bool> UpdateObjectNode::parseAndMerge(
 
         // 2) a RenameNode at the path specified by the value of the "modExpr" element, which must
         //    be a string value.
-        if (BSONType::String != modExpr.type()) {
+        if (BSONType::string != modExpr.type()) {
             return Status(ErrorCodes::BadValue,
                           str::stream()
                               << "The 'to' field for $rename must be a string: " << modExpr);
@@ -292,7 +291,7 @@ StatusWith<bool> UpdateObjectNode::parseAndMerge(
             }
             childName = status.getValue();
         } else {
-            childName = fieldRef.getPart(i).toString();
+            childName = std::string{fieldRef.getPart(i)};
         }
 
         auto child = current->getChild(childName);
@@ -335,7 +334,7 @@ StatusWith<bool> UpdateObjectNode::parseAndMerge(
         }
         childName = status.getValue();
     } else {
-        childName = fieldRef.getPart(fieldRef.numParts() - 1).toString();
+        childName = std::string{fieldRef.getPart(fieldRef.numParts() - 1)};
     }
 
     if (current->getChild(childName)) {

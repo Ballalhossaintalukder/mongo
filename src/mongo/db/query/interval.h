@@ -29,13 +29,13 @@
 
 #pragma once
 
-#include <string>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/str.h"
+
+#include <string>
 
 namespace mongo {
 
@@ -76,7 +76,7 @@ struct Interval {
             ss << "(";
         }
         auto boundToString = [&](BSONElement bound) {
-            if (bound.type() == BSONType::String && hasNonSimpleCollation) {
+            if (bound.type() == BSONType::string && hasNonSimpleCollation) {
                 ss << "CollationKey(";
                 // False means omit the field name.
                 ss << "0x" << hexblob::encodeLower(bound.valueStringData());

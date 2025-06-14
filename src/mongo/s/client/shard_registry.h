@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstdint>
-#include <functional>
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -63,6 +51,19 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/read_through_cache.h"
+
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 
@@ -382,6 +383,11 @@ public:
      */
     std::shared_ptr<Shard> getShardForHostNoReload(const HostAndPort& shardHost) const;
 
+    /**
+     * Reports statistics about the shard registry to be used by serverStatus
+     */
+    void report(BSONObjBuilder* builder) const;
+
 private:
     friend class ShardRegistryTest;
 
@@ -472,6 +478,14 @@ private:
         Increment _forceReloadIncrement{0};
         Timestamp _topologyTime;
     };
+
+    struct Stats {
+        AtomicWord<long long> activeRefreshCount{0};
+        AtomicWord<long long> totalRefreshCount{0};
+        AtomicWord<long long> failedRefreshCount{0};
+
+        void report(BSONObjBuilder* builder) const;
+    } _stats;
 
     enum class Singleton { Only };
     static constexpr auto _kSingleton = Singleton::Only;

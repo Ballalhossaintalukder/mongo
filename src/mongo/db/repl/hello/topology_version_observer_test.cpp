@@ -28,12 +28,7 @@
  */
 
 
-#include <boost/none.hpp>
-#include <iostream>
-#include <memory>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/hello/topology_version_observer.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -43,7 +38,6 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/client.h"
 #include "mongo/db/repl/hello/hello_response.h"
-#include "mongo/db/repl/hello/topology_version_observer.h"
 #include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/repl_set_config.h"
@@ -58,6 +52,13 @@
 #include "mongo/util/future.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
+
+#include <iostream>
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -125,6 +126,23 @@ public:
         return cache;
     }
 
+    void forceElectionAndWaitForCacheUpdate(std::shared_ptr<const HelloResponse> cachedResponse) {
+        // Force an election to advance topology version
+        auto opCtx = makeOperationContext();
+        auto electionTimeoutWhen = getReplCoord()->getElectionTimeout_forTest();
+        simulateSuccessfulV1ElectionWithoutExitingDrainMode(electionTimeoutWhen, opCtx.get());
+
+        int sleepCounter = 0;
+        // Wait for the observer to update its cache
+        while (observer->getCached()->getTopologyVersion()->getCounter() ==
+               cachedResponse->getTopologyVersion()->getCounter()) {
+            sleepFor(sleepTime);
+            // Make sure the test doesn't wait here for longer than 15 seconds.
+            ASSERT_LTE(sleepCounter++, 150);
+        }
+        LOGV2(9326401, "Observer topology incremented after successful election");
+    }
+
 protected:
     ReplicationCoordinatorImpl* replCoord;
 
@@ -151,32 +169,39 @@ TEST_F(TopologyVersionObserverTest, UpdateCache) {
     auto cachedResponse = getObserverCache();
     ASSERT(cachedResponse);
 
-    // Force an election to advance topology version
-    auto opCtx = makeOperationContext();
-    auto electionTimeoutWhen = getReplCoord()->getElectionTimeout_forTest();
-    simulateSuccessfulV1ElectionWithoutExitingDrainMode(electionTimeoutWhen, opCtx.get());
-
-    auto sleepCounter = 0;
-    // Wait for the observer to update its cache
-    while (observer->getCached()->getTopologyVersion()->getCounter() ==
-           cachedResponse->getTopologyVersion()->getCounter()) {
-        sleepFor(sleepTime);
-        // Make sure the test doesn't wait here for longer than 15 seconds.
-        ASSERT_LTE(sleepCounter++, 150);
-    }
-    LOGV2(9326401, "Observer topology incremented after successful election");
+    forceElectionAndWaitForCacheUpdate(cachedResponse);
 
     auto newResponse = observer->getCached();
     ASSERT(newResponse && newResponse->getTopologyVersion());
     ASSERT(newResponse->getTopologyVersion()->getCounter() >
            cachedResponse->getTopologyVersion()->getCounter());
 
+    auto opCtx = makeOperationContext();
     auto expectedResponse =
         replCoord->awaitHelloResponse(opCtx.get(), {}, boost::none, boost::none);
     ASSERT(expectedResponse && expectedResponse->getTopologyVersion());
 
     ASSERT_EQ(newResponse->getTopologyVersion()->getCounter(),
               expectedResponse->getTopologyVersion()->getCounter());
+}
+
+TEST_F(TopologyVersionObserverTest, CallbackExecutedOnTopologyChange) {
+    // Wait for the observer to see the initial replSetConfig
+    auto cachedResponse = getObserverCache();
+    ASSERT(cachedResponse);
+
+    // Set up a notification to learn when the callback has been called
+    Notification<ReplSetConfig> receivedConfig;
+    observer->registerTopologyChangeObserver(
+        [&](const ReplSetConfig& config) { receivedConfig.set(config); });
+
+    ASSERT(!receivedConfig);
+
+    // Force an election
+    forceElectionAndWaitForCacheUpdate(cachedResponse);
+
+    // Verify callback was executed successfully after the topology change.
+    ASSERT_EQ(receivedConfig.get().getConfigVersion(), replCoord->getConfig().getConfigVersion());
 }
 
 TEST_F(TopologyVersionObserverTest, HandleDBException) {

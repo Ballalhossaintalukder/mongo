@@ -37,7 +37,7 @@ def make_process(*args, **kwargs) -> process.Process:
 
 def get_path_env_var(env_vars):
     """Return the path base on provided environment variable."""
-    path = [os.getcwd()] + config.DEFAULT_MULTIVERSION_DIRS
+    path = [os.getcwd()] + config.MULTIVERSION_DIRS
     # If installDir is provided, add it early to the path
     if config.INSTALL_DIR is not None:
         path.append(config.INSTALL_DIR)
@@ -283,6 +283,7 @@ def mongo_shell_program(
         "multiversionBinVersion": (shell_mixed_version, ""),
         "storageEngine": (config.STORAGE_ENGINE, ""),
         "storageEngineCacheSizeGB": (config.STORAGE_ENGINE_CACHE_SIZE, ""),
+        "storageEngineCacheSizePct": (config.STORAGE_ENGINE_CACHE_SIZE_PCT, ""),
         "testName": (test_name, ""),
         "wiredTigerCollectionConfigString": (config.WT_COLL_CONFIG, ""),
         "wiredTigerEngineConfigString": (config.WT_ENGINE_CONFIG, ""),
@@ -354,6 +355,9 @@ def mongo_shell_program(
     feature_flag_dict = {}
     if config.ENABLED_FEATURE_FLAGS is not None:
         feature_flag_dict = {ff: "true" for ff in config.ENABLED_FEATURE_FLAGS}
+
+    if config.DISABLED_FEATURE_FLAGS is not None:
+        feature_flag_dict |= {ff: "false" for ff in config.DISABLED_FEATURE_FLAGS}
 
     # Propagate additional setParameters to mongod processes spawned by the mongo shell. Command
     # line options to resmoke.py override the YAML configuration.

@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <functional>
-#include <map>
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/cancelable_operation_context.h"
 #include "mongo/db/namespace_string.h"
@@ -58,6 +50,15 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <functional>
+#include <map>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 
@@ -129,9 +130,9 @@ public:
     virtual void startOplogApplication() = 0;
 
     /**
-     * Notifies the data replication machinery that the critical section has started.
+     * Makes the data replication machinery prepare for the critical section.
      */
-    virtual void onEnteringCriticalSection() = 0;
+    virtual void prepareForCriticalSection() = 0;
 
     /**
      * Returns a future that becomes ready when either
@@ -194,7 +195,7 @@ public:
 
     void startOplogApplication() override;
 
-    void onEnteringCriticalSection() override;
+    void prepareForCriticalSection() override;
 
     SharedSemiFuture<void> awaitCloningDone() override;
 

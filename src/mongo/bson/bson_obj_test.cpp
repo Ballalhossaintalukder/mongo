@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-
 #include "mongo/base/data_range.h"
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/error_codes.h"
@@ -58,6 +48,16 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 namespace {
 using namespace mongo;
@@ -667,11 +667,11 @@ TEST(BSONObj, getFields) {
     std::array<StringData, 3> fieldNames{"c", "d", "f"};
     std::array<BSONElement, 3> fields;
     e.getFields(fieldNames, &fields);
-    ASSERT_EQUALS(fields[0].type(), BSONType::NumberInt);
+    ASSERT_EQUALS(fields[0].type(), BSONType::numberInt);
     ASSERT_EQUALS(fields[0].numberInt(), 3);
-    ASSERT_EQUALS(fields[1].type(), BSONType::NumberInt);
+    ASSERT_EQUALS(fields[1].type(), BSONType::numberInt);
     ASSERT_EQUALS(fields[1].numberInt(), 4);
-    ASSERT_EQUALS(fields[2].type(), BSONType::NumberInt);
+    ASSERT_EQUALS(fields[2].type(), BSONType::numberInt);
     ASSERT_EQUALS(fields[2].numberInt(), 6);
 }
 
@@ -682,9 +682,9 @@ TEST(BSONObj, getFieldsWithDuplicates) {
     std::array<StringData, 2> fieldNames{"a", "b"};
     std::array<BSONElement, 2> fields;
     e.getFields(fieldNames, &fields);
-    ASSERT_EQUALS(fields[0].type(), BSONType::NumberInt);
+    ASSERT_EQUALS(fields[0].type(), BSONType::numberInt);
     ASSERT_EQUALS(fields[0].numberInt(), 2);
-    ASSERT_EQUALS(fields[1].type(), BSONType::String);
+    ASSERT_EQUALS(fields[1].type(), BSONType::string);
     ASSERT_EQUALS(fields[1].str(), "3");
 }
 

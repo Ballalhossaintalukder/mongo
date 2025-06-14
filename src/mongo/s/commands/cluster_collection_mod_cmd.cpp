@@ -28,13 +28,6 @@
  */
 
 
-#include <set>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -72,6 +65,13 @@
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <set>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -130,11 +130,12 @@ public:
 
         auto swDbInfo = Grid::get(opCtx)->catalogCache()->getDatabase(opCtx, cmd.getDbName());
         if (swDbInfo == ErrorCodes::NamespaceNotFound) {
-            uassert(
-                CollectionUUIDMismatchInfo(
-                    cmd.getDbName(), *cmd.getCollectionUUID(), nss.coll().toString(), boost::none),
-                "Database does not exist",
-                !cmd.getCollectionUUID());
+            uassert(CollectionUUIDMismatchInfo(cmd.getDbName(),
+                                               *cmd.getCollectionUUID(),
+                                               std::string{nss.coll()},
+                                               boost::none),
+                    "Database does not exist",
+                    !cmd.getCollectionUUID());
         }
         const auto dbInfo = uassertStatusOK(swDbInfo);
 
@@ -182,13 +183,13 @@ public:
         }
 
         const auto& rawData = resultObj[kRawFieldName];
-        if (!ctx.checkAndAssertType(rawData, Object)) {
+        if (!ctx.checkAndAssertType(rawData, BSONType::object)) {
             return;
         }
 
         auto rawCtx = IDLParserContext(kRawFieldName, &ctx);
         for (const auto& element : rawData.Obj()) {
-            if (!rawCtx.checkAndAssertType(element, Object)) {
+            if (!rawCtx.checkAndAssertType(element, BSONType::object)) {
                 return;
             }
 

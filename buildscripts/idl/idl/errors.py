@@ -69,10 +69,7 @@ ERROR_ID_BAD_ARRAY_TYPE_NAME = "ID0023"
 ERROR_ID_ARRAY_NO_DEFAULT = "ID0024"
 ERROR_ID_BAD_IMPORT = "ID0025"
 ERROR_ID_BAD_BINDATA_DEFAULT = "ID0026"
-ERROR_ID_CHAINED_TYPE_NOT_FOUND = "ID0027"
-ERROR_ID_CHAINED_TYPE_WRONG_BSON_TYPE = "ID0028"
 ERROR_ID_CHAINED_DUPLICATE_FIELD = "ID0029"
-ERROR_ID_CHAINED_NO_TYPE_STRICT = "ID0030"
 ERROR_ID_CHAINED_STRUCT_NOT_FOUND = "ID0031"
 ERROR_ID_CHAINED_NO_NESTED_STRUCT_STRICT = "ID0032"
 ERROR_ID_CHAINED_NO_NESTED_CHAINED = "ID0033"
@@ -144,6 +141,7 @@ ERROR_ID_ILLEGALLY_FCV_GATED_FEATURE_FLAG = "ID0105"
 ERROR_ID_INCREMENTAL_FEATURE_FLAG_DEFAULT_VALUE = "ID0106"
 ERROR_ID_FEATURE_FLAG_WITHOUT_DEFAULT_VALUE = "ID0107"
 ERROR_ID_IFR_FLAG_WITH_VERSION = "ID108"
+ERROR_ID_BAD_VISIBILITY = "ID109"
 
 
 class IDLError(Exception):
@@ -646,28 +644,6 @@ class ParserContext(object):
             ("Default values are not allowed for %s '%s'") % (ast_type, ast_parent),
         )
 
-    def add_chained_type_not_found_error(self, location, type_name):
-        # type: (common.SourceLocation, str) -> None
-        """Add an error about a chained_type not found."""
-        self._add_error(
-            location,
-            ERROR_ID_CHAINED_TYPE_NOT_FOUND,
-            ("Type '%s' is not a valid chained type") % (type_name),
-        )
-
-    def add_chained_type_wrong_type_error(self, location, type_name, bson_type_name):
-        # type: (common.SourceLocation, str, str) -> None
-        """Add an error about a chained_type being the wrong type."""
-        self._add_error(
-            location,
-            ERROR_ID_CHAINED_TYPE_WRONG_BSON_TYPE,
-            (
-                "Chained Type '%s' has the wrong bson serialization type '%s', only"
-                + "'chain' is supported for chained types."
-            )
-            % (type_name, bson_type_name),
-        )
-
     def add_duplicate_field_error(self, location, field_container, field_name, duplicate_location):
         # type: (common.SourceLocation, str, str, common.SourceLocation) -> None
         """Add an error about duplicate fields as a result of chained structs/types."""
@@ -676,19 +652,6 @@ class ParserContext(object):
             ERROR_ID_CHAINED_DUPLICATE_FIELD,
             ("Chained Struct or Type '%s' duplicates an existing field '%s' at location" + "'%s'.")
             % (field_container, field_name, duplicate_location),
-        )
-
-    def add_chained_type_no_strict_error(self, location, struct_name):
-        # type: (common.SourceLocation, str) -> None
-        """Add an error about strict parser validate and chained types."""
-        self._add_error(
-            location,
-            ERROR_ID_CHAINED_NO_TYPE_STRICT,
-            (
-                "Strict IDL parser validation is not supported with chained types for "
-                + "struct '%s'. Specify 'strict: false' for this struct."
-            )
-            % (struct_name),
         )
 
     def add_chained_struct_not_found_error(self, location, struct_name):
@@ -1154,7 +1117,7 @@ class ParserContext(object):
             ERROR_ID_ILLEGALLY_FCV_GATED_FEATURE_FLAG,
             (
                 "A feature flag in any phase other than the default ('not_for_incremental_rollout') "
-                "must not also set 'shouldBeFCVGated' to true."
+                "must not also set 'fcv_gated' to true."
             ),
         )
 
@@ -1377,6 +1340,14 @@ class ParserContext(object):
             ERROR_ID_BAD_CPP_NAMESPACE,
             "cpp_namespace must start with 'mongo::' or be just 'mongo', namespace '%s' is not supported"
             % (namespace),
+        )
+
+    def add_bad_visibility(self, node: yaml.nodes.Node, mod_visibility: str):
+        """Add an error about a bad visibility value."""
+        self._add_node_error(
+            node,
+            ERROR_ID_BAD_VISIBILITY,
+            f"Bad visibility value '{mod_visibility}', only pub, pub_for_technical_reasons, private, file_private, needs_replacement, and use_replacement(...) are accepted",
         )
 
 

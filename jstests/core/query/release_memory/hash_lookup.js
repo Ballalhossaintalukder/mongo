@@ -13,13 +13,19 @@
  *   does_not_support_transactions,
  *   # releaseMemory needs special permission
  *   assumes_superuser_permissions,
+ *   # This test relies on query commands returning specific batch-sized responses.
+ *   assumes_no_implicit_cursor_exhaustion,
  * ]
  */
 
 import {assertArrayEq} from "jstests/aggregation/extras/utils.js";
 import {DiscoverTopology} from "jstests/libs/discover_topology.js";
 import {getAggPlanStages, getEngine} from "jstests/libs/query/analyze_plan.js";
-import {accumulateServerStatusMetric} from "jstests/libs/release_memory_util.js";
+import {
+    accumulateServerStatusMetric,
+    assertReleaseMemoryFailedWithCode,
+    setAvailableDiskSpaceMode
+} from "jstests/libs/release_memory_util.js";
 import {setParameterOnAllHosts} from "jstests/noPassthrough/libs/server_parameter_helpers.js";
 
 function getSpillCounter() {
@@ -41,6 +47,16 @@ const sbeIncreasedSpillingInitialValue = getServerParameter(sbeIncreasedSpilling
 
 // HashLookup in SBE might use HashAgg. We want to control spilling. Disable increased spilling.
 setServerParameter(sbeIncreasedSpillingKnob, "never");
+
+// For _internalInhibitOptimization tests, prevent DSCursor from reading all the data in a single
+// batch.
+const dsCursorKnobs =
+    ["internalDocumentSourceCursorInitialBatchSize", "internalDocumentSourceCursorBatchSizeBytes"];
+const dsCursorKnobValues = [];
+for (const knob of dsCursorKnobs) {
+    dsCursorKnobValues.push(getServerParameter(knob));
+    setServerParameter(knob, 1);
+}
 
 const students = db[jsTestName() + "_students"];
 students.drop();
@@ -80,8 +96,15 @@ const lookupWithoutPipeline = [
     {$lookup: {from: students.getName(), localField: "name", foreignField: "name", as: "matched"}}
 ];
 
-for (let {localColl, pipeline} of [{localColl: people, pipeline: lookupWithPipeline},
-                                   {localColl: people, pipeline: lookupWithoutPipeline}]) {
+const tests = [];
+for (let pipeline of [lookupWithPipeline, lookupWithoutPipeline]) {
+    tests.push({localColl: people, pipeline: pipeline});
+    // Add {$_internalInhibitOptimization: {}} to avoid pipeline elimination.
+    tests.push(
+        {localColl: students, pipeline: pipeline.concat([{$_internalInhibitOptimization: {}}])});
+}
+
+for (let {localColl, pipeline} of tests) {
     jsTest.log.info("Running pipeline: ", pipeline[0]);
 
     const explain = localColl.explain().aggregate(pipeline);
@@ -160,6 +183,29 @@ for (let {localColl, pipeline} of [{localColl: people, pipeline: lookupWithPipel
 
         setServerParameter(memoryKnob, memoryInitialValue);
     }
+
+    // No disk space available for spilling.
+    {
+        jsTest.log(`Running releaseMemory with no disk space available`);
+        const cursor =
+            localColl.aggregate(pipeline, {"allowDiskUse": true, cursor: {batchSize: 1}});
+        const cursorId = cursor.getId();
+
+        // Release memory (i.e., spill)
+        setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'alwaysOn');
+        const releaseMemoryCmd = {releaseMemory: [cursorId]};
+        jsTest.log.info("Running releaseMemory: ", releaseMemoryCmd);
+        const releaseMemoryRes = db.runCommand(releaseMemoryCmd);
+        assert.commandWorked(releaseMemoryRes);
+        assertReleaseMemoryFailedWithCode(releaseMemoryRes, cursorId, ErrorCodes.OutOfDiskSpace);
+        setAvailableDiskSpaceMode(db.getSiblingDB("admin"), 'off');
+
+        jsTest.log.info("Running getMore");
+        assert.throwsWithCode(() => cursor.toArray(), ErrorCodes.CursorNotFound);
+    }
 }
 
 setServerParameter(sbeIncreasedSpillingKnob, sbeIncreasedSpillingInitialValue);
+for (let i = 0; i < dsCursorKnobs.length; i++) {
+    setServerParameter(dsCursorKnobs[i], dsCursorKnobValues[i]);
+}

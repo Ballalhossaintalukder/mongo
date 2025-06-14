@@ -876,35 +876,6 @@ class TestGenerator(testcase.IDLTestcase):
             ],
         )
 
-    def test_chained_struct(self) -> None:
-        """Test generation of 'chained_types:' and 'chained_struct:' tag."""
-        header, source = self.assert_generate_with_basic_types(
-            dedent(
-                """
-            types:
-                ChainedType:
-                    bson_serialization_type: chain
-                    description: "An Chain Type to test chaining"
-                    cpp_type: "mongo::ChainedType"
-                    serializer: mongo::ChainedType::serializeToBSON
-                    deserializer: mongo::ChainedType::parseFromBSON
-                    is_view: false
-            structs:
-                ChainedStruct:
-                    description: Test struct with chained type.
-                    strict: false
-                    chained_types:
-                        ChainedType: ChainedType
-            """
-            )
-        )
-        self.assertStringsInFile(
-            header,
-            [
-                "mongo::ChainedType _chainedType;",
-            ],
-        )
-
     def test_enum(self) -> None:
         """Test generation of enum fields."""
         header, _ = self.assert_generate_with_basic_types(
@@ -1290,7 +1261,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     default: false
-                    shouldBeFCVGated: false
+                    fcv_gated: false
             """
             )
         )
@@ -1316,7 +1287,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     default: true
-                    shouldBeFCVGated: false
+                    fcv_gated: false
             """
             )
         )
@@ -1342,7 +1313,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     default: false
-                    shouldBeFCVGated: true
+                    fcv_gated: true
             """
             )
         )
@@ -1369,7 +1340,7 @@ class TestGenerator(testcase.IDLTestcase):
                     cpp_varname: gToaster
                     default: true
                     version: 123
-                    shouldBeFCVGated: true
+                    fcv_gated: true
             """
             )
         )
@@ -1398,7 +1369,7 @@ class TestGenerator(testcase.IDLTestcase):
                     cpp_varname: gToaster
                     default: true
                     version: 123
-                    shouldBeFCVGated: true
+                    fcv_gated: true
                     enable_on_transitional_fcv: true
             """
             )
@@ -1428,7 +1399,7 @@ class TestGenerator(testcase.IDLTestcase):
                     cpp_varname: gToaster
                     default: true
                     version: 123
-                    shouldBeFCVGated: true
+                    fcv_gated: true
                     enable_on_transitional_fcv: false
             """
             )
@@ -1456,7 +1427,7 @@ class TestGenerator(testcase.IDLTestcase):
                     cpp_varname: gLegacyAPIToaster
                     default: true
                     version: 123
-                    shouldBeFCVGated: true
+                    fcv_gated: true
                     fcv_context_unaware: true
             """
             )
@@ -1483,7 +1454,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     incremental_rollout_phase: in_development
-                    shouldBeFCVGated: false
+                    fcv_gated: false
             """
             )
         )
@@ -1510,7 +1481,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     incremental_rollout_phase: rollout
-                    shouldBeFCVGated: false
+                    fcv_gated: false
             """
             )
         )
@@ -1537,7 +1508,7 @@ class TestGenerator(testcase.IDLTestcase):
                     description: "Make toast"
                     cpp_varname: gToaster
                     incremental_rollout_phase: released
-                    shouldBeFCVGated: false
+                    fcv_gated: false
             """
             )
         )

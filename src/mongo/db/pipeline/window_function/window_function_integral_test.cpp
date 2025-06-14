@@ -27,20 +27,21 @@
  *    it in the license file.
  */
 
-#include <cmath>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/window_function/window_function_integral.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
-#include "mongo/db/pipeline/window_function/window_function_integral.h"
 #include "mongo/platform/decimal128.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/time_support.h"
+
+#include <cmath>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -196,7 +197,7 @@ TEST_F(WindowFunctionIntegralTest, ShouldWidenToDecimalOnlyIfNeeded) {
     auto val = integral->getValue();
     double expectedIntegral = (7 + 2) * (5.0 - 1.0) / 2.0;
     ASSERT_VALUE_EQ(val, Value(expectedIntegral));
-    ASSERT_TRUE(val.getType() == NumberDecimal);
+    ASSERT_TRUE(val.getType() == BSONType::numberDecimal);
 
     integral->reset();
 
@@ -207,7 +208,7 @@ TEST_F(WindowFunctionIntegralTest, ShouldWidenToDecimalOnlyIfNeeded) {
 
     val = integral->getValue();
     ASSERT_VALUE_EQ(val, Value(expectedIntegral));
-    ASSERT_TRUE(val.getType() == NumberDouble);
+    ASSERT_TRUE(val.getType() == BSONType::numberDouble);
 }
 
 TEST_F(WindowFunctionIntegralTest, CanHandleDateTypeWithUnit) {

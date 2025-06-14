@@ -27,12 +27,9 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/s/catalog/sharding_catalog_client_mock.h"
 
 #include "mongo/base/error_codes.h"
-#include "mongo/s/catalog/sharding_catalog_client_mock.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_config_version_gen.h"
@@ -41,6 +38,9 @@
 #include "mongo/s/catalog/type_tags.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -151,12 +151,6 @@ std::pair<CollectionType, std::vector<ChunkType>> ShardingCatalogClientMock::get
     const NamespaceString& nss,
     const ChunkVersion& sinceVersion,
     const repl::ReadConcernArgs& readConcern) {
-    uasserted(ErrorCodes::InternalError, "Method not implemented");
-}
-
-std::pair<CollectionType, std::vector<IndexCatalogType>>
-ShardingCatalogClientMock::getCollectionAndShardingIndexCatalogEntries(
-    OperationContext* opCtx, const NamespaceString& nss, const repl::ReadConcernArgs& readConcern) {
     uasserted(ErrorCodes::InternalError, "Method not implemented");
 }
 

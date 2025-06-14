@@ -6,9 +6,7 @@ package(default_visibility = ["//visibility:public"])
 generate_config_header(
     name = "mongo_config_header",
     checks = "mongo_config_header.py",
-    extra_definitions = {
-        "DEVELOPER_DIR": "$(location //bazel/config:developer_dir)",
-    } | select({
+    extra_definitions = select({
         "//bazel/config:use_wiredtiger_enabled": {
             "MONGO_CONFIG_WIREDTIGER_ENABLED": "1",
         },
@@ -86,28 +84,6 @@ generate_config_header(
     logfile = "mongo_config.log",
     output = "config.h",
     template = "config.h.in",
-)
-
-# DO NOT ADD TO THIS UNLESS ABSOLUTELY NECESSARY TO UNBLOCK WORK!!
-# This library is added as a global dependency to anything in the src/mongo tree
-# and is used as a workaround for any headers added that will require a significant
-# refactor to get working (ex. many hours of work). This work needs to be done eventually,
-# but if resolving a header cycle is blocking critical work this list can be used to
-# defer the refactor until later.
-#
-# Any header added to this list must reference its own TODO ticket to refactor
-# the header graph to not require it to be added globally.
-#
-# If modifying this list please add the Build team as a reviewer to make sure that
-# the header can't be used normally without a large refactor.
-#
-# This list is an absolute last resort; do not add to this list unless you've put
-# significant effort into trying to use a header reference without it.
-mongo_cc_library(
-    name = "_global_header_bypass",
-    hdrs = [
-        "_bypass_header_example.h",
-    ],
 )
 
 mongo_cc_library(
@@ -232,7 +208,6 @@ mongo_cc_library(
         "//src/mongo/base:data_range_cursor.h",
         "//src/mongo/base:data_type.h",
         "//src/mongo/base:data_type_endian.h",
-        "//src/mongo/base:data_type_string_data.h",
         "//src/mongo/base:data_type_terminated.h",
         "//src/mongo/base:data_view.h",
         "//src/mongo/base:dependency_graph.h",
@@ -430,6 +405,21 @@ mongo_cc_library(
     }),
 )
 
+# DO NOT ADD TO THIS UNLESS ABSOLUTELY NECESSARY TO UNBLOCK WORK!!
+# This library is added as a global dependency to anything in the src/mongo tree
+# and is used as a workaround for any headers added that will require a significant
+# refactor to get working (ex. many hours of work). This work needs to be done eventually,
+# but if resolving a header cycle is blocking critical work this list can be used to
+# defer the refactor until later.
+#
+# Any header added to this list must reference its own TODO ticket to refactor
+# the header graph to not require it to be added globally.
+#
+# If modifying this list please add the Build team as a reviewer to make sure that
+# the header can't be used normally without a large refactor.
+#
+# This list is an absolute last resort; do not add to this list unless you've put
+# significant effort into trying to use a header reference without it.
 filegroup(
     name = "core_headers",
     srcs = [
@@ -489,7 +479,6 @@ filegroup(
         "//src/mongo/db:feature_flag_server_parameter.h",
         "//src/mongo/db:field_ref.h",
         "//src/mongo/db:index_names.h",
-        "//src/mongo/db:json.h",
         "//src/mongo/db:keypattern.h",
         "//src/mongo/db:list_collections_gen",
         "//src/mongo/db:logical_time_hdrs",
@@ -557,6 +546,8 @@ filegroup(
         "//src/mongo/db/catalog:collection_options.h",
         "//src/mongo/db/catalog:collection_options_gen",
         "//src/mongo/db/catalog:collection_options_validation.h",
+        "//src/mongo/db/catalog:durable_catalog_entry.h",
+        "//src/mongo/db/catalog:durable_catalog_entry_metadata.h",
         "//src/mongo/db/catalog:index_catalog.h",
         "//src/mongo/db/catalog:index_catalog_entry.h",
         "//src/mongo/db/catalog/util:partitioned.h",
@@ -728,10 +719,8 @@ filegroup(
         "//src/mongo/db/storage:backup_block.h",
         "//src/mongo/db/storage:backup_cursor_hooks.h",
         "//src/mongo/db/storage:backup_cursor_state.h",
-        "//src/mongo/db/storage:bson_collection_catalog_entry.h",
         "//src/mongo/db/storage:compact_options.h",
         "//src/mongo/db/storage:duplicate_key_error_info.h",
-        "//src/mongo/db/storage:durable_catalog_entry.h",
         "//src/mongo/db/storage:ident.h",
         "//src/mongo/db/storage:index_entry_comparison.h",
         "//src/mongo/db/storage:key_format.h",
@@ -741,6 +730,7 @@ filegroup(
         "//src/mongo/db/storage:recovery_unit_hdrs",
         "//src/mongo/db/storage:snapshot.h",
         "//src/mongo/db/storage:sorted_data_interface.h",
+        "//src/mongo/db/storage:spill_table.h",
         "//src/mongo/db/storage:storage_engine.h",
         "//src/mongo/db/storage:storage_engine_init.h",
         "//src/mongo/db/storage:storage_metrics.h",
@@ -761,9 +751,11 @@ filegroup(
         "//src/mongo/idl:generic_argument.h",
         "//src/mongo/idl:generic_argument_gen",
         "//src/mongo/idl:idl_parser.h",
+        "//src/mongo/idl:error_status_idl.h",
         "//src/mongo/platform:atomic_proxy.h",
         "//src/mongo/platform:visibility.h",
         "//src/mongo/rpc:get_status_from_command_result.h",
+        "//src/mongo/rpc:get_status_from_command_result_write_util.h",
         "//src/mongo/rpc:message_hdrs",
         "//src/mongo/rpc:metadata.h",
         "//src/mongo/rpc:object_check.h",
@@ -780,7 +772,6 @@ filegroup(
         "//src/mongo/s:chunk_version.h",
         "//src/mongo/s:database_version.h",
         "//src/mongo/s:database_version_base_gen",
-        "//src/mongo/s:index_version.h",
         "//src/mongo/s:shard_key_pattern.h",
         "//src/mongo/s:shard_version.h",
         "//src/mongo/s:stale_exception.h",

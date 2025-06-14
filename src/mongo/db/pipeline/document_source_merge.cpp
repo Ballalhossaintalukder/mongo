@@ -27,20 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <fmt/ostream.h>
-#include <iosfwd>
-#include <map>
-#include <tuple>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_merge.h"
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/auth/action_type.h"
@@ -48,7 +35,6 @@
 #include "mongo/db/curop_failpoint_helpers.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/pipeline/document_source_merge.h"
 #include "mongo/db/pipeline/document_source_merge_gen.h"
 #include "mongo/db/pipeline/document_source_merge_spec.h"
 #include "mongo/db/pipeline/variable_validation.h"
@@ -63,6 +49,21 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iosfwd>
+#include <map>
+#include <tuple>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+#include <fmt/ostream.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -107,7 +108,7 @@ DocumentSourceMergeSpec parseMergeSpecAndResolveTargetNamespace(
     // value specifies a target collection name. Since it is not possible to specify a target
     // database name using the shortcut syntax (to match the semantics of the $out stage), the
     // target database will use the default name provided.
-    if (spec.type() == BSONType::String) {
+    if (spec.type() == BSONType::string) {
         targetNss = NamespaceStringUtil::deserialize(defaultDb, spec.valueStringData());
     } else {
         const auto tenantId = defaultDb.tenantId();
@@ -174,7 +175,7 @@ std::unique_ptr<DocumentSourceMerge::LiteParsed> DocumentSourceMerge::LiteParsed
             fmt::format("{} requires a string or object argument, but found {}",
                         kStageName,
                         typeName(spec.type())),
-            spec.type() == BSONType::String || spec.type() == BSONType::Object);
+            spec.type() == BSONType::string || spec.type() == BSONType::object);
 
     auto mergeSpec = parseMergeSpecAndResolveTargetNamespace(spec, nss.dbName());
     auto targetNss = mergeSpec.getTargetNss();
@@ -229,7 +230,7 @@ DocumentSourceMerge::DocumentSourceMerge(NamespaceString outputNs,
                                          std::set<FieldPath> mergeOnFields,
                                          boost::optional<ChunkVersion> collectionPlacementVersion,
                                          bool allowMergeOnNullishValues)
-    : DocumentSourceWriter(kStageName.rawData(), std::move(outputNs), expCtx),
+    : DocumentSourceWriter(kStageName.data(), std::move(outputNs), expCtx),
       _mergeOnFields(std::move(mergeOnFields)),
       _mergeOnFieldsIncludesId(_mergeOnFields.count("_id") == 1) {
     _mergeProcessor.emplace(expCtx,
@@ -317,7 +318,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceMerge::createFromBson(
     uassert(51182,
             fmt::format(
                 "{} only supports a string or object argument, not {}", kStageName, spec.type()),
-            spec.type() == BSONType::String || spec.type() == BSONType::Object);
+            spec.type() == BSONType::string || spec.type() == BSONType::object);
 
     auto mergeSpec = parseMergeSpecAndResolveTargetNamespace(
         spec, expCtx->getNamespaceString().dbName(), expCtx->getSerializationContext());

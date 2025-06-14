@@ -27,8 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -44,6 +42,8 @@
 #include "mongo/s/client/num_hosts_targeted_metrics.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
+
+#include <memory>
 
 namespace mongo {
 namespace {
@@ -108,19 +108,19 @@ public:
 
     BSONObj generateSection(OperationContext* opCtx,
                             const BSONElement& configElement) const override {
-        auto const grid = Grid::get(opCtx);
-        auto const catalogCache = grid->catalogCache();
-        auto& numHostsTargetedMetrics = NumHostsTargetedMetrics::get(opCtx);
+
+        const auto grid = Grid::get(opCtx);
+        if (!grid->isInitialized()) {
+            return {};
+        }
 
         BSONObjBuilder result;
+        auto configServerInShardCache = grid->shardRegistry()->cachedClusterHasConfigShard();
+        result.appendBool("configServerInShardCache", configServerInShardCache.value_or(false));
 
-        numHostsTargetedMetrics.appendSection(&result);
-        catalogCache->report(&result);
-
-        if (grid->isInitialized()) {
-            auto configServerInShardCache = grid->shardRegistry()->cachedClusterHasConfigShard();
-            result.appendBool("configServerInShardCache", configServerInShardCache.value_or(false));
-        }
+        NumHostsTargetedMetrics::get(opCtx).report(&result);
+        grid->catalogCache()->report(&result);
+        grid->shardRegistry()->report(&result);
 
         return result.obj();
     }

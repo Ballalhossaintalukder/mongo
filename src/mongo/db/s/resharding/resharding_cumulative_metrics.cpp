@@ -29,16 +29,16 @@
 
 #include "mongo/db/s/resharding/resharding_cumulative_metrics.h"
 
-#include <absl/container/node_hash_map.h>
+#include "mongo/s/resharding/resharding_feature_flag_gen.h"
+
 #include <array>
-#include <boost/move/utility_core.hpp>
 #include <memory>
 #include <utility>
 #include <variant>
 
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/s/resharding/resharding_feature_flag_gen.h"
 
 namespace mongo {
 
@@ -47,7 +47,7 @@ namespace {
 constexpr auto kResharding = "resharding";
 
 const auto kReportedStateFieldNamesMap = [] {
-    return ReshardingCumulativeMetrics::StateFieldNameMap{
+    return ReshardingCumulativeMetrics::StateTracker::StateFieldNameMap{
         {CoordinatorStateEnum::kInitializing, "countInstancesInCoordinatorState1Initializing"},
         {CoordinatorStateEnum::kPreparingToDonate,
          "countInstancesInCoordinatorState2PreparingToDonate"},
@@ -81,15 +81,14 @@ const auto kReportedStateFieldNamesMap = [] {
 }  // namespace
 
 boost::optional<StringData> ReshardingCumulativeMetrics::fieldNameFor(AnyState state) {
-    return getNameFor(state, kReportedStateFieldNamesMap);
+    return StateTracker::getNameFor(state, kReportedStateFieldNamesMap);
 }
 
 ReshardingCumulativeMetrics::ReshardingCumulativeMetrics()
     : ReshardingCumulativeMetrics(kResharding) {}
 
 ReshardingCumulativeMetrics::ReshardingCumulativeMetrics(const std::string& rootName)
-    : resharding_cumulative_metrics::Base(
-          rootName, std::make_unique<ReshardingCumulativeMetricsFieldNameProvider>()),
+    : Base(rootName, std::make_unique<ReshardingCumulativeMetricsFieldNameProvider>()),
       _fieldNames(
           static_cast<const ReshardingCumulativeMetricsFieldNameProvider*>(getFieldNames())) {}
 
@@ -127,31 +126,67 @@ void ReshardingCumulativeMetrics::reportForServerStatus(BSONObjBuilder* bob) con
     }
 }
 
-void ReshardingCumulativeMetrics::onStarted(bool isSameKeyResharding) {
+void ReshardingCumulativeMetrics::onStarted(bool isSameKeyResharding, const UUID& reshardingUUID) {
+    {
+        stdx::lock_guard<stdx::mutex> lk(_activeReshardingOperationsMutex);
+        if (_activeReshardingOperations.contains(reshardingUUID)) {
+            return;
+        }
+        _activeReshardingOperations.insert(reshardingUUID);
+    }
+
     if (_rootSectionName == kResharding && isSameKeyResharding) {
         _countSameKeyStarted.fetchAndAdd(1);
     }
+
     Base::onStarted();
 }
 
-void ReshardingCumulativeMetrics::onSuccess(bool isSameKeyResharding) {
+void ReshardingCumulativeMetrics::onSuccess(bool isSameKeyResharding, const UUID& reshardingUUID) {
+    {
+        stdx::lock_guard<stdx::mutex> lk(_activeReshardingOperationsMutex);
+        if (!_activeReshardingOperations.contains(reshardingUUID)) {
+            return;
+        }
+        _activeReshardingOperations.erase(reshardingUUID);
+    }
+
     if (_rootSectionName == kResharding && isSameKeyResharding) {
         _countSameKeySucceeded.fetchAndAdd(1);
     }
+
     Base::onSuccess();
 }
 
-void ReshardingCumulativeMetrics::onFailure(bool isSameKeyResharding) {
+void ReshardingCumulativeMetrics::onFailure(bool isSameKeyResharding, const UUID& reshardingUUID) {
+    {
+        stdx::lock_guard<stdx::mutex> lk(_activeReshardingOperationsMutex);
+        if (!_activeReshardingOperations.contains(reshardingUUID)) {
+            return;
+        }
+        _activeReshardingOperations.erase(reshardingUUID);
+    }
+
     if (_rootSectionName == kResharding && isSameKeyResharding) {
         _countSameKeyFailed.fetchAndAdd(1);
     }
+
     Base::onFailure();
 }
 
-void ReshardingCumulativeMetrics::onCanceled(bool isSameKeyResharding) {
+void ReshardingCumulativeMetrics::onCanceled(bool isSameKeyResharding, const UUID& reshardingUUID) {
+    {
+        stdx::lock_guard<stdx::mutex> lk(_activeReshardingOperationsMutex);
+        if (!_activeReshardingOperations.contains(reshardingUUID)) {
+            return;
+        }
+        _activeReshardingOperations.erase(reshardingUUID);
+    }
+
     if (_rootSectionName == kResharding && isSameKeyResharding) {
         _countSameKeyCancelled.fetchAndAdd(1);
     }
+
     Base::onCanceled();
 }
 

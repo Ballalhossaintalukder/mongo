@@ -29,17 +29,6 @@
 
 #include "mongo/db/concurrency/lock_manager.h"
 
-#include <cstdint>
-#include <cstring>
-#include <fmt/format.h>
-#include <fmt/ostream.h>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-
 #include "mongo/base/static_assert.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -52,6 +41,17 @@
 #include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
+
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <fmt/format.h>
+#include <fmt/ostream.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -541,7 +541,7 @@ bool LockManager::unlock(LockRequest* request) {
         _onLockModeChanged(lock, true);
     } else {
         // Invalid request status
-        MONGO_UNREACHABLE;
+        MONGO_UNREACHABLE_TASSERT(10083513);
     }
 
     return (request->recursiveCount == 0);

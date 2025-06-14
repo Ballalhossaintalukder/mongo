@@ -27,12 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -65,6 +59,12 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace {
@@ -406,8 +406,8 @@ TEST_F(AssignKeyRangeToZoneTestFixture, TimeseriesCollMustHaveTimeKeyRangeMinKey
     const StringData metaField = "meta"_sd;
     const StringData timeField = "time"_sd;
     const std::string controlTimeField =
-        timeseries::kControlMinFieldNamePrefix.toString() + timeField;
-    const TimeseriesOptions timeseriesOptions(timeField.toString());
+        std::string{timeseries::kControlMinFieldNamePrefix} + timeField;
+    const TimeseriesOptions timeseriesOptions(std::string{timeField});
     CollectionType shardedCollection(ns,
                                      OID::gen(),
                                      Timestamp(1, 1),

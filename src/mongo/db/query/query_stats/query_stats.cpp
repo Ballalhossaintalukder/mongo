@@ -29,14 +29,6 @@
 
 #include "mongo/db/query/query_stats/query_stats.h"
 
-#include <absl/container/node_hash_map.h>
-#include <absl/hash/hash.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <climits>
-#include <memory>
-
 #include "mongo/base/status_with.h"
 #include "mongo/db/catalog/util/partitioned.h"
 #include "mongo/db/commands/server_status_metric.h"
@@ -59,6 +51,15 @@
 #include "mongo/util/processinfo.h"
 #include "mongo/util/synchronized_value.h"
 
+#include <climits>
+#include <memory>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/hash/hash.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQueryStats
 
 namespace mongo::query_stats {
@@ -71,9 +72,9 @@ const Decorable<ServiceContext>::Decoration<std::unique_ptr<QueryStatsStoreManag
     QueryStatsStoreManager::get =
         ServiceContext::declareDecoration<std::unique_ptr<QueryStatsStoreManager>>();
 
-const Decorable<ServiceContext>::Decoration<std::unique_ptr<RateLimiting>>
+const Decorable<ServiceContext>::Decoration<std::unique_ptr<RateLimiter>>
     QueryStatsStoreManager::getRateLimiter =
-        ServiceContext::declareDecoration<std::unique_ptr<RateLimiting>>();
+        ServiceContext::declareDecoration<std::unique_ptr<RateLimiter>>();
 
 // Fail point to mimic the operation fails during 'registerRequest()'.
 MONGO_FAIL_POINT_DEFINE(queryStatsFailToSerializeKey);
@@ -186,7 +187,7 @@ ServiceContext::ConstructorActionRegisterer queryStatsStoreManagerRegisterer{
         globalQueryStatsStoreManager =
             std::make_unique<QueryStatsStoreManager>(size, numPartitions);
         auto configuredSamplingRate = internalQueryStatsRateLimit.load();
-        QueryStatsStoreManager::getRateLimiter(serviceCtx) = std::make_unique<RateLimiting>(
+        QueryStatsStoreManager::getRateLimiter(serviceCtx) = RateLimiter::createWindowBased(
             configuredSamplingRate < 0 ? INT_MAX : configuredSamplingRate, Seconds{1});
     }};
 
@@ -218,8 +219,7 @@ bool shouldCollect(const ServiceContext* serviceCtx) {
         return false;
     }
     // Check if rate limiting allows us to collect queryStats for this request.
-    if (samplingRate < INT_MAX &&
-        !QueryStatsStoreManager::getRateLimiter(serviceCtx)->handleRequestSlidingWindow()) {
+    if (samplingRate < INT_MAX && !QueryStatsStoreManager::getRateLimiter(serviceCtx)->handle()) {
         queryStatsRateLimitedRequestsMetric.increment();
         LOGV2_DEBUG(8473002,
                     5,
@@ -390,16 +390,12 @@ void registerRequest(OperationContext* opCtx,
 }
 
 bool shouldRequestRemoteMetrics(const OpDebug& opDebug) {
-    // metricsRequested should only be set to true when the feature flag is set; we don't need to
-    // re-check the feature flag in that case.
     // If the key is non-null, we expect that query stats should be collected at this level of
     // execution. If the keyHash is non-null, then we expect we should forward remote query stats
     // metrics to a higher level of execution, such as running an aggregation for a view, or there
     // are multiple cursors open in a single operation context, such as in $search.
-    return opDebug.queryStatsInfo.metricsRequested ||
-        (feature_flags::gFeatureFlagQueryStatsDataBearingNodes.isEnabled(
-             serverGlobalParams.featureCompatibility.acquireFCVSnapshot()) &&
-         (opDebug.queryStatsInfo.key != nullptr || opDebug.queryStatsInfo.keyHash != boost::none));
+    return opDebug.queryStatsInfo.metricsRequested || opDebug.queryStatsInfo.key != nullptr ||
+        opDebug.queryStatsInfo.keyHash != boost::none;
 }
 
 QueryStatsStore& getQueryStatsStore(OperationContext* opCtx) {

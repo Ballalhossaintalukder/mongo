@@ -28,11 +28,6 @@
  */
 
 
-#include <functional>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -46,6 +41,11 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/commands/cluster_command_test_fixture.h"
 #include "mongo/unittest/unittest.h"
+
+#include <functional>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -107,7 +107,7 @@ TEST_F(ClusterValidateDBMetadataTest, AppendsErrorsFromShards) {
     auto res = runCommandSuccessful(kCommand, false);
 
     const auto outputFromMongos = OpMsg::parse(res.response).body;
-    ASSERT(outputFromMongos.getField("apiVersionErrors").type() == Array);
+    ASSERT(outputFromMongos.getField("apiVersionErrors").type() == BSONType::array);
     ASSERT_EQ(outputFromMongos.getField("apiVersionErrors").Array().size(), 3);
     ASSERT_FALSE(outputFromMongos.hasField("hasMoreErrors"));
 }
@@ -133,7 +133,7 @@ TEST_F(ClusterValidateDBMetadataTest, MaxBSONSizeAfterAccumulation) {
     auto res = runCommandSuccessful(kCommand, false);
 
     const auto outputFromMongos = OpMsg::parse(res.response).body;
-    ASSERT(outputFromMongos.getField("apiVersionErrors").type() == Array);
+    ASSERT(outputFromMongos.getField("apiVersionErrors").type() == BSONType::array);
     ASSERT(outputFromMongos.getField("apiVersionErrors").Array().size() <
            2 * apiVersionErrorsShard1.size());
     ASSERT(outputFromMongos.hasField("hasMoreErrors"));

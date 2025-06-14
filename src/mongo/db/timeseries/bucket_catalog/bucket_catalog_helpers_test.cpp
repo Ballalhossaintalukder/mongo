@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstddef>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/timeseries/bucket_catalog/bucket_catalog_helpers.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -49,7 +44,6 @@
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/storage/write_unit_of_work.h"
-#include "mongo/db/timeseries/bucket_catalog/bucket_catalog_helpers.h"
 #include "mongo/db/timeseries/metadata.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
@@ -58,6 +52,13 @@
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstddef>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries::bucket_catalog {
 namespace {
@@ -115,8 +116,8 @@ BSONObj BucketCatalogHelpersTest::_findSuitableBucket(const NamespaceString& buc
         normalizedMetadata = BSONObj{builder.bb().release()};
     }
 
-    auto controlMinTimePath = kControlMinFieldNamePrefix.toString() + options.getTimeField();
-    auto maxDataTimeFieldPath = kDataFieldNamePrefix.toString() + options.getTimeField() + "." +
+    auto controlMinTimePath = std::string{kControlMinFieldNamePrefix} + options.getTimeField();
+    auto maxDataTimeFieldPath = std::string{kDataFieldNamePrefix} + options.getTimeField() + "." +
         std::to_string(gTimeseriesBucketMaxCount - 1);
 
     // Generate an aggregation request to find a suitable bucket to reopen.

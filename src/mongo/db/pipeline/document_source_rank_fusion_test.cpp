@@ -27,16 +27,16 @@
  *    it in the license file.
  */
 
-#include "expression_context.h"
-#include "mongo/bson/json.h"
-
-#include "mongo/unittest/unittest.h"
-
-#include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source_rank_fusion.h"
+
+#include "mongo/bson/json.h"
+#include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/idl/server_parameter_test_util.h"
+#include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include "expression_context.h"
 
 namespace mongo {
 namespace {
@@ -432,12 +432,13 @@ TEST_F(DocumentSourceRankFusionTest,
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -679,7 +680,7 @@ TEST_F(DocumentSourceRankFusionTest, ErrorsIfSearchStoredSourceUsed) {
 
     ASSERT_THROWS_CODE(DocumentSourceRankFusion::createFromBson(spec.firstElement(), getExpCtx()),
                        AssertionException,
-                       9191102);
+                       9191103);
 }
 
 TEST_F(DocumentSourceRankFusionTest, ErrorsIfInternalSearchMongotRemoteUsed) {
@@ -710,10 +711,10 @@ TEST_F(DocumentSourceRankFusionTest, ErrorsIfInternalSearchMongotRemoteUsed) {
 
     ASSERT_THROWS_CODE(DocumentSourceRankFusion::createFromBson(spec.firstElement(), getExpCtx()),
                        AssertionException,
-                       16436);  // Unrecognized stage.
+                       9191103);
 }
 
-TEST_F(DocumentSourceRankFusionTest, CheckLimitSampleUnionwithAllowed) {
+TEST_F(DocumentSourceRankFusionTest, CheckLimitSampleUnionwithNotAllowed) {
     auto expCtx = getExpCtx();
     expCtx->setResolvedNamespaces(ResolvedNamespaceMap{
         {expCtx->getNamespaceString(), {expCtx->getNamespaceString(), std::vector<BSONObj>()}}});
@@ -753,210 +754,9 @@ TEST_F(DocumentSourceRankFusionTest, CheckLimitSampleUnionwithAllowed) {
         }
     })");
 
-    const auto desugaredList =
-        DocumentSourceRankFusion::createFromBson(spec.firstElement(), getExpCtx());
-    const auto pipeline = Pipeline::create(desugaredList, getExpCtx());
-    BSONObj asOneObj = BSON("expectedStages" << pipeline->serializeToBson());
-
-    ASSERT_BSONOBJ_EQ_AUTO(  // NOLINT
-        R"({
-            "expectedStages": [
-                {
-                    "$sample": {
-                        "size": 10
-                    }
-                },
-                {
-                    "$sort": {
-                        "author": 1,
-                        "$_internalOutputSortKeyMetadata": true
-                    }
-                },
-                {
-                    "$limit": 10
-                },
-                {
-                    "$replaceRoot": {
-                        "newRoot": {
-                            "docs": "$$ROOT"
-                        }
-                    }
-                },
-                {
-                    "$_internalSetWindowFields": {
-                        "sortBy": {
-                            "order": 1
-                        },
-                        "output": {
-                            "sample_rank": {
-                                "$rank": {}
-                            }
-                        }
-                    }
-                },
-                {
-                    "$addFields": {
-                        "sample_score": {
-                            "$multiply": [
-                                {
-                                    "$divide": [
-                                        {
-                                            "$const": 1
-                                        },
-                                        {
-                                            "$add": [
-                                                "$sample_rank",
-                                                {
-                                                    "$const": 60
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                },
-                                {
-                                    "$const": 1
-                                }
-                            ]
-                        }
-                    }
-                },
-                {
-                    "$unionWith": {
-                        "coll": "pipeline_test",
-                        "pipeline": [
-                            {
-                                "$unionWith": {
-                                    "coll": "novels",
-                                    "pipeline": [
-                                        {
-                                            "$limit": 3
-                                        },
-                                        {
-                                            "$unionWith": {
-                                                "coll": "shortstories",
-                                                "pipeline": []
-                                            }
-                                        }
-                                    ]
-                                }
-                            },
-                            {
-                                "$sort": {
-                                    "author": 1,
-                                    "$_internalOutputSortKeyMetadata": true
-                                }
-                            },
-                            {
-                                "$replaceRoot": {
-                                    "newRoot": {
-                                        "docs": "$$ROOT"
-                                    }
-                                }
-                            },
-                            {
-                                "$_internalSetWindowFields": {
-                                    "sortBy": {
-                                        "order": 1
-                                    },
-                                    "output": {
-                                        "unionWith_rank": {
-                                            "$rank": {}
-                                        }
-                                    }
-                                }
-                            },
-                            {
-                                "$addFields": {
-                                    "unionWith_score": {
-                                        "$multiply": [
-                                            {
-                                                "$divide": [
-                                                    {
-                                                        "$const": 1
-                                                    },
-                                                    {
-                                                        "$add": [
-                                                            "$unionWith_rank",
-                                                            {
-                                                                "$const": 60
-                                                            }
-                                                        ]
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "$const": 1
-                                            }
-                                        ]
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": "$docs._id",
-                        "docs": {
-                            "$first": "$docs"
-                        },
-                        "sample_score": {
-                            "$max": {
-                                "$ifNull": [
-                                    "$sample_score",
-                                    {
-                                        "$const": 0
-                                    }
-                                ]
-                            }
-                        },
-                        "unionWith_score": {
-                            "$max": {
-                                "$ifNull": [
-                                    "$unionWith_score",
-                                    {
-                                        "$const": 0
-                                    }
-                                ]
-                            }
-                        },
-                        "$willBeMerged": false
-                    }
-                },
-                {
-                    "$addFields": {
-                        "score": {
-                            "$add": [
-                                "$sample_score",
-                                "$unionWith_score"
-                            ]
-                        }
-                    }
-                },
-                {
-                    "$setMetadata": {
-                        "score": {
-                            "$add": [
-                                "$sample_score",
-                                "$unionWith_score"
-                            ]
-                        }
-                    }
-                },
-                {
-                    "$sort": {
-                        "score": -1,
-                        "_id": 1
-                    }
-                },
-                {
-                    "$replaceRoot": {
-                        "newRoot": "$docs"
-                    }
-                }
-            ]
-        })",
-        asOneObj);
+    ASSERT_THROWS_CODE(DocumentSourceRankFusion::createFromBson(spec.firstElement(), expCtx),
+                       AssertionException,
+                       9191103);
 }
 
 TEST_F(DocumentSourceRankFusionTest, ErrorsIfNestedUnionWithModifiesFields) {
@@ -1267,7 +1067,7 @@ TEST_F(DocumentSourceRankFusionTest, ErrorsIfGeoNearIncludeLocs) {
 
     ASSERT_THROWS_CODE(DocumentSourceRankFusion::createFromBson(spec.firstElement(), getExpCtx()),
                        AssertionException,
-                       9191101);
+                       9191103);
 }
 
 TEST_F(DocumentSourceRankFusionTest, ErrorsIfGeoNearDistanceField) {
@@ -1297,7 +1097,7 @@ TEST_F(DocumentSourceRankFusionTest, ErrorsIfGeoNearDistanceField) {
 
     ASSERT_THROWS_CODE(DocumentSourceRankFusion::createFromBson(spec.firstElement(), getExpCtx()),
                        AssertionException,
-                       9191101);
+                       9191103);
 }
 
 TEST_F(DocumentSourceRankFusionTest, ErrorsIfIncludeProject) {
@@ -1743,12 +1543,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsApplied) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -1968,12 +1769,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsAppliedToCorrectPipeline) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -2290,12 +2092,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckWeightsAppliedMultiplePipelines) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -2740,12 +2543,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckOneScorePipelineScoreDetailsDesugaring
         R"({
             "expectedStages": [
                 {
-                    "$search": {
-                        "index": "search_index",
-                        "text": {
-                            "query": "mystery",
-                            "path": "genres"
-                        }
+                    "$search": { 
+                        "mongotQuery": { 
+                            "index": "search_index", 
+                            "text": { "query": "mystery", "path": "genres" } 
+                        }, 
+                        "requiresSearchSequenceToken": false, 
+                        "requiresSearchMetaCursor": true 
                     }
                 },
                 {
@@ -3002,13 +2806,14 @@ TEST_F(DocumentSourceRankFusionTest, CheckTwoPipelineScoreDetailsDesugaring) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    },
-                                    "scoreDetails": true
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" },
+                                        "scoreDetails": true
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {
@@ -3367,8 +3172,7 @@ TEST_F(DocumentSourceRankFusionTest, QueryShapeDebugString) {
                 },
                 {
                     "$sort": {
-                        "HASH<author>": 1,
-                        "$_internalOutputSortKeyMetadata": true
+                        "HASH<author>": 1
                     }
                 },
                 {
@@ -3580,8 +3384,7 @@ TEST_F(DocumentSourceRankFusionTest, RepresentativeQueryShape) {
                 },
                 {
                     "$sort": {
-                        "author": 1,
-                        "$_internalOutputSortKeyMetadata": true
+                        "author": 1
                     }
                 },
                 {
@@ -3987,12 +3790,13 @@ TEST_F(DocumentSourceRankFusionTest, CheckTwoPipelineRankFusionFullDesugaring) {
                         "coll": "pipeline_test",
                         "pipeline": [
                             {
-                                "$search": {
-                                    "index": "search_index",
-                                    "text": {
-                                        "query": "mystery",
-                                        "path": "genres"
-                                    }
+                                "$search": { 
+                                    "mongotQuery": { 
+                                        "index": "search_index", 
+                                        "text": { "query": "mystery", "path": "genres" } 
+                                    }, 
+                                    "requiresSearchSequenceToken": false, 
+                                    "requiresSearchMetaCursor": true 
                                 }
                             },
                             {

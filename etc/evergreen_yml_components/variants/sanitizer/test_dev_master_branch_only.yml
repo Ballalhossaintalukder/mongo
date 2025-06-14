@@ -91,6 +91,10 @@ variables:
       LSAN_OPTIONS="suppressions=etc/lsan.suppressions:report_objects=1"
       ASAN_OPTIONS="detect_odr_violation=0:detect_leaks=1:check_initialization_order=true:strict_init_order=true:abort_on_error=1:disable_coredump=0:handle_abort=1:strict_string_checks=true:detect_invalid_pointer_pairs=1:external_symbolizer_path=/opt/mongodbtoolchain/v5/bin/llvm-symbolizer"
 
+  # THIS HAS COPIES IN:
+  # - etc/evergreen_yml_components/variants/sanitizer/test_dev_master_branch_only.yml
+  # - etc/evergreen_yml_components/variants/sanitizer/test_dev.yml
+  # ANY MODIFICATIONS HERE SHOULD ALSO BE MADE IN THOSE FILES
   - ubsan_options: &ubsan_options UBSAN_OPTIONS="print_stacktrace=1:external_symbolizer_path=/opt/mongodbtoolchain/v5/bin/llvm-symbolizer"
 
   # THIS HAS COPIES IN:
@@ -104,7 +108,7 @@ variables:
     resmoke_jobs_factor: 0.3 # Avoid starting too many mongod's under {A,UB}SAN build.
     hang_analyzer_dump_core: false
     max_sub_suites: 3
-    large_distro_name: rhel8.8-large
+    large_distro_name: rhel8.8-xlarge
     xlarge_distro_name: rhel8.8-xxlarge
     multiversion_platform: rhel80
     multiversion_platform_50_or_later: rhel8
@@ -198,7 +202,7 @@ buildvariants:
       - name: compile_test_parallel_core_stream_TG
         distros:
           - rhel8.8-xlarge
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_TG
         distros:
           - rhel8.8-xlarge
       - name: compile_test_parallel_dbtest_stream_TG
@@ -271,7 +275,7 @@ buildvariants:
       - name: compile_test_serial_TG
         distros:
           - windows-2022-xxlarge
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_no_sandbox_TG
         distros:
           - windows-2022-xxlarge
       - name: compile_integration_and_test_no_audit_parallel_stream_TG
@@ -340,10 +344,9 @@ buildvariants:
         --dbg=True
         --opt=on
         --build_enterprise=False
-        --developer_dir=/Applications/Xcode15.app
     tasks:
       - name: compile_test_serial_TG
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_TG
       - name: .development_critical !.requires_large_host !.incompatible_development_variant !.incompatible_community !.incompatible_mac !.requires_all_feature_flags
       - name: .development_critical .requires_large_host !.incompatible_development_variant !.incompatible_community !.incompatible_mac !.requires_all_feature_flags
         distros:
@@ -367,11 +370,10 @@ buildvariants:
       bazel_compile_flags: >-
         --dbg=True
         --opt=on
-        --developer_dir=/Applications/Xcode15.app
       resmoke_jobs_max: 6
     tasks:
       - name: compile_test_serial_TG
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_TG
       - name: audit
       - name: auth_audit_gen
       - name: fle
@@ -424,6 +426,37 @@ buildvariants:
       - name: disk_wiredtiger
       - name: generate_buildid_to_debug_symbols_mapping
 
+  - name: rhel8-debug-ubsan-all-non-rollback-feature-flags
+    display_name: "Shared Library UBSAN Enterprise RHEL 8 DEBUG (all non-rollback feature flags)"
+    tags: []
+    cron: "0 4 * * 0" # From the ${project_weekly_cron} parameter # This variant runs infrequently to reduce its cost.
+    run_on:
+      - rhel8.8-large
+    stepback: false
+    expansions:
+      san_options: *ubsan_options
+      # To force disable feature flags even on the all feature flags variant, please use this file:
+      # buildscripts/resmokeconfig/fully_disabled_feature_flags.yml
+      test_flags: >-
+        --excludeWithAnyTags=requires_increased_memlock_limits,all_feature_flags_incompatible
+        --runAllFeatureFlagTests --disableUnreleasedIFRFlags
+        --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true}"
+      multiversion_platform: rhel80
+      multiversion_platform_50_or_later: rhel8
+      multiversion_edition: enterprise
+      resmoke_jobs_factor: 0.3 # Avoid starting too many mongod's under UBSAN build.
+      large_distro_name: rhel8.8-large
+    depends_on:
+      - name: archive_dist_test
+        variant: *rhel8-debug-ubsan-all-feature-flags
+      - name: version_gen
+        variant: generate-tasks-for-version
+        # This is added because of EVG-18211.
+        # Without this we are adding extra dependencies on evergreen and it is causing strain
+        omit_generated_tasks: true
+    tasks:
+      - name: .concurrency !.no_txns !.kill_terminate
+
   - <<: *linux_debug_aubsan_compile_variant_dependency
     name: rhel8-debug-aubsan-all-feature-flags
     display_name: "* Shared Library {A,UB}SAN Enterprise RHEL 8 DEBUG (all feature flags)"
@@ -439,23 +472,23 @@ buildvariants:
         --runAllFeatureFlagTests
         --excludeWithAnyTags=incompatible_aubsan
         --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true}"
-    tasks:
+    tasks: &rhel8-debug-aubsan-task-list
       - name: .development_critical !.requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
       - name: .development_critical .requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
         distros:
-          - rhel8.8-large
+          - rhel8.8-xlarge
       - name: .release_critical !.requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
       - name: .release_critical .requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
         distros:
-          - rhel8.8-large
+          - rhel8.8-xlarge
       - name: .default !.requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
       - name: .default .requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
         distros:
-          - rhel8.8-large
+          - rhel8.8-xlarge
       - name: .non_deterministic !.requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
       - name: .non_deterministic .requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_aubsan !.incompatible_system_allocator !.incompatible_all_feature_flags
         distros:
-          - rhel8.8-large
+          - rhel8.8-xlarge
 
   - <<: *linux_debug_aubsan_compile_variant_dependency
     name: rhel8-debug-aubsan-experimental-all-feature-flags
@@ -480,6 +513,23 @@ buildvariants:
       - name: .serverless !.change_stream_fuzzer
         distros:
           - rhel8.8-xlarge
+
+  - <<: *linux_debug_aubsan_compile_variant_dependency
+    name: rhel8-debug-aubsan-non-rollback-feature-flags
+    display_name: "Shared Library {A,UB}SAN Enterprise RHEL 8 DEBUG (all non-rollback feature flags)"
+    tags: ["forbid_tasks_tagged_with_experimental"]
+    cron: "0 4 * * 0" # From the ${project_weekly_cron} parameter # This variant runs infrequently to reduce its cost.
+    run_on:
+      - rhel8.8-large
+    expansions:
+      <<: *aubsan-lite-required-expansions
+      # To force disable feature flags even on the all feature flags variant, please use this file:
+      # buildscripts/resmokeconfig/fully_disabled_feature_flags.yml
+      test_flags: >-
+        --runAllFeatureFlagTests --disableUnreleasedIFRFlags
+        --excludeWithAnyTags=incompatible_aubsan
+        --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true}"
+    tasks: *rhel8-debug-aubsan-task-list
 
   - name: &rhel8-debug-aubsan-benchmarks rhel8-debug-aubsan-benchmarks
     display_name: "* {A,UB}SAN Enterprise RHEL 8 DEBUG (Benchmarks)"
@@ -519,7 +569,7 @@ buildvariants:
         --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true, receiveChunkWaitForRangeDeleterTimeoutMS: 180000}"
         --excludeWithAnyTags=tsan_incompatible
         --runAllFeatureFlagTests
-    tasks:
+    tasks: &enterprise-rhel8-debug-tsan-task-list
       - name: .development_critical !.requires_large_host !.requires_compile_variant !.requires_large_host_tsan !.incompatible_development_variant !.incompatible_tsan !.incompatible_system_allocator !.incompatible_all_feature_flags
       - name: .development_critical .requires_large_host !.requires_compile_variant !.incompatible_development_variant !.incompatible_tsan !.incompatible_system_allocator !.incompatible_all_feature_flags
         distros:
@@ -549,6 +599,22 @@ buildvariants:
         distros:
           - *enterprise-rhel8-debug-tsan-large-distro-name
 
+  - <<: *enterprise-rhel8-debug-tsan-compile-dependency
+    name: enterprise-rhel8-debug-tsan-all-non-rollback-feature-flags
+    display_name: "TSAN Enterprise RHEL 8 DEBUG (all non-rollback feature flags)"
+    tags: ["forbid_tasks_tagged_with_experimental"]
+    cron: "0 4 * * 0" # From the ${project_weekly_cron} parameter # This variant runs infrequently to reduce its cost.
+    run_on:
+      - rhel8.8-large
+    stepback: false
+    expansions:
+      <<: *enterprise-rhel8-debug-tsan-expansions-template
+      test_flags: >-
+        --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true, receiveChunkWaitForRangeDeleterTimeoutMS: 180000}"
+        --excludeWithAnyTags=tsan_incompatible
+        --runAllFeatureFlagTests --disableUnreleasedIFRFlags
+    tasks: *enterprise-rhel8-debug-tsan-task-list
+
   - name: &enterprise-rhel8-unoptimized-64-bit enterprise-rhel8-unoptimized-64-bit
     display_name: "~ Enterprise RHEL 8 DEBUG (Unoptimized)"
     tags: ["bazel_check"]
@@ -566,7 +632,7 @@ buildvariants:
       - name: compile_test_parallel_core_stream_TG
         distros:
           - rhel8.8-large
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_TG
         distros:
           - rhel8.8-large
       - name: compile_test_parallel_dbtest_stream_TG
@@ -604,7 +670,7 @@ buildvariants:
         --mongodTlsCertificateKeyFile jstests/libs/server.pem
         --shellGRPC
     tasks:
-      - name: compile_test_parallel_unittest_stream_TG
+      - name: run_unit_tests_TG
       - name: compile_test_parallel_core_stream_TG
       - name: compile_test_parallel_dbtest_stream_TG
       - name: generate_buildid_to_debug_symbols_mapping
@@ -614,7 +680,7 @@ buildvariants:
       # aggregation_sharded_collections_passthrough, and
       # sharding_jscore_passthrough_with_balancer_gen are too resource intensive with TLS and
       # gRPC to run under the sanitizer.
-      - name: .jscore .common !sharding_uninitialized_fcv_jscore_passthrough_gen !embedded_router_jscore_passthrough_with_balancer_gen !sharding_jscore_passthrough_with_balancer_gen !.auth !.txns
+      - name: .jscore .common !sharding_uninitialized_fcv_jscore_passthrough_gen !sharding_jscore_passthrough_with_balancer_gen !.auth !.txns
       - name: sharded_jscore_txns
       - name: .aggregation !.auth !aggregation_read_concern_majority_passthrough !aggregation_secondary_reads_gen !aggregation_sharded_collections_causally_consistent_passthrough !aggregation_sharded_collections_passthrough
       - name: .grpc_misc_js

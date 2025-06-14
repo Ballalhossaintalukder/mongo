@@ -29,16 +29,11 @@
 
 #include "mongo/s/query/exec/cluster_client_cursor_impl.h"
 
-#include <memory>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/simple_bsonobj_comparator.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/query/query_stats/query_stats.h"
 #include "mongo/db/query/tailable_mode_gen.h"
 #include "mongo/db/service_context.h"
@@ -50,6 +45,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/string_map.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -159,12 +160,7 @@ Status ClusterClientCursorImpl::releaseMemory() {
     if (!interruptStatus.isOK()) {
         return interruptStatus;
     }
-
-    auto res = _root->releaseMemory();
-    if (res.isOK()) {
-        ++_numReturnedSoFar;
-    }
-    return res;
+    return _root->releaseMemory();
 }
 
 void ClusterClientCursorImpl::kill(OperationContext* opCtx) {

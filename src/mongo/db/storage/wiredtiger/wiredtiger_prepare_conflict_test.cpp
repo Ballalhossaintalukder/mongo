@@ -27,25 +27,24 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/execution_context.h"
 #include "mongo/db/storage/prepare_conflict_tracker.h"
 #include "mongo/db/storage/recovery_unit.h"
-#include "mongo/db/storage/storage_metrics.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_kv_engine.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/clock_source_mock.h"
 #include "mongo/util/future_test_utils.h"
+
+#include <memory>
+#include <string>
+
+#include <wiredtiger.h>
 
 namespace mongo {
 
@@ -64,8 +63,10 @@ std::unique_ptr<WiredTigerKVEngine> makeKVEngine(ServiceContext* serviceContext,
         path,
         clockSource,
         std::move(wtConfig),
-        /*ephemeral=*/false,
-        /*repair=*/false);
+        /*repair=*/false,
+        /*isReplSet=*/false,
+        /*shouldRecoverFromOplogAsStandalone=*/false,
+        /*inStandaloneMode=*/false);
 }
 
 class WiredTigerPrepareConflictTest : public unittest::Test {
@@ -75,6 +76,15 @@ public:
         auto serviceContext = getGlobalServiceContext();
         kvEngine = makeKVEngine(serviceContext, home.path(), &cs);
         recoveryUnit = std::unique_ptr<RecoveryUnit>(kvEngine->newRecoveryUnit());
+    }
+
+    ~WiredTigerPrepareConflictTest() override {
+#if __has_feature(address_sanitizer)
+        constexpr bool memLeakAllowed = false;
+#else
+        constexpr bool memLeakAllowed = true;
+#endif
+        kvEngine->cleanShutdown(memLeakAllowed);
     }
 
     unittest::TempDir home{"temp"};

@@ -29,17 +29,17 @@
 
 #pragma once
 
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/path_traits.hpp>
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/unittest/framework.h"
 #include "mongo/unittest/golden_test_base.h"
 #include "mongo/unittest/test_info.h"
 #include "mongo/unittest/unittest.h"
+
+#include <functional>
+#include <string>
+
+#include <boost/filesystem.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::unittest {
 
@@ -59,8 +59,8 @@ public:
         bool validateOnClose = true)
         : GoldenTestContextBase(
               config,
-              fs::path(sanitizeName(testInfo->suiteName().toString())) /
-                  fs::path(sanitizeName(testInfo->testName().toString()) + ".txt"),
+              fs::path(sanitizeName(std::string{testInfo->suiteName()})) /
+                  fs::path(sanitizeName(std::string{testInfo->testName()}) + ".txt"),
               validateOnClose,
               [this](auto const&... args) { return onError(args...); }),
           _testInfo(testInfo) {}

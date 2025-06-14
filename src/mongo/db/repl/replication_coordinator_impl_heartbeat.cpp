@@ -34,19 +34,6 @@
     LOGV2_DEBUG_OPTIONS(                               \
         ID, DLEVEL, {logv2::LogComponent::kReplicationHeartbeats}, MESSAGE, ##__VA_ARGS__)
 
-#include <algorithm>
-#include <boost/smart_ptr.hpp>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -78,6 +65,7 @@
 #include "mongo/db/repl/replication_metrics_gen.h"
 #include "mongo/db/repl/replication_process.h"
 #include "mongo/db/repl/topology_coordinator.h"
+#include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/session/kill_sessions_local.h"
 #include "mongo/db/storage/control/journal_flusher.h"
 #include "mongo/db/transaction_resources.h"
@@ -95,6 +83,19 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -214,7 +215,7 @@ void ReplicationCoordinatorImpl::handleHeartbeatResponse_forTest(BSONObj respons
         // Pretend we sent a request so that _untrackHeartbeatHandle succeeds.
         _trackHeartbeatHandle(lk, handle, HeartbeatState::kSent, request.target);
         invariant(_heartbeatHandles.contains(handle));
-        replSetNameString = replSetName.toString();
+        replSetNameString = std::string{replSetName};
     }
 
     executor::TaskExecutor::ResponseStatus status(request.target, response, ping);
@@ -596,6 +597,11 @@ void ReplicationCoordinatorImpl::_stepDownFinish(
     // kill all write operations which are no longer safe to run on step down. Also, operations that
     // have taken global lock in S mode and operations blocked on prepare conflict will be killed to
     // avoid 3-way deadlock between read, prepared transaction and step down thread.
+    boost::optional<rss::consensus::ReplicationStateTransitionGuard> rstg;
+    if (gFeatureFlagIntentRegistration.isEnabled()) {
+        rstg.emplace(
+            _killConflictingOperations(rss::consensus::IntentRegistry::InterruptionType::StepDown));
+    }
     AutoGetRstlForStepUpStepDown arsd(
         this, opCtx.get(), ReplicationCoordinator::OpsKillingStateTransitionEnum::kStepDown);
     stdx::unique_lock<stdx::mutex> lk(_mutex);
@@ -906,6 +912,7 @@ void ReplicationCoordinatorImpl::_heartbeatReconfigFinish(
 
     auto opCtx = cc().makeOperationContext();
 
+    boost::optional<rss::consensus::ReplicationStateTransitionGuard> rstg;
     boost::optional<AutoGetRstlForStepUpStepDown> arsd;
     stdx::unique_lock<stdx::mutex> lk(_mutex);
     auto rsc = _rsConfig.unsafePeek();
@@ -915,6 +922,10 @@ void ReplicationCoordinatorImpl::_heartbeatReconfigFinish(
 
         // Primary node will be either unelectable or removed after the configuration change.
         // So, finish the reconfig under RSTL, so that the step down occurs safely.
+        if (gFeatureFlagIntentRegistration.isEnabled()) {
+            rstg.emplace(_killConflictingOperations(
+                rss::consensus::IntentRegistry::InterruptionType::StepDown));
+        }
         arsd.emplace(
             this, opCtx.get(), ReplicationCoordinator::OpsKillingStateTransitionEnum::kStepDown);
 
@@ -939,6 +950,7 @@ void ReplicationCoordinatorImpl::_heartbeatReconfigFinish(
             // Update _canAcceptNonLocalWrites.
             _updateWriteAbilityFromTopologyCoordinator(lk, opCtx.get());
         } else {
+            rstg = boost::none;
             // Release the rstl lock as the node might have stepped down due to
             // other unconditional step down code paths like learning new term via heartbeat &
             // liveness timeout. And, no new election can happen as we have already set our
@@ -1040,7 +1052,7 @@ void ReplicationCoordinatorImpl::_cancelHeartbeats(WithLock) {
 void ReplicationCoordinatorImpl::restartScheduledHeartbeats_forTest() {
     stdx::unique_lock<stdx::mutex> lk(_mutex);
     invariant(getTestCommandsEnabled());
-    _restartScheduledHeartbeats(lk, _rsConfig.unsafePeek().getReplSetName().toString());
+    _restartScheduledHeartbeats(lk, std::string{_rsConfig.unsafePeek().getReplSetName()});
 };
 
 void ReplicationCoordinatorImpl::_restartScheduledHeartbeats(WithLock lk,
@@ -1080,7 +1092,7 @@ void ReplicationCoordinatorImpl::_startHeartbeats(WithLock lk) {
             continue;
         }
         auto target = rsc.getMemberAt(i).getHostAndPort();
-        _scheduleHeartbeatToTarget(lk, target, now, rsc.getReplSetName().toString());
+        _scheduleHeartbeatToTarget(lk, target, now, std::string{rsc.getReplSetName()});
         _topCoord->restartHeartbeat(now, target);
     }
 

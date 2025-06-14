@@ -28,10 +28,7 @@
  */
 
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/index_builds/index_build_block.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -40,11 +37,11 @@
 #include "mongo/db/audit.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_key_validate.h"
 #include "mongo/db/client.h"
 #include "mongo/db/collection_index_usage_tracker.h"
 #include "mongo/db/index/index_descriptor.h"
-#include "mongo/db/index_builds/index_build_block.h"
 #include "mongo/db/index_names.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/collection_index_usage_tracker_decoration.h"
@@ -53,13 +50,17 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/ident.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/db/ttl/ttl_collection_cache.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -96,7 +97,7 @@ Status IndexBuildBlock::initForResume(OperationContext* opCtx,
                                       const IndexStateInfo& stateInfo,
                                       IndexBuildPhaseEnum phase) {
 
-    _indexName = _spec.getStringField("name").toString();
+    _indexName = std::string{_spec.getStringField("name")};
     auto writableEntry = collection->getIndexCatalog()->getWritableEntryByName(
         opCtx,
         _indexName,
@@ -111,7 +112,8 @@ Status IndexBuildBlock::initForResume(OperationContext* opCtx,
     if (phase == IndexBuildPhaseEnum::kBulkLoad) {
         // A bulk cursor can only be opened on a fresh table, so we drop the table that was created
         // before shutdown and recreate it.
-        auto status = DurableCatalog::get(opCtx)->dropAndRecreateIndexIdentForResume(
+        auto collectionOptions = collection->getCollectionOptions();
+        auto status = durable_catalog::dropAndRecreateIndexIdentForResume(
             opCtx,
             collection->ns(),
             collection->getCollectionOptions(),

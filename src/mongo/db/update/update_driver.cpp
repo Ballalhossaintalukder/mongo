@@ -29,14 +29,6 @@
 
 #include "mongo/db/update/update_driver.h"
 
-#include <boost/move/utility_core.hpp>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -61,6 +53,14 @@
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
 
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 MONGO_FAIL_POINT_DEFINE(hangAfterPipelineUpdateFCVCheck);
@@ -82,7 +82,7 @@ modifiertable::ModifierType validateMod(BSONElement mod) {
             str::stream() << "Modifiers operate on fields but we found type "
                           << typeName(mod.type()) << " instead. For example: {$mod: {<field>: ...}}"
                           << " not {" << mod << "}",
-            mod.type() == BSONType::Object);
+            mod.type() == BSONType::object);
 
     return modType;
 }
@@ -109,7 +109,7 @@ bool parseUpdateExpression(
         uassert(ErrorCodes::FailedToParse,
                 str::stream() << "The array filter for identifier '" << arrayFilter.first
                               << "' was not used in the update " << updateExpr,
-                foundIdentifiers.find(arrayFilter.first.toString()) != foundIdentifiers.end());
+                foundIdentifiers.find(std::string{arrayFilter.first}) != foundIdentifiers.end());
     }
 
     return positional;

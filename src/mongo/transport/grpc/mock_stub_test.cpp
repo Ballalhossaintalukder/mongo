@@ -27,20 +27,21 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
+#include "mongo/transport/grpc/mock_stub.h"
 
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/rpc/message.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/transport/grpc/mock_client_context.h"
-#include "mongo/transport/grpc/mock_stub.h"
 #include "mongo/transport/grpc/test_fixtures.h"
 #include "mongo/unittest/thread_assertion_monitor.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/producer_consumer_queue.h"
 #include "mongo/util/scopeguard.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo::transport::grpc {
 
@@ -82,11 +83,11 @@ public:
                     auto clientMessage = makeUniqueMessage();
                     MockClientContext ctx;
                     ctx.addMetadataEntry(
-                        util::constants::kWireVersionKey.toString(),
+                        std::string{util::constants::kWireVersionKey},
                         std::to_string(WireSpec::getWireSpec(getGlobalServiceContext())
                                            .get()
                                            ->incomingExternalClient.maxWireVersion));
-                    ctx.addMetadataEntry(util::constants::kAuthenticationTokenKey.toString(),
+                    ctx.addMetadataEntry(std::string{util::constants::kAuthenticationTokenKey},
                                          "my-token");
                     auto stream = makeStream(ctx);
                     ASSERT_TRUE(stream->syncWrite(getReactor(), clientMessage.sharedBuffer()));

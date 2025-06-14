@@ -29,16 +29,7 @@
 
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <utility>
+#include "mongo/db/query/plan_explainer_impl.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/util/builder_fwd.h"
@@ -57,7 +48,6 @@
 #include "mongo/db/field_ref.h"
 #include "mongo/db/keypattern.h"
 #include "mongo/db/query/cost_based_ranker/estimates_storage.h"
-#include "mongo/db/query/plan_explainer_impl.h"
 #include "mongo/db/query/plan_ranking_decision.h"
 #include "mongo/db/query/plan_summary_stats_visitor.h"
 #include "mongo/db/query/query_knobs_gen.h"
@@ -67,6 +57,18 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <utility>
+
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -127,9 +129,8 @@ void flattenExecTree(const PlanStage* root, std::vector<const PlanStage*>* flatt
         return;
     }
 
-    const auto& children = root->getChildren();
-    for (size_t i = 0; i < children.size(); ++i) {
-        flattenExecTree(children[i].get(), flattened);
+    for (const auto& child : root->getChildren()) {
+        flattenExecTree(child.get(), flattened);
     }
 }
 
@@ -541,6 +542,10 @@ void statsToBSON(const stage_builder::PlanStageToQsnMap& planStageQsnMap,
                               static_cast<long long>(spec->totalDataSizeBytes));
             bob->appendBool("usedDisk", (spec->spillingStats.getSpills() > 0));
             bob->appendNumber("spills", static_cast<long long>(spec->spillingStats.getSpills()));
+            bob->appendNumber("spilledRecords",
+                              static_cast<long long>(spec->spillingStats.getSpilledRecords()));
+            bob->appendNumber("spilledBytes",
+                              static_cast<long long>(spec->spillingStats.getSpilledBytes()));
             bob->appendNumber(
                 "spilledDataStorageSize",
                 static_cast<long long>(spec->spillingStats.getSpilledDataStorageSize()));
@@ -665,15 +670,9 @@ void statsToBSON(const stage_builder::PlanStageToQsnMap& planStageQsnMap,
     // of them and add them to the 'inputStages' array.
 
     BSONArrayBuilder childrenBob(bob->subarrayStart("inputStages"));
-    for (size_t i = 0; i < stats.children.size(); ++i) {
+    for (auto& child : stats.children) {
         BSONObjBuilder childBob(childrenBob.subobjStart());
-        statsToBSON(planStageQsnMap,
-                    estimates,
-                    *stats.children[i],
-                    verbosity,
-                    planIdx,
-                    &childBob,
-                    topLevelBob);
+        statsToBSON(planStageQsnMap, estimates, *child, verbosity, planIdx, &childBob, topLevelBob);
     }
     childrenBob.doneFast();
 }
@@ -698,12 +697,12 @@ PlanSummaryStats collectExecutionStatsSummary(const PlanStageStats* stats,
 
     // Iterate over all stages in the tree and get the total number of keys/docs examined.
     // These are just aggregations of information already available in the stats tree.
-    for (size_t i = 0; i < statsNodes.size(); ++i) {
-        tassert(3420005, "Unexpected MultiPlanStage", STAGE_MULTI_PLAN != statsNodes[i]->stageType);
+    for (const auto* statsNode : statsNodes) {
+        tassert(3420005, "Unexpected MultiPlanStage", STAGE_MULTI_PLAN != statsNode->stageType);
         summary.totalKeysExamined +=
-            getKeysExamined(statsNodes[i]->stageType, statsNodes[i]->specific.get());
+            getKeysExamined(statsNode->stageType, statsNode->specific.get());
         summary.totalDocsExamined +=
-            getDocsExamined(statsNodes[i]->stageType, statsNodes[i]->specific.get());
+            getDocsExamined(statsNode->stageType, statsNode->specific.get());
     }
 
     summary.planFailed = stats->common.failed;
@@ -750,10 +749,9 @@ std::string PlanExplainerImpl::getPlanSummary() const {
     StringBuilder sb;
     bool seenLeaf = false;
 
-    for (size_t i = 0; i < stages.size(); i++) {
-        if (stages[i]->getChildren().empty()) {
-            tassert(
-                3420006, "Unexpected MultiPlanStage", STAGE_MULTI_PLAN != stages[i]->stageType());
+    for (const auto* stage : stages) {
+        if (stage->getChildren().empty()) {
+            tassert(3420006, "Unexpected MultiPlanStage", STAGE_MULTI_PLAN != stage->stageType());
             // This is a leaf node. Add to the plan summary string accordingly. Unless
             // this is the first leaf we've seen, add a delimiting string first.
             if (seenLeaf) {
@@ -761,7 +759,7 @@ std::string PlanExplainerImpl::getPlanSummary() const {
             } else {
                 seenLeaf = true;
             }
-            addStageSummaryStr(stages[i], sb);
+            addStageSummaryStr(stage, sb);
         }
     }
 
@@ -828,49 +826,49 @@ void PlanExplainerImpl::getSummaryStats(PlanSummaryStats* statsOut) const {
     statsOut->collectionScans = 0;
     statsOut->collectionScansNonTailable = 0;
 
-    for (size_t i = 0; i < stages.size(); i++) {
-        auto stageType = stages[i]->stageType();
-        statsOut->totalKeysExamined += getKeysExamined(stageType, stages[i]->getSpecificStats());
-        statsOut->totalDocsExamined += getDocsExamined(stageType, stages[i]->getSpecificStats());
+    PlanSummaryStatsVisitor visitor(*statsOut);
+
+    for (const auto* stage : stages) {
+        auto stageType = stage->stageType();
+
+        if (const auto specificStats = stage->getSpecificStats()) {
+            specificStats->acceptVisitor(&visitor);
+
+            statsOut->totalKeysExamined += getKeysExamined(stageType, specificStats);
+            statsOut->totalDocsExamined += getDocsExamined(stageType, specificStats);
+        }
 
         switch (stageType) {
-            case STAGE_SORT_DEFAULT:
-            case STAGE_SORT_SIMPLE: {
-                auto sortStage = static_cast<const SortStage*>(stages[i]);
-                auto sortStats = static_cast<const SortStats*>(sortStage->getSpecificStats());
-                PlanSummaryStatsVisitor(*statsOut).visit(sortStats);
-                break;
-            }
             case STAGE_IXSCAN: {
-                const IndexScan* ixscan = static_cast<const IndexScan*>(stages[i]);
+                const IndexScan* ixscan = static_cast<const IndexScan*>(stage);
                 const IndexScanStats* ixscanStats =
                     static_cast<const IndexScanStats*>(ixscan->getSpecificStats());
                 statsOut->indexesUsed.insert(ixscanStats->indexName);
                 break;
             }
             case STAGE_COUNT_SCAN: {
-                const CountScan* countScan = static_cast<const CountScan*>(stages[i]);
+                const CountScan* countScan = static_cast<const CountScan*>(stage);
                 const CountScanStats* countScanStats =
                     static_cast<const CountScanStats*>(countScan->getSpecificStats());
                 statsOut->indexesUsed.insert(countScanStats->indexName);
                 break;
             }
             case STAGE_IDHACK: {
-                const IDHackStage* idHackStage = static_cast<const IDHackStage*>(stages[i]);
+                const IDHackStage* idHackStage = static_cast<const IDHackStage*>(stage);
                 const IDHackStats* idHackStats =
                     static_cast<const IDHackStats*>(idHackStage->getSpecificStats());
                 statsOut->indexesUsed.insert(idHackStats->indexName);
                 break;
             }
             case STAGE_DISTINCT_SCAN: {
-                const DistinctScan* distinctScan = static_cast<const DistinctScan*>(stages[i]);
+                const DistinctScan* distinctScan = static_cast<const DistinctScan*>(stage);
                 const DistinctScanStats* distinctScanStats =
                     static_cast<const DistinctScanStats*>(distinctScan->getSpecificStats());
                 statsOut->indexesUsed.insert(distinctScanStats->indexName);
                 break;
             }
             case STAGE_TEXT_MATCH: {
-                const TextMatchStage* textStage = static_cast<const TextMatchStage*>(stages[i]);
+                const TextMatchStage* textStage = static_cast<const TextMatchStage*>(stage);
                 const TextMatchStats* textStats =
                     static_cast<const TextMatchStats*>(textStage->getSpecificStats());
                 statsOut->indexesUsed.insert(textStats->indexName);
@@ -878,14 +876,14 @@ void PlanExplainerImpl::getSummaryStats(PlanSummaryStats* statsOut) const {
             }
             case STAGE_GEO_NEAR_2D:
             case STAGE_GEO_NEAR_2DSPHERE: {
-                const NearStage* nearStage = static_cast<const NearStage*>(stages[i]);
+                const NearStage* nearStage = static_cast<const NearStage*>(stage);
                 const NearStats* nearStats =
                     static_cast<const NearStats*>(nearStage->getSpecificStats());
                 statsOut->indexesUsed.insert(nearStats->indexName);
                 break;
             }
             case STAGE_CACHED_PLAN: {
-                const CachedPlanStage* cachedPlan = static_cast<const CachedPlanStage*>(stages[i]);
+                const CachedPlanStage* cachedPlan = static_cast<const CachedPlanStage*>(stage);
                 const CachedPlanStats* cachedStats =
                     static_cast<const CachedPlanStats*>(cachedPlan->getSpecificStats());
                 statsOut->replanReason = cachedStats->replanReason;
@@ -896,7 +894,7 @@ void PlanExplainerImpl::getSummaryStats(PlanSummaryStats* statsOut) const {
                 break;
             }
             case STAGE_MULTI_PLAN: {
-                const MultiPlanStage* multiPlan = static_cast<const MultiPlanStage*>(stages[i]);
+                const MultiPlanStage* multiPlan = static_cast<const MultiPlanStage*>(stage);
                 const MultiPlanStats* multiPlanStats =
                     static_cast<const MultiPlanStats*>(multiPlan->getSpecificStats());
                 tassert(8737700,
@@ -909,16 +907,11 @@ void PlanExplainerImpl::getSummaryStats(PlanSummaryStats* statsOut) const {
             }
             case STAGE_COLLSCAN: {
                 statsOut->collectionScans++;
-                const auto collScan = static_cast<const CollectionScan*>(stages[i]);
+                const auto collScan = static_cast<const CollectionScan*>(stage);
                 const auto collScanStats =
                     static_cast<const CollectionScanStats*>(collScan->getSpecificStats());
                 if (!collScanStats->tailable)
                     statsOut->collectionScansNonTailable++;
-                break;
-            }
-            case STAGE_TEXT_OR: {
-                auto textOrStats = static_cast<const TextOrStats*>(stages[i]->getSpecificStats());
-                PlanSummaryStatsVisitor(*statsOut).visit(textOrStats);
                 break;
             }
             default:
@@ -1025,9 +1018,8 @@ PlanStage* getStageByType(PlanStage* root, StageType type) {
         return root;
     }
 
-    const auto& children = root->getChildren();
-    for (size_t i = 0; i < children.size(); i++) {
-        PlanStage* result = getStageByType(children[i].get(), type);
+    for (const auto& child : root->getChildren()) {
+        PlanStage* result = getStageByType(child.get(), type);
         if (result) {
             return result;
         }

@@ -29,17 +29,18 @@
 
 #include "mongo/db/storage/sorted_data_interface_test_harness.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/bson/ordering.h"
 #include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/sorted_data_interface_test_assert.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -70,7 +71,7 @@ void insertToIndex(OperationContext* opCtx,
     StorageWriteTransaction txn(ru);
     for (auto&& entry : toInsert) {
         ASSERT_SDI_INSERT_OK(
-            index->insert(opCtx, makeKeyString(index, entry.key, entry.loc), dupsAllowed));
+            index->insert(opCtx, ru, makeKeyString(index, entry.key, entry.loc), dupsAllowed));
     }
     txn.commit();
 }
@@ -81,7 +82,7 @@ void removeFromIndex(OperationContext* opCtx,
     auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
     StorageWriteTransaction txn(ru);
     for (auto&& entry : toRemove) {
-        index->unindex(opCtx, makeKeyString(index, entry.key, entry.loc), true);
+        index->unindex(opCtx, ru, makeKeyString(index, entry.key, entry.loc), true);
     }
     txn.commit();
 }

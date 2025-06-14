@@ -29,11 +29,6 @@
 
 #include "mongo/db/s/analyze_shard_key_read_write_distribution.h"
 
-#include <memory>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status_with.h"
 #include "mongo/db/commands/query_cmd/bulk_write_crud_op.h"
 #include "mongo/db/feature_flag.h"
@@ -50,6 +45,11 @@
 #include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/shard_key_pattern_query_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -339,7 +339,7 @@ void WriteDistributionMetricsCalculator::_addBulkWriteQuery(OperationContext* op
         auto opType = op.getType();
         if (opType == BulkWriteCRUDOp::kUpdate) {
             auto updateOp = op.getUpdate();
-            const auto nsIdx = updateOp->getUpdate();
+            const auto nsIdx = updateOp->getNsInfoIdx();
             const auto& nsEntry = nsInfo[nsIdx];
             _addUpdateQuery(opCtx,
                             nsEntry.getNs(),

@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <set>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -50,6 +42,14 @@
 #include "mongo/db/storage/record_store.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 class ExternalRecordStore : public RecordStore {
@@ -77,7 +77,7 @@ public:
         return nullptr;
     }
 
-    const std::string& getIdent() const final {
+    StringData getIdent() const final {
         unimplementedTasserted();
         static std::string ident;
         return ident;
@@ -111,8 +111,16 @@ public:
         unimplementedTasserted();
         return {};
     }
+    RecordData dataFor(OperationContext*, RecoveryUnit&, const RecordId&) const final {
+        unimplementedTasserted();
+        return {};
+    }
 
     bool findRecord(OperationContext*, const RecordId&, RecordData*) const final {
+        unimplementedTasserted();
+        return false;
+    }
+    bool findRecord(OperationContext*, RecoveryUnit&, const RecordId&, RecordData*) const final {
         unimplementedTasserted();
         return false;
     }
@@ -120,8 +128,18 @@ public:
     void deleteRecord(OperationContext* opCtx, const RecordId& dl) final {
         unimplementedTasserted();
     }
+    void deleteRecord(OperationContext* opCtx, RecoveryUnit&, const RecordId& dl) final {
+        unimplementedTasserted();
+    }
 
     Status insertRecords(OperationContext*,
+                         std::vector<Record>*,
+                         const std::vector<Timestamp>&) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+    Status insertRecords(OperationContext*,
+                         RecoveryUnit&,
                          std::vector<Record>*,
                          const std::vector<Timestamp>&) final {
         unimplementedTasserted();
@@ -135,14 +153,33 @@ public:
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
+    StatusWith<RecordId> insertRecord(
+        OperationContext*, RecoveryUnit&, const char* data, int len, Timestamp) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
 
     StatusWith<RecordId> insertRecord(
         OperationContext*, const RecordId&, const char* data, int len, Timestamp) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
+    StatusWith<RecordId> insertRecord(OperationContext*,
+                                      RecoveryUnit&,
+                                      const RecordId&,
+                                      const char* data,
+                                      int len,
+                                      Timestamp) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
 
     Status updateRecord(OperationContext*, const RecordId&, const char* data, int len) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+    Status updateRecord(
+        OperationContext*, RecoveryUnit&, const RecordId&, const char* data, int len) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
@@ -159,6 +196,15 @@ public:
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
+    StatusWith<RecordData> updateWithDamages(OperationContext* opCtx,
+                                             RecoveryUnit&,
+                                             const RecordId& loc,
+                                             const RecordData& oldRec,
+                                             const char* damageSource,
+                                             const DamageVector& damages) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
 
     void printRecordMetadata(const RecordId&, std::set<Timestamp>* recordTimestamps) const final {
         unimplementedTasserted();
@@ -166,8 +212,16 @@ public:
 
     std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext* opCtx,
                                                     bool forward = true) const final;
+    std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext* opCtx,
+                                                    RecoveryUnit& ru,
+                                                    bool forward = true) const final;
 
     std::unique_ptr<RecordCursor> getRandomCursor(OperationContext* opCtx) const final {
+        unimplementedTasserted();
+        return nullptr;
+    }
+    std::unique_ptr<RecordCursor> getRandomCursor(OperationContext* opCtx,
+                                                  RecoveryUnit& ru) const final {
         unimplementedTasserted();
         return nullptr;
     }
@@ -176,8 +230,21 @@ public:
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
+    Status truncate(OperationContext*, RecoveryUnit&) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
 
     Status rangeTruncate(OperationContext*,
+                         const RecordId& minRecordId = RecordId(),
+                         const RecordId& maxRecordId = RecordId(),
+                         int64_t hintDataSizeIncrement = 0,
+                         int64_t hintNumRecordsIncrement = 0) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+    Status rangeTruncate(OperationContext*,
+                         RecoveryUnit&,
                          const RecordId& minRecordId = RecordId(),
                          const RecordId& maxRecordId = RecordId(),
                          int64_t hintDataSizeIncrement = 0,
@@ -191,6 +258,10 @@ public:
     }
 
     StatusWith<int64_t> compact(OperationContext*, const CompactOptions&) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+    StatusWith<int64_t> compact(OperationContext*, RecoveryUnit&, const CompactOptions&) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
@@ -209,8 +280,18 @@ public:
         unimplementedTasserted();
         return {};
     }
+    RecordId getLargestKey(OperationContext*, RecoveryUnit&) const final {
+        unimplementedTasserted();
+        return {};
+    }
 
     void reserveRecordIds(OperationContext*, std::vector<RecordId>*, size_t numRecords) final {
+        unimplementedTasserted();
+    }
+    void reserveRecordIds(OperationContext*,
+                          RecoveryUnit&,
+                          std::vector<RecordId>*,
+                          size_t numRecords) final {
         unimplementedTasserted();
     }
 

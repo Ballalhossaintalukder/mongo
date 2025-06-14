@@ -27,9 +27,7 @@
  *    it in the license file.
  */
 
-#include "mongo/db/pipeline/expression.h"
-#include <utility>
-#include <vector>
+#include "mongo/db/ttl/ttl.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -39,6 +37,7 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/create_collection.h"
 #include "mongo/db/catalog/database_holder.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_key_validate.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/client.h"
@@ -49,17 +48,20 @@
 #include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/index_builds/index_builds_manager.h"
 #include "mongo/db/namespace_string.h"
+#include "mongo/db/pipeline/expression.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/repl/storage_interface_mock.h"
 #include "mongo/db/service_context_d_test_fixture.h"
-#include "mongo/db/storage/durable_catalog.h"
-#include "mongo/db/ttl/ttl.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/time_support.h"
+
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -132,7 +134,7 @@ protected:
         const auto indexName = indexSpec.getStringField("name");
 
         const auto durableCatalogEntry =
-            DurableCatalog::get(opCtx())->scanForCatalogEntryByNss(opCtx(), nss);
+            durable_catalog::scanForCatalogEntryByNss(opCtx(), nss, MDBCatalog::get(opCtx()));
         ASSERT(durableCatalogEntry);
         const auto collMetaData = durableCatalogEntry->metadata;
         const auto idxOffset = collMetaData->findIndexOffset(indexName);
@@ -1111,7 +1113,8 @@ protected:
         SimpleClient client(opCtx());
         client.createColl(nss);
         createIndex(nss, spec);
-        auto catalogEntry = DurableCatalog::get(opCtx())->scanForCatalogEntryByNss(opCtx(), nss);
+        auto catalogEntry =
+            durable_catalog::scanForCatalogEntryByNss(opCtx(), nss, MDBCatalog::get(opCtx()));
         ASSERT(catalogEntry);
 
         const int nDocs = 10;

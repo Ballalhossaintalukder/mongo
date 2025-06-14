@@ -27,19 +27,7 @@
  *    it in the license file.
  */
 
-#include <benchmark/benchmark.h>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/sharding_write_router.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -57,8 +45,9 @@
 #include "mongo/db/s/collection_sharding_runtime.h"
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/collection_sharding_state_factory_shard.h"
+#include "mongo/db/s/database_sharding_state_factory_mock.h"
 #include "mongo/db/s/operation_sharding_state.h"
-#include "mongo/db/s/sharding_write_router.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
@@ -75,19 +64,31 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/query/exec/cluster_cursor_manager.h"
 #include "mongo/s/resharding/common_types_gen.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <benchmark/benchmark.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -146,6 +147,8 @@ protected:
             CollectionShardingStateFactory::set(
                 serviceContext,
                 std::make_unique<CollectionShardingStateFactoryShard>(serviceContext));
+            DatabaseShardingStateFactory::set(serviceContext,
+                                              std::make_unique<DatabaseShardingStateFactoryMock>());
 
             ShardingState::get(serviceContext)
                 ->setRecoveryCompleted({clusterId,
@@ -153,8 +156,7 @@ protected:
                                         ConnectionString(kConfigHostAndPort),
                                         originatorShard});
 
-            _shardVersion.emplace(ShardVersionFactory::make(
-                chunkManager, originatorShard, boost::optional<CollectionIndexes>(boost::none)));
+            _shardVersion.emplace(ShardVersionFactory::make(chunkManager, originatorShard));
 
             OperationShardingState::setShardRole(
                 opCtx, kNss, _shardVersion, boost::none /* databaseVersion */);

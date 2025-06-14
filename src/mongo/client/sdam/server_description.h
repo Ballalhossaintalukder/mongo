@@ -28,19 +28,6 @@
  */
 #pragma once
 
-#include <algorithm>
-#include <boost/algorithm/string.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <map>
-#include <memory>
-#include <ostream>
-#include <set>
-#include <string>
-#include <utility>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -48,11 +35,24 @@
 #include "mongo/client/sdam/election_id_set_version_pair.h"
 #include "mongo/client/sdam/sdam_datatypes.h"
 #include "mongo/db/repl/optime.h"
-#include "mongo/platform/basic.h"
 #include "mongo/rpc/topology_version_gen.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <map>
+#include <memory>
+#include <ostream>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/algorithm/string.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::sdam {
 class ServerDescription {

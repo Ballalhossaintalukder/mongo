@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <limits>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -51,6 +43,14 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/time_support.h"
+
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -151,7 +151,7 @@ TEST(MatchExpressionParserArrayTest, AllElemMatch3) {
     MatchExpression* emObject = expr->getChild(0);
     ASSERT_EQUALS(MatchExpression::ELEM_MATCH_OBJECT, emObject->matchType());
     ASSERT_EQUALS(1U, emObject->numChildren());
-    ASSERT_EQUALS("x", emObject->path().toString());
+    ASSERT_EQUALS("x", emObject->path());
 
     // Child should be another AND with two children.
     MatchExpression* and2 = emObject->getChild(0);
@@ -162,11 +162,11 @@ TEST(MatchExpressionParserArrayTest, AllElemMatch3) {
     MatchExpression* leaf1 = and2->getChild(0);
     ASSERT_EQUALS(MatchExpression::EQ, leaf1->matchType());
     ASSERT_EQUALS(0U, leaf1->numChildren());
-    ASSERT_EQUALS("y", leaf1->path().toString());
+    ASSERT_EQUALS("y", leaf1->path());
     MatchExpression* leaf2 = and2->getChild(1);
     ASSERT_EQUALS(MatchExpression::EQ, leaf2->matchType());
     ASSERT_EQUALS(0U, leaf2->numChildren());
-    ASSERT_EQUALS("z", leaf2->path().toString());
+    ASSERT_EQUALS("z", leaf2->path());
 }
 
 TEST(MatchExpressionParserArrayTest, AllElemMatchBad) {

@@ -28,21 +28,6 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
-#include "mongo/util/future.h"
-#include "mongo/util/net/ssl_manager.h"
-
-#include <boost/algorithm/string.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <sstream>
-#include <stack>
-#include <string>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/init.h"
 #include "mongo/base/secure_allocator.h"
@@ -58,12 +43,14 @@
 #include "mongo/util/debug_util.h"
 #include "mongo/util/exit.h"
 #include "mongo/util/fail_point.h"
+#include "mongo/util/future.h"
 #include "mongo/util/net/cidr.h"
 #include "mongo/util/net/dh_openssl.h"
 #include "mongo/util/net/ocsp/ocsp_manager.h"
 #include "mongo/util/net/private/ssl_expiration.h"
 #include "mongo/util/net/socket_exception.h"
 #include "mongo/util/net/socket_utils.h"
+#include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/net/ssl_parameters_gen.h"
 #include "mongo/util/net/ssl_peer_info.h"
@@ -75,7 +62,17 @@
 #include "mongo/util/strong_weak_finish_line.h"
 #include "mongo/util/text.h"
 
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <sstream>
+#include <stack>
+#include <string>
+#include <vector>
+
 #include <arpa/inet.h>
+#include <boost/algorithm/string.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <netinet/in.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
@@ -1354,7 +1351,7 @@ private:
     public:
         PasswordFetcher(StringData configParameter, StringData prompt)
             : _password(configParameter.begin(), configParameter.end()),
-              _prompt(prompt.toString()) {
+              _prompt(std::string{prompt}) {
             invariant(!prompt.empty());
         }
 
@@ -2748,9 +2745,9 @@ Status SSLManagerOpenSSL::_parseAndValidateCertificateFromMemory(
     logv2::DynamicAttributes errorAttrs;
 
 #if OPENSSL_VERSION_NUMBER <= 0x1000114fL
-    UniqueBIO inBio(BIO_new_mem_buf(const_cast<char*>(buffer.rawData()), buffer.size()));
+    UniqueBIO inBio(BIO_new_mem_buf(const_cast<char*>(buffer.data()), buffer.size()));
 #else
-    UniqueBIO inBio(BIO_new_mem_buf(buffer.rawData(), buffer.size()));
+    UniqueBIO inBio(BIO_new_mem_buf(buffer.data(), buffer.size()));
 #endif
 
     if (!inBio) {
@@ -3656,7 +3653,7 @@ UniqueX509 SSLManagerOpenSSL::_getX509Object(StringData keyFile,
     }
 
     ON_BLOCK_EXIT([&] { BIO_free(inBIO); });
-    if (BIO_read_filename(inBIO, keyFile.toString().c_str()) <= 0) {
+    if (BIO_read_filename(inBIO, std::string{keyFile}.c_str()) <= 0) {
         uasserted(4913001,
                   str::stream() << "cannot read key file when setting subject name: " << keyFile
                                 << " " << SSLManagerInterface::getSSLErrorMessage(ERR_get_error()));
@@ -3706,9 +3703,9 @@ void SSLManagerOpenSSL::_getX509CertInfo(UniqueX509& x509,
     uassert(4913004, "date conversion failed", notAfterMillis != Date_t());
 
     if (keyFile)
-        info->keyFile = keyFile->toString();
+        info->keyFile = std::string{*keyFile};
     if (targetClusterURI)
-        info->targetClusterURI = targetClusterURI->toString();
+        info->targetClusterURI = std::string{*targetClusterURI};
 }
 
 
@@ -3720,7 +3717,7 @@ void SSLManagerOpenSSL::_getCRLInfo(StringData crlFile, CRLInformationToLog* inf
 
     ON_BLOCK_EXIT([&] { BIO_free(inBIO); });
 
-    if (BIO_read_filename(inBIO, crlFile.toString().c_str()) <= 0) {
+    if (BIO_read_filename(inBIO, std::string{crlFile}.c_str()) <= 0) {
         uasserted(4913006,
                   str::stream() << "cannot read crl file when setting subject name: " << crlFile
                                 << " " << SSLManagerInterface::getSSLErrorMessage(ERR_get_error()));

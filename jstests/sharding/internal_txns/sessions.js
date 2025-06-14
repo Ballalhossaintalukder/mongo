@@ -3,8 +3,6 @@
  *
  * @tags: [
  *   requires_fcv_60,
- *    # TODO (SERVER-97257): Re-enable this test or add an explanation why it is incompatible.
- *    embedded_router_incompatible,
  *   uses_transactions,
  * ]
  */
@@ -21,9 +19,9 @@ const st = new ShardingTest({
         setParameter:
             {maxSessions: 1, 'failpoint.skipClusterParameterRefresh': "{'mode':'alwaysOn'}"}
     },
-    // The config server uses a session for internal operations, so raise the limit by 1 for a
-    // config shard.
-    rsOptions: {setParameter: {maxSessions: TestData.configShard ? 3 : 2}}
+    // Add shard coordinators and create collection coordinators use sessions internally, so this
+    // needs to be higher to allow for these operations to succeed.
+    rsOptions: {setParameter: {maxSessions: 3}}
 });
 const shard0Primary = st.rs0.getPrimary();
 

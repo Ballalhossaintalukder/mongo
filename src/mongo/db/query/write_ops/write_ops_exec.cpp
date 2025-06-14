@@ -29,25 +29,8 @@
 
 #include "mongo/db/query/write_ops/write_ops_exec.h"
 
-#include "mongo/base/error_codes.h"
-#include <absl/container/flat_hash_map.h>
-#include <absl/hash/hash.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <fmt/format.h>
-#include <functional>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/counter.h"
+#include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonelement_comparator.h"
@@ -114,7 +97,6 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/shard_role.h"
 #include "mongo/db/stats/counters.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/db/stats/server_write_concern_metrics.h"
 #include "mongo/db/stats/top.h"
 #include "mongo/db/storage/duplicate_key_error_info.h"
@@ -157,6 +139,24 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/timer.h"
+
+#include <algorithm>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/hash/hash.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -366,6 +366,11 @@ void insertDocumentsAtomically(OperationContext* opCtx,
     // insert. In order to avoid that delete generating a second timestamp in a WUOW which
     // has un-timestamped writes (which is a violation of multi-timestamp constraints),
     // we must reserve the timestamp for the insert in advance.
+    // We take an exclusive lock on the metadata resource before reserving the timestamp.
+    if (collection.getCollectionPtr()->needsCappedLock()) {
+        Lock::ResourceLock heldUntilEndOfWUOW{
+            opCtx, ResourceId(RESOURCE_METADATA, collection.getCollectionPtr()->ns()), MODE_X};
+    }
     if (oplogEntryGroupType != WriteUnitOfWork::kGroupForPossiblyRetryableOperations &&
         !inTransaction && !oplogDisabled && collection.getCollectionPtr()->isCapped()) {
         acquireOplogSlotsForInserts(opCtx, collection, begin, end);
@@ -776,9 +781,6 @@ UpdateResult performUpdate(OperationContext* opCtx,
 
     assertCanWrite_inlock(opCtx, nsString);
 
-    // TODO SERVER-50983: Create abstraction for creating collection when using
-    // AutoGetCollection Create the collection if it does not exist when performing an upsert
-    // because the update stage does not create its own collection
     if (!collection.exists() && upsert) {
         CollectionWriter collectionWriter(opCtx, &collection);
         uassertStatusOK(userAllowedCreateNS(opCtx, nsString));
@@ -885,14 +887,6 @@ UpdateResult performUpdate(OperationContext* opCtx,
     if (curOp->shouldDBProfile()) {
         auto&& [stats, _] = explainer.getWinningPlanStats(ExplainOptions::Verbosity::kExecStats);
         curOp->debug().execStats = std::move(stats);
-    }
-
-    if (docFound) {
-        ResourceConsumption::DocumentUnitCounter docUnitsReturned;
-        docUnitsReturned.observeOne(docFound->objsize());
-
-        auto& metricsCollector = ResourceConsumption::MetricsCollector::get(opCtx);
-        metricsCollector.incrementDocUnitsReturned(curOp->getNS(), docUnitsReturned);
     }
 
     CurOpFailpointHelpers::waitWhileFailPointEnabled(
@@ -1026,14 +1020,6 @@ long long performDelete(OperationContext* opCtx,
         auto&& explainer = exec->getPlanExplainer();
         auto&& [stats, _] = explainer.getWinningPlanStats(ExplainOptions::Verbosity::kExecStats);
         curOp->debug().execStats = std::move(stats);
-    }
-
-    if (docFound) {
-        ResourceConsumption::DocumentUnitCounter docUnitsReturned;
-        docUnitsReturned.observeOne(docFound->objsize());
-
-        auto& metricsCollector = ResourceConsumption::MetricsCollector::get(opCtx);
-        metricsCollector.incrementDocUnitsReturned(curOp->getNS(), docUnitsReturned);
     }
 
     return nDeleted;
@@ -2228,7 +2214,7 @@ bool shouldRetryDuplicateKeyException(OperationContext* opCtx,
         return false;
     }
 
-    auto keyPattern = errorInfo.getKeyPattern();
+    const auto& keyPattern = errorInfo.getKeyPattern();
     if (equalities.size() != static_cast<size_t>(keyPattern.nFields())) {
         return false;
     }
@@ -2250,7 +2236,7 @@ bool shouldRetryDuplicateKeyException(OperationContext* opCtx,
         }
     }
 
-    auto keyValue = errorInfo.getDuplicatedKeyValue();
+    const auto& keyValue = errorInfo.getDuplicatedKeyValue();
 
     BSONObjIterator keyPatternIter(keyPattern);
     BSONObjIterator keyValueIter(keyValue);
@@ -2267,8 +2253,8 @@ bool shouldRetryDuplicateKeyException(OperationContext* opCtx,
 
         // If the index have collation and we are comparing strings, we need to compare
         // ComparisonStrings instead of the raw value to respect collation.
-        if (!indexHasSimpleCollator && equalityElem.type() == mongo::String) {
-            if (keyValueElem.type() != BSONType::String) {
+        if (!indexHasSimpleCollator && equalityElem.type() == BSONType::string) {
+            if (keyValueElem.type() != BSONType::string) {
                 return false;
             }
             auto equalityComparisonString =

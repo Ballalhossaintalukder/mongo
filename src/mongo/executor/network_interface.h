@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/client/async_client.h"
@@ -56,6 +47,16 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 namespace executor {
@@ -281,7 +282,7 @@ public:
     /**
      * Drops all connections to the given host in the connection pool.
      */
-    virtual void dropConnections(const HostAndPort& hostAndPort) = 0;
+    virtual void dropConnections(const HostAndPort& target, const Status& status) = 0;
 
     /**
      * Acquire a connection and subsequently release it.

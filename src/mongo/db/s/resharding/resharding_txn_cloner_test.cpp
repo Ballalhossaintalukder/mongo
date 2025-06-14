@@ -28,21 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <functional>
-#include <ostream>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/resharding/resharding_txn_cloner.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -82,7 +68,6 @@
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/storage_interface_impl.h"
 #include "mongo/db/repl/wait_for_majority_service.h"
-#include "mongo/db/s/resharding/resharding_txn_cloner.h"
 #include "mongo/db/s/resharding/resharding_txn_cloner_progress_gen.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/s/sharding_mongod_test_fixture.h"
@@ -112,7 +97,6 @@
 #include "mongo/s/catalog/sharding_catalog_client_mock.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_database_gen.h"
-#include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/catalog_cache_loader.h"
 #include "mongo/s/catalog_cache_loader_mock.h"
@@ -131,6 +115,22 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <ostream>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -217,16 +217,6 @@ class ReshardingTxnClonerTest : service_context_test::WithSetupTransportLayer,
                     shardTypes.push_back(std::move(sType));
                 };
                 return repl::OpTimeWith<std::vector<ShardType>>(shardTypes);
-            }
-
-            std::pair<CollectionType, std::vector<IndexCatalogType>>
-            getCollectionAndShardingIndexCatalogEntries(
-                OperationContext* opCtx,
-                const NamespaceString& nss,
-                const repl::ReadConcernArgs& readConcern) override {
-                uasserted(ErrorCodes::NamespaceNotFound,
-                          str::stream()
-                              << "Collection " << nss.toStringForErrorMsg() << " not found");
             }
 
         private:
@@ -318,7 +308,7 @@ protected:
         onCommand([&](const executor::RemoteCommandRequest& request) {
             ASSERT(request.cmdObj["killCursors"]);
             auto cursors = request.cmdObj["cursors"];
-            ASSERT_EQ(cursors.type(), BSONType::Array);
+            ASSERT_EQ(cursors.type(), BSONType::array);
             auto cursorsArray = cursors.Array();
             ASSERT_FALSE(cursorsArray.empty());
             ASSERT_EQ(cursorsArray[0].Long(), cursorId);
@@ -523,6 +513,12 @@ protected:
     }
 
     Timestamp getLatestOplogTimestamp(OperationContext* opCtx) {
+        auto storageEngine = opCtx->getServiceContext()->getStorageEngine();
+        LocalOplogInfo* oplogInfo = LocalOplogInfo::get(opCtx);
+
+        // Oplog should be available in this test.
+        invariant(oplogInfo);
+        storageEngine->waitForAllEarlierOplogWritesToBeVisible(opCtx, oplogInfo->getRecordStore());
         DBDirectClient client(opCtx);
 
         FindCommandRequest findRequest{NamespaceString::kRsOplogNamespace};
@@ -539,6 +535,12 @@ protected:
                                                                    Timestamp ts) {
         std::vector<repl::DurableOplogEntry> result;
 
+        auto storageEngine = opCtx->getServiceContext()->getStorageEngine();
+        LocalOplogInfo* oplogInfo = LocalOplogInfo::get(opCtx);
+
+        // Oplog should be available in this test.
+        invariant(oplogInfo);
+        storageEngine->waitForAllEarlierOplogWritesToBeVisible(opCtx, oplogInfo->getRecordStore());
         PersistentTaskStore<repl::OplogEntryBase> store(NamespaceString::kRsOplogNamespace);
         store.forEach(opCtx, BSON("ts" << BSON("$gt" << ts)), [&](const auto& oplogEntry) {
             result.emplace_back(

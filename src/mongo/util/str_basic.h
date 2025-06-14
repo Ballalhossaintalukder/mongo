@@ -34,10 +34,11 @@
  * bson/util/builder.h
  */
 
-#include <cstring>
-
 #include "mongo/base/string_data.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/ctype.h"
+
+#include <cstring>
 
 namespace mongo::str {
 /**
@@ -62,4 +63,11 @@ constexpr inline char* copyAsCString(char* dest, StringData sd) {
     *dest++ = '\0';
     return dest;
 }
+
+
+/** Utility function for a common use of isDigit() */
+constexpr bool isAllDigits(StringData sd) noexcept {
+    return std::all_of(sd.begin(), sd.end(), [](char c) { return ctype::isDigit(c); });
+}
+
 }  // namespace mongo::str

@@ -29,12 +29,12 @@
 
 #include "mongo/db/pipeline/field_path.h"
 
-#include <absl/container/node_hash_map.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_depth.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <absl/container/node_hash_map.h>
 
 namespace mongo {
 
@@ -63,7 +63,7 @@ const StringDataSet kAllowedDollarPrefixedFields = {
 
 std::string FieldPath::getFullyQualifiedPath(StringData prefix, StringData suffix) {
     if (prefix.empty()) {
-        return suffix.toString();
+        return std::string{suffix};
     }
 
     return str::stream() << prefix << "." << suffix;

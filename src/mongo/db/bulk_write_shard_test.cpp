@@ -27,17 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -59,7 +48,7 @@
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/db/s/collection_metadata.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
-#include "mongo/db/s/database_sharding_state.h"
+#include "mongo/db/s/database_sharding_state_mock.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/shard_id.h"
@@ -68,7 +57,6 @@
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/database_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/shard_version.h"
@@ -77,6 +65,17 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -121,37 +120,25 @@ protected:
 
     const NamespaceString nssShardedCollection1 =
         NamespaceString::createNamespaceString_forTest(dbNameTestDb1, "sharded.porcupine.tree");
-    const ShardVersion shardVersionShardedCollection1 = ShardVersionFactory::make(
-        ChunkVersion(CollectionGeneration{OID::gen(), Timestamp(5, 0)}, CollectionPlacement(10, 1)),
-        boost::optional<CollectionIndexes>(boost::none));
+    const ShardVersion shardVersionShardedCollection1 = ShardVersionFactory::make(ChunkVersion(
+        CollectionGeneration{OID::gen(), Timestamp(5, 0)}, CollectionPlacement(10, 1)));
 
     const NamespaceString nssShardedCollection2 =
         NamespaceString::createNamespaceString_forTest(dbNameTestDb2, "sharded.oasis");
-    const ShardVersion shardVersionShardedCollection2 = ShardVersionFactory::make(
-        ChunkVersion(CollectionGeneration{OID::gen(), Timestamp(6, 0)}, CollectionPlacement(10, 1)),
-        boost::optional<CollectionIndexes>(boost::none));
+    const ShardVersion shardVersionShardedCollection2 = ShardVersionFactory::make(ChunkVersion(
+        CollectionGeneration{OID::gen(), Timestamp(6, 0)}, CollectionPlacement(10, 1)));
 
     // Used to cause a database version mismatch.
     const DatabaseVersion incorrectDatabaseVersion{UUID::gen(), Timestamp(3, 0)};
     // Used to cause a shard version mismatch.
-    const ShardVersion incorrectShardVersion =
-        ShardVersionFactory::make(ChunkVersion(CollectionGeneration{OID::gen(), Timestamp(12, 0)},
-                                               CollectionPlacement(10, 1)),
-                                  boost::optional<CollectionIndexes>(boost::none));
+    const ShardVersion incorrectShardVersion = ShardVersionFactory::make(ChunkVersion(
+        CollectionGeneration{OID::gen(), Timestamp(12, 0)}, CollectionPlacement(10, 1)));
 };
 
 void createTestCollection(OperationContext* opCtx, const NamespaceString& nss) {
     OperationShardingState::ScopedAllowImplicitCollectionCreate_UNSAFE unsafeCreateCollection(
         opCtx);
     uassertStatusOK(createCollection(opCtx, nss.dbName(), BSON("create" << nss.coll())));
-}
-
-void installDatabaseMetadata(OperationContext* opCtx,
-                             const DatabaseName& dbName,
-                             const DatabaseVersion& dbVersion) {
-    AutoGetDb autoDb(opCtx, dbName, MODE_X);
-    auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(opCtx, dbName);
-    scopedDss->setDbInfo_DEPRECATED(opCtx, {dbName, ShardId("this"), dbVersion});
 }
 
 void installUnshardedCollectionMetadata(OperationContext* opCtx, const NamespaceString& nss) {
@@ -212,10 +199,6 @@ UUID getCollectionUUID(OperationContext* opCtx, const NamespaceString& nss) {
 
 void BulkWriteShardTest::setUp() {
     ShardServerTestFixture::setUp();
-
-    // Setup test collections and metadata
-    installDatabaseMetadata(opCtx(), dbNameTestDb1, dbVersionTestDb1);
-    installDatabaseMetadata(opCtx(), dbNameTestDb2, dbVersionTestDb2);
 
     // Create nssUnshardedCollection1
     createTestCollection(opCtx(), nssUnshardedCollection1);
@@ -515,6 +498,12 @@ TEST_F(BulkWriteShardTest, DeletesFailOrdered) {
 // After the first insert fails due to an incorrect database version, the rest
 // of the writes are skipped when operations are ordered.
 TEST_F(BulkWriteShardTest, FirstFailsRestSkippedStaleDbVersionOrdered) {
+    {
+        auto scopedDss = DatabaseShardingStateMock::acquire(opCtx(), dbNameTestDb1);
+        scopedDss->expectFailureDbVersionCheckWithMismatchingVersion(dbVersionTestDb1,
+                                                                     incorrectDatabaseVersion);
+    }
+
     BulkWriteCommandRequest request(
         {BulkWriteInsertOp(0, BSON("x" << 1)),
          BulkWriteInsertOp(0, BSON("x" << -1)),
@@ -532,11 +521,20 @@ TEST_F(BulkWriteShardTest, FirstFailsRestSkippedStaleDbVersionOrdered) {
     ASSERT_EQ(1, summaryFields.nErrors);
 
     OperationShardingState::get(opCtx()).resetShardingOperationFailedStatus();
+
+    auto scopedDss = DatabaseShardingStateMock::acquire(opCtx(), dbNameTestDb1);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 // After the second insert fails due to an incorrect database version, the rest
 // of the writes are skipped when operations are unordered.
 TEST_F(BulkWriteShardTest, FirstFailsRestSkippedStaleDbVersionUnordered) {
+    {
+        auto scopedDss = DatabaseShardingStateMock::acquire(opCtx(), dbNameTestDb1);
+        scopedDss->expectFailureDbVersionCheckWithMismatchingVersion(dbVersionTestDb1,
+                                                                     incorrectDatabaseVersion);
+    }
+
     BulkWriteCommandRequest request(
         {BulkWriteInsertOp(1, BSON("x" << 1)),
          BulkWriteInsertOp(0, BSON("x" << -1)),
@@ -556,6 +554,9 @@ TEST_F(BulkWriteShardTest, FirstFailsRestSkippedStaleDbVersionUnordered) {
     ASSERT_EQ(1, summaryFields.nErrors);
 
     OperationShardingState::get(opCtx()).resetShardingOperationFailedStatus();
+
+    auto scopedDss = DatabaseShardingStateMock::acquire(opCtx(), dbNameTestDb1);
+    scopedDss->clearExpectedFailureDbVersionCheck();
 }
 
 }  // namespace

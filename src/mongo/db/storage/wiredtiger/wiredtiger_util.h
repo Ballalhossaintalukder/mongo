@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <span>
-
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
 #include "mongo/db/validate/validate_results.h"
+
+#include <span>
 
 namespace mongo {
 
@@ -95,6 +95,7 @@ private:
 public:
     static constexpr StringData kConfigStringField = "configString"_sd;
     static constexpr StringData kTableUriPrefix = "table:"_sd;
+    static constexpr double memoryThresholdPercentage = 0.8;
 
     static std::string buildTableUri(StringData ident);
 
@@ -173,18 +174,28 @@ public:
     static void appendSnapshotWindowSettings(WiredTigerKVEngine* engine, BSONObjBuilder* bob);
 
     /**
-     * Gets the creation metadata string for a collection or index at a given URI. Accepts an
-     * OperationContext or session.
+     * Gets the creation metadata string for a collection or index at a given URI.
      *
-     * This returns more information, but is slower than getMetadata().
+     * This merges together the config strings for the table, colgroup, and file, which is a very
+     * slow process.
      */
     static StatusWith<std::string> getMetadataCreate(WiredTigerSession& session, StringData uri);
 
     /**
-     * Gets the entire metadata string for collection or index at URI. Accepts an OperationContext
-     * or session.
+     * Gets the entire metadata string for collection or index at URI.
+     *
+     * This returns only the table config string, and for fields stored there is the fastest way to
+     * obtain that information.
      */
     static StatusWith<std::string> getMetadata(WiredTigerSession& session, StringData uri);
+
+    /**
+     * Gets the source metadata string for collection or index at URI.
+     *
+     * This is the WiredTiger config string for a specific file. If given a table: URI, it will
+     * return the config for the file of the table's only colgroup.
+     */
+    static StatusWith<std::string> getSourceMetadata(WiredTigerSession& session, StringData uri);
 
     /**
      * Reads app_metadata for collection/index at URI as a BSON document.
@@ -244,10 +255,17 @@ public:
                                                         const std::string& uri);
 
     /**
-     * Return amount of memory to use for the WiredTiger cache based on either the startup
-     * option chosen or the amount of available memory on the host.
+     * Return amount of memory to use for the WiredTiger cache. The calculation has lower and upper
+     * bounds. A non-zero value for either parameter indicates that parameter should be used for the
+     * calculation. If both are zero, half of available memory will be returned.
      */
-    static size_t getCacheSizeMB(double requestedCacheSizeGB);
+    static size_t getMainCacheSizeMB(double requestedCacheSizeGB, double requestedCacheSizePct = 0);
+
+    /**
+     * Returns the amount of memory to use for the spill WiredTiger cache. If `requestedCacheSizeGB`
+     * is less than or equal to 0, defaults to `spillWiredTigerCacheSizeGB.`
+     */
+    static int32_t getSpillCacheSizeMB(double requestedCacheSizeGB);
 
     class ErrorAccumulator : public WT_EVENT_HANDLER {
     public:
@@ -379,7 +397,7 @@ class WiredTigerConfigParser {
 public:
     WiredTigerConfigParser(StringData config) {
         invariantWTOK(
-            wiredtiger_config_parser_open(nullptr, config.rawData(), config.size(), &_parser),
+            wiredtiger_config_parser_open(nullptr, config.data(), config.size(), &_parser),
             nullptr);
     }
 
@@ -394,8 +412,7 @@ public:
     }
 
     int next(WT_CONFIG_ITEM* key, WT_CONFIG_ITEM* value) {
-        _nextCalled = true;
-        return _next(key, value);
+        return _parser->next(_parser, key, value);
     }
 
     int get(const char* key, WT_CONFIG_ITEM* value) const {
@@ -416,31 +433,8 @@ public:
      */
     boost::optional<bool> isTableLoggingEnabled() const;
 
-    /**
-     * Iterates through keys in config parser for metadata creation string and
-     * returns true if this configuration string has no logging settings that
-     * conflict with each other.
-     *
-     * Since this function has to iterate though all the keys in the configuration scanner,
-     * it is illegal to call this function after we have started iteration through the
-     * keys(), either through next() or a previous call to isTableLoggingSettingValid().
-     */
-    bool isTableLoggingSettingValid();
-
 private:
-    /**
-     * Internal implementation to advance iteration to the next key.
-     * We have both next() and _next() so that we can tell when a caller has
-     * started scanning the configuration through next(). This is important for
-     * isTableLoggingSettingValid() because it has to iterate through all the
-     * top-level keys for correct operation.
-     */
-    int _next(WT_CONFIG_ITEM* key, WT_CONFIG_ITEM* value) {
-        return _parser->next(_parser, key, value);
-    }
-
     WT_CONFIG_PARSER* _parser;
-    bool _nextCalled = false;
 };
 
 // static

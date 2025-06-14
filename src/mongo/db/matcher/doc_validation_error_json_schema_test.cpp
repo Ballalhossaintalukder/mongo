@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstring>
-#include <sys/types.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -41,6 +38,10 @@
 #include "mongo/db/matcher/doc_validation_error_test.h"
 #include "mongo/db/matcher/expression_type.h"
 #include "mongo/unittest/unittest.h"
+
+#include <cstring>
+
+#include <sys/types.h>
 
 namespace mongo {
 namespace {
@@ -1405,7 +1406,7 @@ TEST(JSONSchemaValidation, EncryptWithSubtypeFailsDueToMismatchedSubtype) {
     FleBlobHeader blob;
     blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kDeterministic);
     memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-    blob.originalBsonType = BSONType::String;
+    blob.originalBsonType = stdx::to_underlying(BSONType::string);
 
     BSONObj document = BSON("a" << BSONBinData(reinterpret_cast<const void*>(&blob),
                                                sizeof(FleBlobHeader),
@@ -1429,7 +1430,7 @@ TEST(JSONSchemaValidation, EncryptWithSubtypeInvertedValueIsEncrypted) {
     FleBlobHeader blob;
     blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kDeterministic);
     memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-    blob.originalBsonType = BSONType::NumberInt;
+    blob.originalBsonType = stdx::to_underlying(BSONType::numberInt);
 
     BSONObj document = BSON("a" << BSONBinData(reinterpret_cast<const void*>(&blob),
                                                sizeof(FleBlobHeader),

@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/smart_ptr.hpp>
-#include <set>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/document_source.h"
@@ -48,6 +41,13 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -58,12 +58,12 @@ namespace mongo {
  * return results directly from the cache rather than from a preceding stage. It does not have a
  * registered parser and cannot be created from BSON.
  */
-class DocumentSourceSequentialDocumentCache final : public DocumentSource {
+class DocumentSourceSequentialDocumentCache final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$sequentialCache"_sd;
 
     const char* getSourceName() const final {
-        return DocumentSourceSequentialDocumentCache::kStageName.rawData();
+        return DocumentSourceSequentialDocumentCache::kStageName.data();
     }
 
     static const Id& id;

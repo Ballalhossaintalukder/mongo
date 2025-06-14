@@ -42,7 +42,7 @@ def run_pty_command(cmd):
     return stdout
 
 
-def generate_compiledb(bazel_bin, persistent_compdb):
+def generate_compiledb(bazel_bin, persistent_compdb, enterprise):
     if persistent_compdb:
         info_proc = subprocess.run(
             [bazel_bin, "info", "output_base"], capture_output=True, text=True
@@ -61,6 +61,9 @@ def generate_compiledb(bazel_bin, persistent_compdb):
         )
         compiledb_config = ["--config=dbg"]
 
+    if not enterprise:
+        compiledb_config.append("--build_enterprise=False")
+
     query_cmd = (
         [bazel_bin]
         + ([f"--output_base={output_base}"] if persistent_compdb else [])
@@ -69,8 +72,6 @@ def generate_compiledb(bazel_bin, persistent_compdb):
         + ([f"--symlink_prefix={symlink_prefix}"] if persistent_compdb else [])
         + compiledb_config
         + [
-            "--remote_executor=",
-            "--remote_cache=",
             "--bes_backend=",
             "--bes_results_url=",
             "--noinclude_artifacts",

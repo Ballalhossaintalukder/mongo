@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/json.h"
@@ -39,6 +36,9 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -52,7 +52,7 @@ TEST_F(InternalUnpackBucketSplitMatchOnMetaAndRename, OptimizeSplitsMatchAndMaps
     auto pipeline = Pipeline::parse(
         makeVector(unpack, fromjson("{$match: {myMeta: {$gte: 0, $lte: 5}, a: {$lte: 4}}}")),
         getExpCtx());
-    ASSERT_EQ(2u, pipeline->getSources().size());
+    ASSERT_EQ(2u, pipeline->size());
 
     pipeline->optimizePipeline();
 
@@ -87,7 +87,7 @@ TEST_F(InternalUnpackBucketSplitMatchOnMetaAndRename, OptimizeMovesMetaMatchBefo
         "bucketMaxSpanSeconds: 3600}}");
     auto pipeline =
         Pipeline::parse(makeVector(unpack, fromjson("{$match: {myMeta: {$gte: 0}}}")), getExpCtx());
-    ASSERT_EQ(2u, pipeline->getSources().size());
+    ASSERT_EQ(2u, pipeline->size());
 
     pipeline->optimizePipeline();
 
@@ -107,7 +107,7 @@ TEST_F(InternalUnpackBucketSplitMatchOnMetaAndRename,
                                                fromjson("{$project: {data: 1}}"),
                                                fromjson("{$match: {myMeta: {$gte: 0}}}")),
                                     getExpCtx());
-    ASSERT_EQ(3u, pipeline->getSources().size());
+    ASSERT_EQ(3u, pipeline->size());
 
     pipeline->optimizePipeline();
 
@@ -135,7 +135,7 @@ TEST_F(InternalUnpackBucketSplitMatchOnMetaAndRename,
         "  ]}"
         "]}}");
     auto pipeline = Pipeline::parse(makeVector(unpack, match), getExpCtx());
-    ASSERT_EQ(2u, pipeline->getSources().size());
+    ASSERT_EQ(2u, pipeline->size());
 
     pipeline->optimizePipeline();
 

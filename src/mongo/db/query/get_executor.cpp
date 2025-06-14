@@ -29,8 +29,9 @@
 
 #include "mongo/db/query/get_executor.h"
 
-#include "mongo/db/query/ce/sampling_estimator.h"
-#include "mongo/db/query/ce/sampling_estimator_impl.h"
+#include "mongo/db/query/ce/sampling/sampling_estimator.h"
+#include "mongo/db/query/ce/sampling/sampling_estimator_impl.h"
+
 #include <absl/container/flat_hash_set.h>
 #include <absl/container/node_hash_map.h>
 #include <boost/container/flat_set.hpp>
@@ -43,12 +44,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <cstdint>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
@@ -65,6 +60,9 @@
 #include "mongo/db/exec/express/plan_executor_express.h"
 #include "mongo/db/exec/plan_stage.h"
 #include "mongo/db/exec/record_store_fast_count.h"
+#include "mongo/db/exec/runtime_planners/classic_runtime_planner/planner_interface.h"
+#include "mongo/db/exec/runtime_planners/classic_runtime_planner_for_sbe/planner_interface.h"
+#include "mongo/db/exec/runtime_planners/planner_interface.h"
 #include "mongo/db/exec/sbe/stages/stages.h"
 #include "mongo/db/exec/sort_key_generator.h"
 #include "mongo/db/exec/subplan.h"
@@ -79,8 +77,6 @@
 #include "mongo/db/pipeline/sbe_pushdown.h"
 #include "mongo/db/pipeline/search/search_helper.h"
 #include "mongo/db/query/canonical_query.h"
-#include "mongo/db/query/classic_runtime_planner/planner_interface.h"
-#include "mongo/db/query/classic_runtime_planner_for_sbe/planner_interface.h"
 #include "mongo/db/query/collation/collator_factory_interface.h"
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/db/query/collection_query_info.h"
@@ -97,7 +93,6 @@
 #include "mongo/db/query/plan_executor_factory.h"
 #include "mongo/db/query/plan_yield_policy_sbe.h"
 #include "mongo/db/query/planner_analysis.h"
-#include "mongo/db/query/planner_interface.h"
 #include "mongo/db/query/planner_ixselect.h"
 #include "mongo/db/query/projection.h"
 #include "mongo/db/query/projection_parser.h"
@@ -130,6 +125,12 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -452,7 +453,7 @@ public:
 
         std::vector<std::unique_ptr<QuerySolution>> solutions;
         QueryPlanner::CostBasedRankerResult cbrResult;
-        auto rankerMode = _cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode();
+        auto rankerMode = _plannerParams->planRankerMode;
         if (rankerMode != QueryPlanRankerModeEnum::kMultiPlanning) {
             using namespace cost_based_ranker;
             std::unique_ptr<ce::SamplingEstimator> samplingEstimator{nullptr};
@@ -1201,7 +1202,7 @@ bool collectionHasIndexWithHashedPathPrefixOfNonHashedPath(const CollectionPtr& 
     OperationContext* opCtx = expCtx->getOperationContext();
     tassert(10230201, "'ExpressionContext' does not have an 'OperationContext'", opCtx);
     std::unique_ptr<IndexCatalog::IndexIterator> indexIter =
-        indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+        indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (indexIter->more()) {
         const IndexCatalogEntry* entry = indexIter->next();
         if (indexHasHashedPathPrefixOfNonHashedPath(entry->descriptor())) {
@@ -1296,6 +1297,8 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorFind
                 .collections = collections,
                 .plannerOptions = options,
                 .traversalPreference = traversalPreference,
+                .planRankerMode =
+                    canonicalQuery->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
             });
     };
 
@@ -1718,6 +1721,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorDele
             .opCtx = opCtx,
             .canonicalQuery = *cq,
             .collections = collections,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         });
     ClassicPrepareExecutionHelper helper{
         opCtx, collections, std::move(ws), cq.get(), policy, std::move(plannerParams)};
@@ -1892,6 +1896,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorUpda
             .opCtx = opCtx,
             .canonicalQuery = *cq,
             .collections = collections,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         })};
 
     ScopedDebugInfo queryPlannerParams(
@@ -1999,6 +2004,7 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorCoun
             .canonicalQuery = *cq,
             .collections = collections,
             .plannerOptions = plannerOptions,
+            .planRankerMode = cq->getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode(),
         });
     ClassicPrepareExecutionHelper helper{
         opCtx, collections, std::move(ws), cq.get(), yieldPolicy, std::move(plannerParams)};

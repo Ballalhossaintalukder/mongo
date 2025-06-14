@@ -27,6 +27,23 @@
  *    it in the license file.
  */
 
+#include "mongo/db/update/document_diff_applier.h"
+
+#include "mongo/base/data_type_endian.h"
+#include "mongo/base/data_view.h"
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonelement.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/bson/util/builder.h"
+#include "mongo/db/field_ref.h"
+#include "mongo/db/storage/damage_vector.h"
+#include "mongo/db/update_index_data.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
+#include "mongo/util/str.h"
+#include "mongo/util/string_map.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -38,22 +55,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/data_type_endian.h"
-#include "mongo/base/data_view.h"
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/bson/util/builder.h"
-#include "mongo/db/field_ref.h"
-#include "mongo/db/storage/damage_vector.h"
-#include "mongo/db/update/document_diff_applier.h"
-#include "mongo/db/update_index_data.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
-#include "mongo/util/str.h"
-#include "mongo/util/string_map.h"
 
 namespace mongo::doc_diff {
 namespace {
@@ -186,7 +187,7 @@ void appendEOOByte(DamageVector* damages, BufBuilder* bufBuilder, size_t targetO
     if (lastDamage.targetOffset + lastDamage.sourceSize == targetOffset) {
         // Appends EOO byte to help with potential merging.
         appendDamage(damages, bufBuilder->len(), 1, targetOffset, 1);
-        appendTypeByte(bufBuilder, BSONType::EOO);
+        appendTypeByte(bufBuilder, stdx::to_underlying(BSONType::eoo));
     }
 }
 
@@ -248,7 +249,7 @@ int32_t computeDamageOnObject(const BSONObj& preImageRoot,
             preImageSub.end()->rawdata(), preImageRoot.objdata(), offsetRoot, diffSize);
         // Appends EOO byte to help with potential merging.
         appendDamage(damages, bufBuilder->len(), 1, targetOffset, 1);
-        appendTypeByte(bufBuilder, BSONType::EOO);
+        appendTypeByte(bufBuilder, stdx::to_underlying(BSONType::eoo));
         return diffSize;
     }
 
@@ -291,7 +292,7 @@ int32_t computeDamageOnObject(const BSONObj& preImageRoot,
 
                   [&](const SubDiff& subDiff) {
                       const auto type = subDiff.type();
-                      if (elt.type() == BSONType::Object && type == DiffType::kDocument) {
+                      if (elt.type() == BSONType::object && type == DiffType::kDocument) {
                           addElementPrefix(elt, damages, bufBuilder, targetOffset);
                           auto reader = get<DocumentDiffReader>(subDiff.reader);
                           diffSize += computeDamageOnObject(preImageRoot,
@@ -301,7 +302,7 @@ int32_t computeDamageOnObject(const BSONObj& preImageRoot,
                                                             bufBuilder,
                                                             offsetRoot + diffSize,
                                                             mustCheckExistenceForInsertOperations);
-                      } else if (elt.type() == BSONType::Array && type == DiffType::kArray) {
+                      } else if (elt.type() == BSONType::array && type == DiffType::kArray) {
                           addElementPrefix(elt, damages, bufBuilder, targetOffset);
                           auto reader = get<ArrayDiffReader>(subDiff.reader);
                           diffSize += computeDamageOnArray(preImageRoot,
@@ -375,7 +376,7 @@ int32_t computeDamageForArrayIndex(const BSONObj& preImageRoot,
                       auto targetOffset = targetOffsetInPostImage(
                           preImageValue->rawdata(), preImageRoot.objdata(), offsetRoot);
                       if constexpr (std::is_same_v<decltype(reader), ArrayDiffReader>) {
-                          if (preImageValue->type() == BSONType::Array) {
+                          if (preImageValue->type() == BSONType::array) {
                               addElementPrefix(*preImageValue, damages, bufBuilder, targetOffset);
                               diffSize +=
                                   computeDamageOnArray(preImageRoot,
@@ -388,7 +389,7 @@ int32_t computeDamageForArrayIndex(const BSONObj& preImageRoot,
                               return;
                           }
                       } else if constexpr (std::is_same_v<decltype(reader), DocumentDiffReader>) {
-                          if (preImageValue->type() == BSONType::Object) {
+                          if (preImageValue->type() == BSONType::object) {
                               addElementPrefix(*preImageValue, damages, bufBuilder, targetOffset);
                               diffSize +=
                                   computeDamageOnObject(preImageRoot,
@@ -480,7 +481,7 @@ int32_t computeDamageOnArray(const BSONObj& preImageRoot,
             auto sourceSize = idxAsStr.size() + 2;
             appendDamage(damages, bufBuilder->len(), sourceSize, targetOffset, 0);
             diffSize += sourceSize;
-            appendTypeByte(bufBuilder, BSONType::jstNULL);
+            appendTypeByte(bufBuilder, stdx::to_underlying(BSONType::null));
             bufBuilder->appendCStr(idxAsStr);
         }
     }
@@ -586,11 +587,11 @@ public:
 
                     [this, &builder, &elt, &path](const SubDiff& subDiff) {
                         const auto type = subDiff.type();
-                        if (elt.type() == BSONType::Object && type == DiffType::kDocument) {
+                        if (elt.type() == BSONType::object && type == DiffType::kDocument) {
                             BSONObjBuilder subBob(builder->subobjStart(elt.fieldNameStringData()));
                             auto reader = get<DocumentDiffReader>(subDiff.reader);
                             applyDiffToObject(elt.embeddedObject(), path, &reader, &subBob);
-                        } else if (elt.type() == BSONType::Array && type == DiffType::kArray) {
+                        } else if (elt.type() == BSONType::array && type == DiffType::kArray) {
                             BSONArrayBuilder subBob(
                                 builder->subarrayStart(elt.fieldNameStringData()));
                             auto reader = get<ArrayDiffReader>(subDiff.reader);
@@ -670,13 +671,13 @@ private:
                         return;
                     }
                     if constexpr (std::is_same_v<decltype(reader), ArrayDiffReader>) {
-                        if (preImageValue->type() == BSONType::Array) {
+                        if (preImageValue->type() == BSONType::array) {
                             BSONArrayBuilder sub(builder->subarrayStart());
                             applyDiffToArray(preImageValue->embeddedObject(), path, &reader, &sub);
                             return;
                         }
                     } else if constexpr (std::is_same_v<decltype(reader), DocumentDiffReader>) {
-                        if (preImageValue->type() == BSONType::Object) {
+                        if (preImageValue->type() == BSONType::object) {
                             BSONObjBuilder sub(builder->subobjStart());
                             applyDiffToObject(preImageValue->embeddedObject(), path, &reader, &sub);
                             return;

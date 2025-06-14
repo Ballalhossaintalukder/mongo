@@ -30,19 +30,6 @@
 
 #include "mongo/db/query/fle/server_rewrite.h"
 
-#include <boost/smart_ptr.hpp>
-#include <functional>
-#include <list>
-#include <memory>
-#include <string>
-#include <typeindex>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
 #include "mongo/base/status_with.h"
@@ -69,6 +56,19 @@
 #include "mongo/util/future.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <functional>
+#include <list>
+#include <memory>
+#include <string>
+#include <typeindex>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
@@ -224,7 +224,7 @@ NamespaceString getAndValidateEscNsFromSchema(const EncryptionInformation& encry
         return NamespaceString();
     }
     auto efc = EncryptionInformationHelpers::getAndValidateSchema(nss, encryptInfo);
-    return NamespaceStringUtil::deserialize(nss.dbName(), efc.getEscCollection()->toString());
+    return NamespaceStringUtil::deserialize(nss.dbName(), std::string{*efc.getEscCollection()});
 }
 
 std::map<NamespaceString, NamespaceString> generateEncryptInfoEscMap(
@@ -236,7 +236,7 @@ std::map<NamespaceString, NamespaceString> generateEncryptInfoEscMap(
             uassert(9775500,
                     "Each namespace schema "
                     "must be an object",
-                    elem.type() == Object);
+                    elem.type() == BSONType::object);
             auto schemaNs = NamespaceStringUtil::deserialize(
                 boost::none, elem.fieldNameStringData(), SerializationContext::stateDefault());
             auto efc = EncryptionInformationHelpers::getAndValidateSchema(schemaNs, encryptInfo);
@@ -244,7 +244,7 @@ std::map<NamespaceString, NamespaceString> generateEncryptInfoEscMap(
             escMap.emplace(std::piecewise_construct,
                            std::forward_as_tuple(std::move(schemaNs)),
                            std::forward_as_tuple(NamespaceStringUtil::deserialize(
-                               dbName, efc.getEscCollection()->toString())));
+                               dbName, std::string{*efc.getEscCollection()})));
         }
     }
     return escMap;

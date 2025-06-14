@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <string>
-#include <utility>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -41,6 +37,11 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/simple_bsonobj_comparator.h"
 #include "mongo/db/query/util/deferred.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -108,7 +109,7 @@ public:
      * - You hold the Client lock.
      * - You are on the Client's thread.
      */
-    static const ClientMetadata* getForClient(Client* client) noexcept;
+    static const ClientMetadata* getForClient(Client* client);
 
     /**
      * Get the ClientMetadata for the OperationContext.
@@ -120,7 +121,7 @@ public:
      * - You hold the Client lock.
      * - You are on the Client's thread.
      */
-    static const ClientMetadata* getForOperation(OperationContext* opCtx) noexcept;
+    static const ClientMetadata* getForOperation(OperationContext* opCtx);
 
     /**
      * Get the prioritized ClientMetadata for the Client.
@@ -132,7 +133,7 @@ public:
      * - You hold the Client lock.
      * - You are on the Client's thread.
      */
-    static const ClientMetadata* get(Client* client) noexcept;
+    static const ClientMetadata* get(Client* client);
 
     /**
      * Set the ClientMetadata for the Client directly.

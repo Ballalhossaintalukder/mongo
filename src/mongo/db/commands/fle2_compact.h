@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <numeric>
-#include <queue>
-#include <vector>
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/crypto/fle_crypto.h"
@@ -46,6 +41,11 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/stdx/unordered_set.h"
+
+#include <cstddef>
+#include <numeric>
+#include <queue>
+#include <vector>
 
 namespace mongo {
 
@@ -108,6 +108,7 @@ stdx::unordered_set<ECOCCompactionDocumentV2> getUniqueCompactionDocuments(
  * Used by unit tests.
  */
 void compactOneFieldValuePairV2(FLEQueryInterface* queryImpl,
+                                HmacContext* hmacCtx,
                                 const ECOCCompactionDocumentV2& ecocDoc,
                                 const NamespaceString& escNss,
                                 ECStats* escStats);
@@ -117,6 +118,7 @@ void compactOneFieldValuePairV2(FLEQueryInterface* queryImpl,
  * Performs compaction for Range fields to add additional padding edges.
  */
 void compactOneRangeFieldPad(FLEQueryInterface* queryImpl,
+                             HmacContext* hmacCtx,
                              const NamespaceString& escNss,
                              StringData fieldPath,
                              BSONType fieldType,
@@ -141,6 +143,7 @@ enum class FLECleanupOneMode {
 };
 
 std::vector<PrfBlock> cleanupOneFieldValuePair(FLEQueryInterface* queryImpl,
+                                               HmacContext* hmacCtx,
                                                const ECOCCompactionDocumentV2& ecocDoc,
                                                const NamespaceString& escNss,
                                                std::size_t maxAnchorListLength,

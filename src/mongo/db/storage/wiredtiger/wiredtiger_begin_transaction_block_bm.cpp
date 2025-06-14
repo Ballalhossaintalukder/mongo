@@ -27,18 +27,12 @@
  *    it in the license file.
  */
 
-#include <benchmark/benchmark.h>
-#include <memory>
-#include <ostream>
-#include <string>
-
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_begin_transaction_block.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/db/storage/recovery_unit.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_begin_transaction_block.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
@@ -46,6 +40,14 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source_mock.h"
+
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <wiredtiger.h>
+
+#include <benchmark/benchmark.h>
 
 namespace mongo {
 namespace {
@@ -57,7 +59,7 @@ public:
         ss << "create,";
         ss << extraStrings;
         std::string config = ss.str();
-        int ret = wiredtiger_open(dbpath.toString().c_str(), nullptr, config.c_str(), &_conn);
+        int ret = wiredtiger_open(std::string{dbpath}.c_str(), nullptr, config.c_str(), &_conn);
         invariant(wtRCToStatus(ret, nullptr));
     }
     ~WiredTigerConnectionTest() {
@@ -88,7 +90,8 @@ private:
     unittest::TempDir _dbpath{"wt_test"};
     WiredTigerConnectionTest _connectionTest{_dbpath.path(), ""};
     ClockSourceMock _clockSource;
-    WiredTigerConnection _connection{_connectionTest.getConnection(), &_clockSource};
+    WiredTigerConnection _connection{
+        _connectionTest.getConnection(), &_clockSource, /*sessionCacheMax=*/33000};
     std::unique_ptr<WiredTigerRecoveryUnit> _ru;
 
     WiredTigerSession* _session;

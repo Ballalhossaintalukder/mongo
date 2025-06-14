@@ -29,17 +29,15 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/field_ref.h"
 
-namespace mongo {
+#include <cstddef>
+#include <cstdint>
 
-bool isAllDigits(StringData str);
+namespace mongo {
 
 /**
  * Finds the element at 'path' in 'doc', starting at 'startIndex' in 'path'. If none is found, an

@@ -28,22 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <iterator>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/replication_recovery.h"
 
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
@@ -56,7 +41,6 @@
 #include "mongo/bson/simple_bsonobj_comparator.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/client.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/op_observer/op_observer.h"
@@ -73,7 +57,6 @@
 #include "mongo/db/repl/replication_consistency_markers_mock.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
-#include "mongo/db/repl/replication_recovery.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/storage_interface_impl.h"
 #include "mongo/db/server_options.h"
@@ -103,6 +86,23 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -408,7 +408,7 @@ void _setUpOplog(OperationContext* opCtx, StorageInterface* storage, std::vector
             opCtx, oplogNs, _makeInsertOplogEntry(ts), OpTime::kUninitializedTerm));
     }
     if (!timestamps.empty()) {
-        // Use the highest inserted timestamp to update oplog visibilty so that all of the inserted
+        // Use the highest inserted timestamp to update oplog visibility so that all of the inserted
         // oplog entries are visible.
         storage->oplogDiskLocRegister(opCtx, Timestamp(timestamps.back(), timestamps.back()), true);
     }
@@ -764,6 +764,16 @@ TEST_F(ReplicationRecoveryTest,
     testRecoveryToStableAppliesDocumentsWithNoAppliedThrough(false);
 }
 
+CollectionAcquisition getCollectionForRead(OperationContext* opCtx, const NamespaceString& nss) {
+    return acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(nss,
+                                     PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     mongo::AcquisitionPrerequisites::kRead),
+        MODE_IS);
+}
+
 TEST_F(ReplicationRecoveryTest, UnstableRecoveryIgnoresDroppedCollections) {
     ReplicationRecoveryImpl recovery(getStorageInterface(), getConsistencyMarkers());
     auto opCtx = getOperationContext();
@@ -772,8 +782,8 @@ TEST_F(ReplicationRecoveryTest, UnstableRecoveryIgnoresDroppedCollections) {
 
     ASSERT_OK(getStorageInterface()->dropCollection(opCtx, testNs));
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, testNs);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, testNs);
+        ASSERT_FALSE(coll.exists());
     }
 
     // Not setting a stable timestamp in order to perform unstable recovery,
@@ -781,8 +791,8 @@ TEST_F(ReplicationRecoveryTest, UnstableRecoveryIgnoresDroppedCollections) {
 
     _assertDocsInOplog(opCtx, {1, 2, 3, 4, 5});
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, testNs);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, testNs);
+        ASSERT_FALSE(coll.exists());
     }
     ASSERT_EQ(getConsistencyMarkers()->getOplogTruncateAfterPoint(opCtx), Timestamp());
 }
@@ -797,8 +807,8 @@ DEATH_TEST_REGEX_F(ReplicationRecoveryTest,
 
     ASSERT_OK(getStorageInterface()->dropCollection(opCtx, testNs));
     {
-        AutoGetCollectionForReadCommand autoColl(opCtx, testNs);
-        ASSERT_FALSE(autoColl.getCollection());
+        const auto coll = getCollectionForRead(opCtx, testNs);
+        ASSERT_FALSE(coll.exists());
     }
 
     getStorageInterfaceRecovery()->setRecoveryTimestamp(Timestamp(2, 2));

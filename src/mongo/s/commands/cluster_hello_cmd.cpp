@@ -27,17 +27,6 @@
  *    it in the license file.
  */
 
-#include <functional>
-#include <initializer_list>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -89,6 +78,17 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
 
+#include <functional>
+#include <initializer_list>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
 
@@ -105,7 +105,7 @@ constexpr auto kHelloString = "hello"_sd;
 constexpr auto kCamelCaseIsMasterString = "isMaster"_sd;
 constexpr auto kLowerCaseIsMasterString = "ismaster"_sd;
 const std::string kAutomationServiceDescriptorFieldName =
-    HelloCommandReply::kAutomationServiceDescriptorFieldName.toString();
+    std::string{HelloCommandReply::kAutomationServiceDescriptorFieldName};
 
 class CmdHello : public BasicCommandWithReplyBuilderInterface {
 public:
@@ -264,7 +264,7 @@ public:
                             static_cast<long long>(MaxMessageSizeBytes));
         result.appendNumber(HelloCommandReply::kMaxWriteBatchSizeFieldName,
                             static_cast<long long>(write_ops::kMaxWriteBatchSize));
-        result.appendDate(HelloCommandReply::kLocalTimeFieldName, jsTime());
+        result.appendDate(HelloCommandReply::kLocalTimeFieldName, Date_t::now());
         result.append(HelloCommandReply::kLogicalSessionTimeoutMinutesFieldName,
                       localLogicalSessionTimeoutMinutes);
         result.appendNumber(HelloCommandReply::kConnectionIdFieldName,

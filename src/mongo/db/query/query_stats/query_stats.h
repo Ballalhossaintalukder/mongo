@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-
 #include "mongo/db/curop.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -44,6 +37,14 @@
 #include "mongo/db/query/query_stats/query_stats_entry.h"
 #include "mongo/db/query/query_stats/rate_limiting.h"
 #include "mongo/db/service_context.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::query_stats {
 
@@ -105,7 +106,7 @@ public:
     // The query stats store can be configured using these objects on a per-ServiceContext level.
     // This is essentially global, but can be manipulated by unit tests.
     static const ServiceContext::Decoration<std::unique_ptr<QueryStatsStoreManager>> get;
-    static const ServiceContext::Decoration<std::unique_ptr<RateLimiting>> getRateLimiter;
+    static const ServiceContext::Decoration<std::unique_ptr<RateLimiter>> getRateLimiter;
 
     template <typename... QueryStatsStoreArgs>
     QueryStatsStoreManager(size_t cacheSize, size_t numPartitions)

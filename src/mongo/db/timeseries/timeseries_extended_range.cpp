@@ -29,13 +29,6 @@
 
 #include "mongo/db/timeseries/timeseries_extended_range.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <memory>
-#include <string>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/data_view.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +43,13 @@
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries {
 
@@ -83,7 +83,7 @@ bool bucketsHaveDateOutsideStandardRange(const TimeseriesOptions& options,
         auto timeElem = minObj.getField(options.getTimeField());
         uassert(6781402,
                 "Time series bucket document does not have a valid min time element",
-                timeElem && BSONType::Date == timeElem.type());
+                timeElem && BSONType::date == timeElem.type());
 
         auto date = timeElem.Date();
         return dateOutsideStandardRange(date);
@@ -120,15 +120,15 @@ bool collectionMayRequireExtendedRangeSupport(OperationContext* opCtx,
 bool collectionHasTimeIndex(OperationContext* opCtx, const Collection& collection) {
     auto tsOptions = collection.getTimeseriesOptions();
     invariant(tsOptions);
-    std::string controlMinTimeField = timeseries::kControlMinFieldNamePrefix.toString();
-    controlMinTimeField.append(tsOptions->getTimeField().toString());
-    std::string controlMaxTimeField = timeseries::kControlMaxFieldNamePrefix.toString();
-    controlMaxTimeField.append(tsOptions->getTimeField().toString());
+    std::string controlMinTimeField = std::string{timeseries::kControlMinFieldNamePrefix};
+    controlMinTimeField.append(std::string{tsOptions->getTimeField()});
+    std::string controlMaxTimeField = std::string{timeseries::kControlMaxFieldNamePrefix};
+    controlMaxTimeField.append(std::string{tsOptions->getTimeField()});
 
     auto indexCatalog = collection.getIndexCatalog();
     // The IndexIterator is initialized lazily, so the first call to 'next' positions it to the
     // first entry.
-    for (auto it = indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    for (auto it = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
          it->more();) {
         auto index = it->next();
         auto desc = index->descriptor();

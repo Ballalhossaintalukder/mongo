@@ -27,13 +27,12 @@
  *    it in the license file.
  */
 
+#include "mongo/db/repl/storage_interface_mock.h"
+
+#include "mongo/logv2/log.h"
+
 #include <iterator>
 #include <mutex>
-
-#include <boost/move/utility_core.hpp>
-
-#include "mongo/db/repl/storage_interface_mock.h"
-#include "mongo/logv2/log.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -105,15 +104,14 @@ Status CollectionBulkLoaderMock::init(const std::vector<BSONObj>& secondaryIndex
     return Status::OK();
 }
 
-Status CollectionBulkLoaderMock::insertDocuments(const std::vector<BSONObj>::const_iterator begin,
-                                                 const std::vector<BSONObj>::const_iterator end,
+Status CollectionBulkLoaderMock::insertDocuments(std::span<BSONObj> docs,
                                                  ParseRecordIdAndDocFunc fn) {
     LOGV2_DEBUG(21758, 1, "CollectionBulkLoaderMock::insertDocuments called");
-    auto status = insertDocsFn(begin, end, fn);
+    auto status = insertDocsFn(docs, fn);
 
     // Only count if it succeeds.
     if (status.isOK()) {
-        stats->insertCount += std::distance(begin, end);
+        stats->insertCount += docs.size();
     }
     return status;
 }

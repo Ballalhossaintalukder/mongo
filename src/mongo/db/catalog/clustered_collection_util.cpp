@@ -28,21 +28,22 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/catalog/clustered_collection_util.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/catalog/clustered_collection_util.h"
 #include "mongo/db/index/index_constants.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -81,9 +82,9 @@ ClusteredCollectionInfo makeCanonicalClusteredInfo(ClusteredIndexSpec indexSpec)
 boost::optional<ClusteredCollectionInfo> parseClusteredInfo(const BSONElement& elem) {
     uassert(5979702,
             "'clusteredIndex' has to be a boolean or object.",
-            elem.type() == mongo::Bool || elem.type() == mongo::Object);
+            elem.type() == BSONType::boolean || elem.type() == BSONType::object);
 
-    bool isLegacyFormat = elem.type() == mongo::Bool;
+    bool isLegacyFormat = elem.type() == BSONType::boolean;
     if (isLegacyFormat) {
         // Legacy format implies the collection was created with format {clusteredIndex: <bool>}.
         // The legacy format is maintained for backward compatibility with time series buckets

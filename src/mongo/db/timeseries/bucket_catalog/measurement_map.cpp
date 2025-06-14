@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/timeseries/bucket_catalog/measurement_map.h"
+
 #include "mongo/bson/column/bsoncolumn.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
@@ -48,7 +49,7 @@ void MeasurementMap::initBuilders(BSONObj bucketDataDocWithCompressedBuilders,
                                   size_t numMeasurements) {
     for (auto&& [key, columnValue] : bucketDataDocWithCompressedBuilders) {
         str::stream errMsg;
-        errMsg << "Compressed bucket contains uncompressed data field: " << key.toString();
+        errMsg << "Compressed bucket contains uncompressed data field: " << key;
         massert(8830600, errMsg, columnValue.isBinData(BinDataType::Column));
 
         int binLength = 0;
@@ -125,11 +126,16 @@ void MeasurementMap::_fillSkipsInMissingFields(const std::set<StringData>& field
     }
 }
 
-void MeasurementMap::insertOne(const std::vector<BSONElement>& oneMeasurementDataFields) {
+void MeasurementMap::insertOne(const BSONObj& measurement, boost::optional<StringData> metaField) {
     std::set<StringData> fieldsSeen;
 
-    for (const auto& elem : oneMeasurementDataFields) {
+    for (const auto& elem : measurement) {
         StringData key = elem.fieldNameStringData();
+        // Skip the meta field values because they aren't stored in a BSONColumn.
+        if (key == metaField) {
+            continue;
+        }
+
         fieldsSeen.insert(key);
 
         auto builderIt = _builders.find(key);

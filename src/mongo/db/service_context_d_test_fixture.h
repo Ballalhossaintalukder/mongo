@@ -29,20 +29,21 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/op_observer/op_observer_registry.h"
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/db/storage/journal_listener.h"
 #include "mongo/db/storage/storage_engine_init.h"
+#include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/tick_source.h"
 #include "mongo/util/tick_source_mock.h"
+
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace mongo {
 
@@ -129,6 +130,12 @@ public:
             return std::move(*this);
         }
 
+        template <typename T>
+        Options setParameter(StringData parameter, T value) {
+            _parameters.emplace_back(parameter, value);
+            return std::move(*this);
+        }
+
     private:
         friend class MongoDScopedGlobalServiceContextForTest;
 
@@ -149,6 +156,7 @@ public:
         bool _forceDisableTableLogging = false;
         bool _createShardingState = true;
         std::vector<std::unique_ptr<ServiceContext::ClientObserver>> _clientObservers;
+        std::vector<RAIIServerParameterControllerForTest> _parameters;
     };
 
     MongoDScopedGlobalServiceContextForTest(Options options, bool shouldSetupTL);

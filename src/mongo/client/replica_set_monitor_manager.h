@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <deque>
-#include <functional>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/counter.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -61,6 +52,16 @@
 #include "mongo/util/hierarchical_acquisition.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -90,12 +91,12 @@ class ReplicaSetMonitorConnectionManager : public executor::EgressConnectionClos
 
 public:
     ReplicaSetMonitorConnectionManager(std::shared_ptr<executor::NetworkInterface> network)
-        : _network(network) {}
+        : _network(std::move(network)) {}
 
-    void dropConnections(const HostAndPort& hostAndPort) override;
+    void dropConnections(const HostAndPort& target, const Status& status) override;
 
     // Not supported.
-    void dropConnections() override {
+    void dropConnections(const Status& status) override {
         MONGO_UNREACHABLE;
     };
     // Not supported.

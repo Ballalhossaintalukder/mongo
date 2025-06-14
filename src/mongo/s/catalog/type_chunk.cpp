@@ -29,12 +29,6 @@
 
 #include "mongo/s/catalog/type_chunk.h"
 
-#include <boost/none.hpp>
-#include <cstring>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -48,6 +42,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <cstring>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
 namespace mongo {
@@ -60,8 +60,8 @@ const std::string ChunkType::ShardNSPrefix = "config.cache.chunks.";
 const BSONField<OID> ChunkType::name("_id");
 const BSONField<BSONObj> ChunkType::minShardID("_id");
 const BSONField<UUID> ChunkType::collectionUUID("uuid");
-const BSONField<BSONObj> ChunkType::min(ChunkRange::kMinFieldName.toString());
-const BSONField<BSONObj> ChunkType::max(ChunkRange::kMaxFieldName.toString());
+const BSONField<BSONObj> ChunkType::min(std::string{ChunkRange::kMinFieldName});
+const BSONField<BSONObj> ChunkType::max(std::string{ChunkRange::kMaxFieldName});
 const BSONField<std::string> ChunkType::shard("shard");
 const BSONField<bool> ChunkType::jumbo("jumbo");
 const BSONField<Date_t> ChunkType::lastmod("lastmod");
@@ -76,7 +76,7 @@ namespace {
  * Extracts an Object value from 'obj's field 'fieldName'. Sets the result to 'bsonElement'.
  */
 Status extractObject(const BSONObj& obj, StringData fieldName, BSONElement* bsonElement) {
-    Status elementStatus = bsonExtractTypedField(obj, fieldName, Object, bsonElement);
+    Status elementStatus = bsonExtractTypedField(obj, fieldName, BSONType::object, bsonElement);
     if (!elementStatus.isOK()) {
         return elementStatus.withContext(str::stream()
                                          << "The field '" << fieldName << "' cannot be parsed");
@@ -96,7 +96,7 @@ StatusWith<std::vector<ChunkHistory>> ChunkHistory::fromBSON(const BSONArray& so
     std::vector<ChunkHistory> values;
 
     for (const auto& arrayElement : source) {
-        if (arrayElement.type() == Object) {
+        if (arrayElement.type() == BSONType::object) {
             IDLParserContext tempContext("chunk history array");
             values.emplace_back(ChunkHistoryBase::parse(tempContext, arrayElement.Obj()));
         } else {
@@ -132,7 +132,7 @@ StatusWith<ChunkType> ChunkType::_parseChunkBase(const BSONObj& source) {
 
     {
         BSONElement historyObj;
-        Status status = bsonExtractTypedField(source, history.name(), Array, &historyObj);
+        Status status = bsonExtractTypedField(source, history.name(), BSONType::array, &historyObj);
         if (status.isOK()) {
             auto history = ChunkHistory::fromBSON(BSONArray(historyObj.Obj()));
             if (!history.isOK())
@@ -212,7 +212,7 @@ StatusWith<ChunkType> ChunkType::parseFromConfigBSON(const BSONObj& source,
         auto versionElem = source[ChunkType::lastmod()];
         if (versionElem.eoo())
             return Status(ErrorCodes::NoSuchKey, "No version found");
-        if (versionElem.type() == bsonTimestamp || versionElem.type() == Date) {
+        if (versionElem.type() == BSONType::timestamp || versionElem.type() == BSONType::date) {
             auto chunkLastmod = Timestamp(versionElem._numberLong());
             chunk._version =
                 ChunkVersion({epoch, timestamp}, {chunkLastmod.getSecs(), chunkLastmod.getInc()});
@@ -293,7 +293,7 @@ StatusWith<ChunkType> ChunkType::parseFromShardBSON(const BSONObj& source,
         auto lastmodElem = source[ChunkType::lastmod()];
         if (lastmodElem.eoo())
             return Status(ErrorCodes::NoSuchKey, "No version found");
-        if (lastmodElem.type() == bsonTimestamp || lastmodElem.type() == Date) {
+        if (lastmodElem.type() == BSONType::timestamp || lastmodElem.type() == BSONType::date) {
             auto chunkLastmod = Timestamp(lastmodElem._numberLong());
             chunk._version =
                 ChunkVersion({epoch, timestamp}, {chunkLastmod.getSecs(), chunkLastmod.getInc()});

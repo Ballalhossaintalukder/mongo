@@ -29,15 +29,15 @@
 
 #include <boost/move/utility_core.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <set>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/client/connection_string.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <set>
+#include <utility>
 
 namespace mongo {
 
@@ -49,7 +49,7 @@ ConnectionString::ConnectionString(HostAndPort server) : _type(ConnectionType::k
 ConnectionString::ConnectionString(StringData replicaSetName, std::vector<HostAndPort> servers)
     : _type(ConnectionType::kReplicaSet),
       _servers(std::move(servers)),
-      _replicaSetName(replicaSetName.toString()) {
+      _replicaSetName(std::string{replicaSetName}) {
     _finishInit();
 }
 
@@ -233,7 +233,7 @@ StatusWith<ConnectionString> ConnectionString::parse(const std::string& url) {
 }
 
 ConnectionString ConnectionString::deserialize(StringData url) {
-    return uassertStatusOK(parse(url.toString()));
+    return uassertStatusOK(parse(std::string{url}));
 }
 
 std::string ConnectionString::typeToString(ConnectionType type) {

@@ -103,6 +103,18 @@ description: Schema for IDL files in the mongo codebase.
           A static function to call of the shape Status <function_name>(const <cpp_type> value).
           For non-simple types, value is passed by const-reference.
     minProperties: 1
+  mod_visibility:
+    description: Out-of-module visibility of the struct, enum, or namespace.
+    oneOf:
+      - type: string
+        enum:
+          - pub
+          - pub_for_technical_reasons
+          - private
+          - file_private
+          - needs_replacement
+      - type: string
+        pattern: "^use_replacement(.+)$"
   fields:
     description: Fields of an IDL struct or command.
     type: object
@@ -211,9 +223,6 @@ properties:
           description:
             type: string
             description: A comment to add to the generated C++.
-          chained_types:
-            type: object
-            description: chained_types is an undocumented field.
           chained_structs:
             type: object
             description: >
@@ -292,6 +301,8 @@ properties:
           unsafe_dangerous_disable_extra_field_duplicate_checks:
             type: boolean
             description: Undocumented, DO NOT USE!
+          mod_visibility:
+            "$ref": "#/$defs/mod_visibility"
   types:
     description: List of types which instruct IDL how deserialize/serialize primitives
     type: object
@@ -371,6 +382,8 @@ properties:
             enum:
               - string
               - int
+          mod_visibility:
+            "$ref": "#/$defs/mod_visibility"
           values:
             type: object
             description: A map of `enum value name` -> `enum value`.
@@ -412,9 +425,6 @@ properties:
           description:
             type: string
             description: A comment to add to the generated C++.
-          chained_types:
-            type: object
-            description: chained_types is an undocumented field.
           chained_structs:
             type: object
             description: >
@@ -548,6 +558,8 @@ properties:
                 type: boolean
             minProperties: 1
             maxProperties: 1
+          mod_visibility:
+            "$ref": "#/$defs/mod_visibility"
   server_parameters:
     description: >
       List of server parameters to serialize into C++. The generated code will self-register
@@ -629,6 +641,9 @@ properties:
                   override_validate:
                     type: boolean
                     description: "True to allow defining a custom validate() method, default: false."
+                  override_warn_if_deprecated:
+                    type: boolean
+                    description: "True to allow defining a custom warnIfDeprecated() method, default: false."
           default:
             description: String or expression map representation of the initial value.
             oneOf:
@@ -899,14 +914,14 @@ properties:
           version:
             type: number
             description: MongoDB version in which the feature flag is introduced.
-          shouldBeFCVGated:
+          fcv_gated:
             type: boolean
             description: Whether or not the feature flag should be FCV gated
           enable_on_transitional_fcv:
             type: boolean
             description: >
               Also enable this feature flag during the transitional FCV state (kUpgrade,
-              kDowngrade). Can only appear along with shouldBeFCVGated: true.
+              kDowngrade). Can only appear along with fcv_gated: true.
           incremental_rollout_phase:
             type: string
             description: >
@@ -931,7 +946,7 @@ properties:
               property on new flags.
         required:
           - description
-          - shouldBeFCVGated
+          - fcv_gated
   global:
     description: Global settings that affect code generation
     type: object
@@ -953,6 +968,8 @@ properties:
               type: string
             uniqueItems: true
           - type: string
+      mod_visibility:
+        "$ref": "#/$defs/mod_visibility"
       configs:
         type: object
         additionalProperties: false

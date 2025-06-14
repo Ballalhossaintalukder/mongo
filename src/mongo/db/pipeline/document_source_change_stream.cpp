@@ -27,21 +27,10 @@
  *    it in the license file.
  */
 
-
 #include "mongo/db/pipeline/document_source_change_stream.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <fmt/format.h>
-#include <string>
-#include <vector>
-
-
-#include "mongo/db/basic_types.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/database_name.h"
-#include "mongo/db/logical_time.h"
 #include "mongo/db/pipeline/change_stream_filter_helpers.h"
 #include "mongo/db/pipeline/change_stream_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream_add_post_image.h"
@@ -51,6 +40,7 @@
 #include "mongo/db/pipeline/document_source_change_stream_check_topology_change.h"
 #include "mongo/db/pipeline/document_source_change_stream_ensure_resume_token_present.h"
 #include "mongo/db/pipeline/document_source_change_stream_handle_topology_change.h"
+#include "mongo/db/pipeline/document_source_change_stream_inject_control_events.h"
 #include "mongo/db/pipeline/document_source_change_stream_oplog_match.h"
 #include "mongo/db/pipeline/document_source_change_stream_transform.h"
 #include "mongo/db/pipeline/document_source_change_stream_unwind_transaction.h"
@@ -61,10 +51,13 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/vector_clock.h"
 #include "mongo/idl/idl_parser.h"
-#include "mongo/util/intrusive_counter.h"
 
-#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
+#include <string>
 
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -82,40 +75,6 @@ REGISTER_DOCUMENT_SOURCE(changeStream,
                          AllowedWithApiStrict::kConditionally);
 
 ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamStage, DocumentSourceInternalChangeStreamStage::id)
-
-constexpr StringData DocumentSourceChangeStream::kDocumentKeyField;
-constexpr StringData DocumentSourceChangeStream::kFullDocumentBeforeChangeField;
-constexpr StringData DocumentSourceChangeStream::kFullDocumentField;
-constexpr StringData DocumentSourceChangeStream::kIdField;
-constexpr StringData DocumentSourceChangeStream::kNamespaceField;
-constexpr StringData DocumentSourceChangeStream::kUuidField;
-constexpr StringData DocumentSourceChangeStream::kReshardingUuidField;
-constexpr StringData DocumentSourceChangeStream::kUpdateDescriptionField;
-constexpr StringData DocumentSourceChangeStream::kRawUpdateDescriptionField;
-constexpr StringData DocumentSourceChangeStream::kOperationTypeField;
-constexpr StringData DocumentSourceChangeStream::kStageName;
-constexpr StringData DocumentSourceChangeStream::kClusterTimeField;
-constexpr StringData DocumentSourceChangeStream::kTxnNumberField;
-constexpr StringData DocumentSourceChangeStream::kLsidField;
-constexpr StringData DocumentSourceChangeStream::kRenameTargetNssField;
-constexpr StringData DocumentSourceChangeStream::kUpdateOpType;
-constexpr StringData DocumentSourceChangeStream::kDeleteOpType;
-constexpr StringData DocumentSourceChangeStream::kReplaceOpType;
-constexpr StringData DocumentSourceChangeStream::kInsertOpType;
-constexpr StringData DocumentSourceChangeStream::kDropCollectionOpType;
-constexpr StringData DocumentSourceChangeStream::kRenameCollectionOpType;
-constexpr StringData DocumentSourceChangeStream::kDropDatabaseOpType;
-constexpr StringData DocumentSourceChangeStream::kInvalidateOpType;
-constexpr StringData DocumentSourceChangeStream::kReshardBeginOpType;
-constexpr StringData DocumentSourceChangeStream::kReshardBlockingWritesOpType;
-constexpr StringData DocumentSourceChangeStream::kReshardDoneCatchUpOpType;
-constexpr StringData DocumentSourceChangeStream::kNewShardDetectedOpType;
-
-constexpr StringData DocumentSourceChangeStream::kRegexAllCollections;
-constexpr StringData DocumentSourceChangeStream::kRegexAllCollectionsShowSystemEvents;
-
-constexpr StringData DocumentSourceChangeStream::kRegexAllDBs;
-constexpr StringData DocumentSourceChangeStream::kRegexCmdColl;
 
 void DocumentSourceChangeStream::checkValueType(const Value v,
                                                 const StringData fieldName,
@@ -136,7 +95,6 @@ void DocumentSourceChangeStream::checkValueTypeOrMissing(const Value v,
 
 DocumentSourceChangeStream::ChangeStreamType DocumentSourceChangeStream::getChangeStreamType(
     const NamespaceString& nss) {
-
     // If we have been permitted to run on admin, 'allChangesForCluster' must be true.
     return (nss.isAdminDB()
                 ? ChangeStreamType::kAllChangesForCluster
@@ -158,9 +116,8 @@ StringData DocumentSourceChangeStream::resolveAllCollectionsRegex(
 
 std::string DocumentSourceChangeStream::getNsRegexForChangeStream(
     const boost::intrusive_ptr<ExpressionContext>& expCtx) {
-    const auto type = getChangeStreamType(expCtx->getNamespaceString());
     const auto& nss = expCtx->getNamespaceString();
-    switch (type) {
+    switch (getChangeStreamType(nss)) {
         case ChangeStreamType::kSingleCollection:
             // Match the target namespace exactly.
             return fmt::format(
@@ -188,6 +145,15 @@ std::string DocumentSourceChangeStream::getNsRegexForChangeStream(
     }
 }
 
+BSONObj DocumentSourceChangeStream::getNsMatchObjForChangeStream(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    // TODO SERVER-105554
+    // Currently we always return a BSONRegEx with the ns match string. We may optimize this to
+    // exact matches ('$eq') for single collection change streams in the future to improve matching
+    // performance. This is currently not safe because of collations that can affect the matching.
+    return BSON("" << BSONRegEx(getNsRegexForChangeStream(expCtx)));
+}
+
 std::string DocumentSourceChangeStream::getViewNsRegexForChangeStream(
     const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     const auto& nss = expCtx->getNamespaceString();
@@ -195,23 +161,32 @@ std::string DocumentSourceChangeStream::getViewNsRegexForChangeStream(
         case ChangeStreamType::kSingleDatabase:
             // For a single database, match any events on the system.views collection on that
             // database.
-            return fmt::format("^{}\\.system.views$",
+            return fmt::format("^{}\\.system\\.views$",
                                regexEscapeNsForChangeStream(DatabaseNameUtil::serialize(
                                    nss.dbName(), expCtx->getSerializationContext())));
         case ChangeStreamType::kAllChangesForCluster:
             // Match all system.views collections on all databases.
-            return fmt::format("{}\\.system.views$", kRegexAllDBs);
+            return fmt::format("{}\\.system\\.views$", kRegexAllDBs);
         default:
             // We should never attempt to generate this regex for a single-collection stream.
             MONGO_UNREACHABLE_TASSERT(6394400);
     }
 }
 
+BSONObj DocumentSourceChangeStream::getViewNsMatchObjForChangeStream(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    // TODO SERVER-105554
+    // Currently we always return a BSONRegEx with the view ns match string. We may optimize this to
+    // exact matches ('$eq') for single database change streams in the future to improve matching
+    // performance. This currently may not be safe because of collations that can affect the
+    // matching.
+    return BSON("" << BSONRegEx(getViewNsRegexForChangeStream(expCtx)));
+}
+
 std::string DocumentSourceChangeStream::getCollRegexForChangeStream(
     const boost::intrusive_ptr<ExpressionContext>& expCtx) {
-    const auto type = getChangeStreamType(expCtx->getNamespaceString());
     const auto& nss = expCtx->getNamespaceString();
-    switch (type) {
+    switch (getChangeStreamType(nss)) {
         case ChangeStreamType::kSingleCollection:
             // Match the target collection exactly.
             return fmt::format("^{}$", regexEscapeNsForChangeStream(nss.coll()));
@@ -224,11 +199,20 @@ std::string DocumentSourceChangeStream::getCollRegexForChangeStream(
     }
 }
 
+BSONObj DocumentSourceChangeStream::getCollMatchObjForChangeStream(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    // TODO SERVER-105554
+    // Currently we always return a BSONRegEx with the collection match string. We may optimize this
+    // to exact matches ('$eq') for single collection change streams in the future to improve
+    // matching performance. This currently may not be safe because of collations that can affect
+    // the matching.
+    return BSON("" << BSONRegEx(getCollRegexForChangeStream(expCtx)));
+}
+
 std::string DocumentSourceChangeStream::getCmdNsRegexForChangeStream(
     const boost::intrusive_ptr<ExpressionContext>& expCtx) {
-    const auto type = getChangeStreamType(expCtx->getNamespaceString());
     const auto& nss = expCtx->getNamespaceString();
-    switch (type) {
+    switch (getChangeStreamType(nss)) {
         case ChangeStreamType::kSingleCollection:
         case ChangeStreamType::kSingleDatabase:
             // Match the target database command namespace exactly.
@@ -243,17 +227,27 @@ std::string DocumentSourceChangeStream::getCmdNsRegexForChangeStream(
     }
 }
 
+BSONObj DocumentSourceChangeStream::getCmdNsMatchObjForChangeStream(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    // TODO SERVER-105554
+    // Currently we always return a BSONRegEx with the collection-less aggregate ns match string. We
+    // may optimize this to exact matches ('$eq') for single collection and single database change
+    // streams in the future to improve matching performance. This currently may not be safe because
+    // of collations that can affect the matching.
+    return BSON("" << BSONRegEx(getCmdNsRegexForChangeStream(expCtx)));
+}
+
 std::string DocumentSourceChangeStream::regexEscapeNsForChangeStream(StringData source) {
     std::string result;
     // Output string must be at least as long as the input string.
     result.reserve(source.size());
 
     constexpr StringData escapes = "*+|()^?[]./\\$";
-    for (const char& c : source) {
+    for (char c : source) {
         if (escapes.find(c) != std::string::npos) {
-            result.append("\\");
+            result.push_back('\\');
         }
-        result += c;
+        result.push_back(c);
     }
     return result;
 }
@@ -280,7 +274,7 @@ std::list<intrusive_ptr<DocumentSource>> DocumentSourceChangeStream::createFromB
     BSONElement elem, const intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(50808,
             "$changeStream stage expects a document as argument",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     auto spec = DocumentSourceChangeStreamSpec::parse(IDLParserContext("$changeStream"),
                                                       elem.embeddedObject());

@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <ctime>
-#include <memory>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
+#include "mongo/idl/cluster_server_parameter_initializer.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -45,10 +41,15 @@
 #include "mongo/db/server_parameter_with_storage.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/idl/cluster_parameter_synchronization_helpers.h"
-#include "mongo/idl/cluster_server_parameter_initializer.h"
 #include "mongo/idl/cluster_server_parameter_test_gen.h"
 #include "mongo/idl/cluster_server_parameter_test_util.h"
 #include "mongo/unittest/unittest.h"
+
+#include <ctime>
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -89,10 +90,17 @@ public:
         remove(kTenantId);
         auto opCtx = cc().makeOperationContext();
         auto resynchronize = [opCtx = opCtx.get()](const boost::optional<TenantId>& tenantId) {
-            AutoGetCollectionForRead coll{opCtx,
-                                          NamespaceString::makeClusterParametersNSS(tenantId)};
+            const auto coll =
+                acquireCollection(opCtx,
+                                  CollectionAcquisitionRequest(
+                                      NamespaceString::makeClusterParametersNSS(tenantId),
+                                      PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                      repl::ReadConcernArgs::get(opCtx),
+                                      AcquisitionPrerequisites::kRead),
+                                  MODE_IS);
+
             cluster_parameters::resynchronizeAllTenantParametersFromCollection(
-                opCtx, *coll.getCollection().get());
+                opCtx, *coll.getCollectionPtr().get());
         };
         resynchronize(boost::none);
         resynchronize(kTenantId);

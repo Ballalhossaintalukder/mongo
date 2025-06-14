@@ -28,20 +28,21 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_current_op.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/commands/fsync_locked.h"
 #include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/pipeline/document_source_current_op.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -75,7 +76,7 @@ std::unique_ptr<DocumentSourceCurrentOp::LiteParsed> DocumentSourceCurrentOp::Li
     const NamespaceString& nss, const BSONElement& spec, const LiteParserOptions& options) {
     // Need to check the value of allUsers; if true then the inprog privilege is returned by
     // requiredPrivileges(), which is called in the auth subsystem.
-    if (spec.type() != BSONType::Object) {
+    if (spec.type() != BSONType::object) {
         uasserted(ErrorCodes::TypeMismatch,
                   str::stream() << "$currentOp options must be specified in an object, but found: "
                                 << typeName(spec.type()));
@@ -91,7 +92,7 @@ std::unique_ptr<DocumentSourceCurrentOp::LiteParsed> DocumentSourceCurrentOp::Li
     // operations rather than forwarding the request to the shards.
     for (auto&& elem : spec.embeddedObject()) {
         if (elem.fieldNameStringData() == "allUsers"_sd) {
-            if (elem.type() != BSONType::Bool) {
+            if (elem.type() != BSONType::boolean) {
                 uasserted(ErrorCodes::TypeMismatch,
                           str::stream() << "The 'allUsers' parameter of the $currentOp stage "
                                            "must be a boolean value, but found: "
@@ -106,7 +107,7 @@ std::unique_ptr<DocumentSourceCurrentOp::LiteParsed> DocumentSourceCurrentOp::Li
                     str::stream() << "The 'localOps' parameter of the $currentOp stage must be a "
                                      "boolean value, but found: "
                                   << typeName(elem.type()),
-                    elem.type() == BSONType::Bool);
+                    elem.type() == BSONType::boolean);
 
             if (elem.boolean()) {
                 localOps = LocalOpsMode::kLocalMongosOps;
@@ -119,7 +120,7 @@ std::unique_ptr<DocumentSourceCurrentOp::LiteParsed> DocumentSourceCurrentOp::Li
 }
 
 const char* DocumentSourceCurrentOp::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 DocumentSource::GetNextResult DocumentSourceCurrentOp::doGetNext() {
@@ -195,7 +196,7 @@ intrusive_ptr<DocumentSource> DocumentSourceCurrentOp::createFromBson(
     uassert(ErrorCodes::FailedToParse,
             str::stream() << "$currentOp options must be specified in an object, but found: "
                           << typeName(spec.type()),
-            spec.type() == BSONType::Object);
+            spec.type() == BSONType::object);
 
     const NamespaceString& nss = pExpCtx->getNamespaceString();
 

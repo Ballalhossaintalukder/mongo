@@ -751,9 +751,12 @@ let testCases = {
     shutdown: {skip: "does not forward command to primary shard"},
     split: {skip: "does not forward command to primary shard"},
     splitVector: {skip: "does not forward command to primary shard"},
-    startRecordingTraffic: {skip: "executes locally on mongos (not sent to any remote node)"},
+    getTrafficRecordingStatus: {skip: "executes locally on targeted node"},
+    startRecordingTraffic: {skip: "Renamed to startTrafficRecording"},
+    stopRecordingTraffic: {skip: "Renamed to stopTrafficRecording"},
+    startTrafficRecording: {skip: "executes locally on mongos (not sent to any remote node)"},
     startSession: {skip: "executes locally on mongos (not sent to any remote node)"},
-    stopRecordingTraffic: {skip: "executes locally on mongos (not sent to any remote node)"},
+    stopTrafficRecording: {skip: "executes locally on mongos (not sent to any remote node)"},
     testDeprecation: {skip: "executes locally on mongos (not sent to any remote node)"},
     testDeprecationInVersion2: {skip: "executes locally on mongos (not sent to any remote node)"},
     testInternalTransactions: {skip: "executes locally on mongos (not sent to any remote node)"},
@@ -819,14 +822,6 @@ commandsRemovedFromMongosSinceLastLTS.forEach(function(cmd) {
 });
 
 const st = new ShardingTest({shards: 2, mongos: 2});
-
-// Database versioning tests only make sense when all collections are not tracked.
-const isTrackUnshardedUponCreationEnabled = FeatureFlagUtil.isPresentAndEnabled(
-    st.s.getDB('admin'), "TrackUnshardedCollectionsUponCreation");
-if (isTrackUnshardedUponCreationEnabled) {
-    st.stop();
-    quit();
-}
 
 // TODO (SERVER-101777): This test makes a lot of assumptions about database versions stored in
 // shards that are not the primary shard. This test shuld be re-written thinking about that shards

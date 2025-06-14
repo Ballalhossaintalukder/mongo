@@ -17,7 +17,6 @@
 - featureFlagCreateCollectionInPreparedTransactions
 - featureFlagSearchInSbe
 - featureFlagEgressGrpcForSearch
-- featureFlagTrackUnshardedCollectionsUponCreation
 - featureFlagTSBucketingParametersUnchanged
 # TODO SERVER-99433: Delete featureFlagReplicaSetEndpoint.
 - featureFlagReplicaSetEndpoint
@@ -26,5 +25,6 @@
 - featureFlagCreateViewlessTimeseriesCollections
 # TODO SERVER-67034: re-enable 'featureFlagSbeFull'.
 - featureFlagSbeFull
-# TODO (SERVER-103771): Delete featureFlagGlobalIndexesShardingCatalog.
-- featureFlagGlobalIndexesShardingCatalog
+# TODO (SERVER-73632): Delete featureFlagRouterPort.
+- featureFlagRouterPort
+- featureFlagSessionsCollectionCoordinatorOnConfigServer

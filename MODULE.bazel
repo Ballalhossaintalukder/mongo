@@ -11,6 +11,8 @@ use_repo(bazel_features_deps, "bazel_features_globals", "bazel_features_version"
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
 http_archive(
     name = "bazel_clang_tidy",
     integrity = "sha256-A+TGGfuHdS7vWT20eyAEiA3u4YXFtuzsJDcpTEmDMS0=",
@@ -19,6 +21,30 @@ http_archive(
         # Implements retry by relisting each url multiple times to be used as a failover.
         # TODO(SERVER-86719): Re-implement http_archive to allow sleeping between retries
         "https://github.com/mongodb-forks/bazel_clang_tidy/archive/10c4bf70a8946789e3932f30e29dfba2dfb78e67.tar.gz",
+    ] * 5,
+)
+
+# SourceGraph indexer
+http_file(
+    name = "scip-clang",
+    executable = True,
+    sha256 = "9fc7d1c309f8adee1b8663efa802efa7363ef22ee06f4711117535e406690689",
+    urls = [
+        # Implements retry by relisting each url multiple times to be used as a failover.
+        # TODO(SERVER-86719): Re-implement http_archive to allow sleeping between retries
+        "https://github.com/sourcegraph/scip-clang/releases/download/v0.3.2/scip-clang-x86_64-linux",
+    ] * 5,
+)
+
+# SourceGraph CLI
+http_file(
+    name = "scip-src",
+    executable = True,
+    sha256 = "eb3d627c4dad56b9f5d06634b90384104db065d410c4b338fa5e6558be4f3ad9",
+    urls = [
+        # Implements retry by relisting each url multiple times to be used as a failover.
+        # TODO(SERVER-86719): Re-implement http_archive to allow sleeping between retries
+        "https://github.com/sourcegraph/src-cli/releases/download/6.4.0/src_linux_amd64",
     ] * 5,
 )
 
@@ -103,6 +129,12 @@ single_version_override(
     version = "6.4.0",
 )
 
+bazel_dep(name = "rules_multitool", version = "0.4.0")
+
+multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
+multitool.hub(lockfile = "//tools/lint:multitool.lock.json")
+use_repo(multitool, "multitool")
+
 # TODO port over from WORKSPACE
 # currently breaks pyright
 ##node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node", dev_dependency = True)
@@ -137,13 +169,8 @@ register_execution_platforms("@internal_platforms_do_not_use//host:host")
 ##    "mongo_toolchain_v5",
 ##)
 #
-mongo_apple_toolchain_config = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_toolchain_config")
-
-mongo_apple_toolchain_setup = use_repo_rule("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "mongo_apple_toolchain_setup")
-
-mongo_apple_toolchain_config(name = "mongo_apple_toolchain_config")
-
-mongo_apple_toolchain_setup(name = "mongo_apple_toolchain")
+setup_mongo_apple_toolchains_extension = use_extension("//bazel/toolchains/cc/mongo_apple:mongo_apple_toolchain.bzl", "setup_mongo_apple_toolchain_extension")
+use_repo(setup_mongo_apple_toolchains_extension, "mongo_apple_toolchain")
 
 register_toolchains(
     "@mongo_apple_toolchain//...",
@@ -180,3 +207,8 @@ setup_local_host_values(name = "local_host_values")
 setup_evergreen_variables = use_repo_rule("//bazel/repository_rules:evergreen_variables.bzl", "setup_evergreen_variables")
 
 setup_evergreen_variables(name = "evergreen_variables")
+
+setup_mongo_windows_toolchains_extension = use_extension("//bazel/toolchains/cc/mongo_windows:mongo_toolchain.bzl", "setup_mongo_windows_toolchain_extension")
+use_repo(setup_mongo_windows_toolchains_extension, "mongo_windows_toolchain")
+
+register_toolchains("@mongo_windows_toolchain//...")

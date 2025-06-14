@@ -27,15 +27,16 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
-#include <memory>
-#include <vector>
-
 #include "mongo/bson/json.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <vector>
+
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -45,7 +46,7 @@ protected:
     void verify(const BSONObj& groupSpec, const std::vector<BSONObj>& expectedOptimizedPipeline) {
         auto pipeline = Pipeline::parse(makeVector(groupSpec), getExpCtx());
 
-        ASSERT_EQ(pipeline->getSources().size(), 1U);
+        ASSERT_EQ(pipeline->size(), 1U);
 
         pipeline->optimizePipeline();
 

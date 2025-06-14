@@ -29,16 +29,16 @@
 
 #include "mongo/db/stats/counters.h"
 
-#include <fmt/format.h>
-#include <tuple>
-
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/client/authenticate.h"
 #include "mongo/db/commands/server_status.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/util/static_immortal.h"
+
+#include <tuple>
+
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -229,12 +229,12 @@ void AuthCounter::initializeMechanismMap(const std::vector<std::string>& mechani
     // When clusterAuthMode == `x509` or `sendX509`, we'll use MONGODB-X509 for intra-cluster auth
     // even if it's not explicitly enabled by authenticationMechanisms.
     // Ensure it's always included in counts.
-    addMechanism(auth::kMechanismMongoX509.toString());
+    addMechanism(std::string{auth::kMechanismMongoX509});
 
     // It's possible for intracluster auth to use a default fallback mechanism of SCRAM-SHA-256
     // even if it's not configured to do so.
     // Explicitly add this to the map for now so that they can be incremented if this happens.
-    addMechanism(auth::kMechanismScramSha256.toString());
+    addMechanism(std::string{auth::kMechanismScramSha256});
 }
 
 void AuthCounter::incSaslSupportedMechanismsReceived() {
@@ -270,7 +270,7 @@ void AuthCounter::MechanismCounterHandle::incClusterAuthenticateSuccessful() {
 }
 
 auto AuthCounter::getMechanismCounter(StringData mechanism) -> MechanismCounterHandle {
-    auto it = _mechanisms.find(mechanism.rawData());
+    auto it = _mechanisms.find(mechanism.data());
     uassert(ErrorCodes::MechanismUnavailable,
             fmt::format("Received authentication for mechanism {} which is not enabled", mechanism),
             it != _mechanisms.end());

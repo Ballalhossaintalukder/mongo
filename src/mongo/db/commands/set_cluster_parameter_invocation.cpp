@@ -28,11 +28,7 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <string>
-
-#include <boost/optional/optional.hpp>
-#include <boost/optional/optional_io.hpp>
+#include "mongo/db/commands/set_cluster_parameter_invocation.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -42,7 +38,6 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/cluster_role.h"
-#include "mongo/db/commands/set_cluster_parameter_invocation.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/namespace_string.h"
@@ -57,6 +52,10 @@
 #include "mongo/rpc/unique_message.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -83,8 +82,10 @@ bool SetClusterParameterInvocation::invoke(OperationContext* opCtx,
                            tenantId,
                            skipValidation || serverGlobalParams.clusterRole.isShardOnly());
 
+    serverParameter->warnIfDeprecated("setClusterParameter");
+
     BSONObjBuilder oldValueBob;
-    serverParameter->append(opCtx, &oldValueBob, parameterName.toString(), tenantId);
+    serverParameter->append(opCtx, &oldValueBob, std::string{parameterName}, tenantId);
     audit::logSetClusterParameter(opCtx->getClient(), oldValueBob.obj(), update, tenantId);
 
     LOGV2_DEBUG(
@@ -124,7 +125,7 @@ std::pair<BSONObj, BSONObj> SetClusterParameterInvocation::normalizeParameter(
     BSONElement commandElement = cmdParamObj.firstElement();
     uassert(ErrorCodes::BadValue,
             "Cluster parameter value must be an object",
-            BSONType::Object == commandElement.type());
+            BSONType::object == commandElement.type());
 
     uassert(ErrorCodes::BadValue,
             str::stream() << "Server parameter: '" << sp->name() << "' is disabled",

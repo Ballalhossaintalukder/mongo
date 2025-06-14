@@ -29,17 +29,6 @@
 
 #include "mongo/s/shard_key_pattern_query_util.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -76,6 +65,17 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/transitional_tools_do_not_use/vector_spooling.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -178,7 +178,7 @@ BSONElement findEqualityElement(const EqualityMatches& equalities, const FieldRe
     if (parentPathPart == static_cast<int>(path.numParts()))
         return parentEl;
 
-    if (parentEl.type() != Object)
+    if (parentEl.type() != BSONType::object)
         return BSONElement();
 
     StringData suffixStr = path.dottedSubstring(parentPathPart, path.numParts());
@@ -598,8 +598,8 @@ void getShardIdsAndChunksForCanonicalQuery(const CanonicalQuery& query,
                 if (SimpleBSONObjComparator::kInstance.evaluate(min == max)) {
                     return QueryTargetingInfo::Description::kSingleKey;
                 }
-                if (ChunkMap::allElementsAreOfType(MinKey, min) &&
-                    ChunkMap::allElementsAreOfType(MaxKey, max)) {
+                if (ChunkMap::allElementsAreOfType(BSONType::minKey, min) &&
+                    ChunkMap::allElementsAreOfType(BSONType::maxKey, max)) {
                     return QueryTargetingInfo::Description::kMinKeyToMaxKey;
                 }
             }

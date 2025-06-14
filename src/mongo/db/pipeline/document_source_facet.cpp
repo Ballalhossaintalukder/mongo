@@ -28,14 +28,7 @@
  */
 
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <algorithm>
-#include <list>
-#include <memory>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_facet.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -44,7 +37,6 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/pipeline/document_source_facet.h"
 #include "mongo/db/pipeline/document_source_tee_consumer.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/field_path.h"
@@ -54,6 +46,15 @@
 #include "mongo/db/query/plan_summary_stats.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <list>
+#include <memory>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -67,6 +68,7 @@ DocumentSourceFacet::DocumentSourceFacet(std::vector<FacetPipeline> facetPipelin
                                          size_t bufferSizeBytes,
                                          size_t maxOutputDocBytes)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _teeBuffer(TeeBuffer::create(facetPipelines.size(), bufferSizeBytes)),
       _facets(std::move(facetPipelines)),
       _maxOutputDocSizeBytes(maxOutputDocBytes) {
@@ -88,7 +90,7 @@ vector<pair<string, vector<BSONObj>>> extractRawPipelines(const BSONElement& ele
     uassert(40169,
             str::stream() << "the $facet specification must be a non-empty object, but found: "
                           << elem,
-            elem.type() == BSONType::Object && !elem.embeddedObject().isEmpty());
+            elem.type() == BSONType::object && !elem.embeddedObject().isEmpty());
 
     vector<pair<string, vector<BSONObj>>> rawFacetPipelines;
     for (auto&& facetElem : elem.embeddedObject()) {
@@ -99,7 +101,7 @@ vector<pair<string, vector<BSONObj>>> extractRawPipelines(const BSONElement& ele
         uassert(40170,
                 str::stream() << "arguments to $facet must be arrays, " << facetName << " is type "
                               << typeName(facetElem.type()),
-                facetElem.type() == BSONType::Array);
+                facetElem.type() == BSONType::array);
 
         vector<BSONObj> rawPipeline;
         for (auto&& subPipeElem : facetElem.Obj()) {
@@ -107,11 +109,11 @@ vector<pair<string, vector<BSONObj>>> extractRawPipelines(const BSONElement& ele
                     str::stream() << "elements of arrays in $facet spec must be non-empty objects, "
                                   << facetName << " argument contained an element of type "
                                   << typeName(subPipeElem.type()) << ": " << subPipeElem,
-                    subPipeElem.type() == BSONType::Object);
+                    subPipeElem.type() == BSONType::object);
             rawPipeline.push_back(subPipeElem.embeddedObject());
         }
 
-        rawFacetPipelines.emplace_back(facetName.toString(), std::move(rawPipeline));
+        rawFacetPipelines.emplace_back(std::string{facetName}, std::move(rawPipeline));
     }
     return rawFacetPipelines;
 }
@@ -204,14 +206,14 @@ DocumentSource::GetNextResult DocumentSourceFacet::doGetNext() {
     while (!allPipelinesEOF) {
         allPipelinesEOF = true;  // Set this to false if any pipeline isn't EOF.
         for (size_t facetId = 0; facetId < _facets.size(); ++facetId) {
-            const auto& pipeline = _facets[facetId].pipeline;
-            auto next = pipeline->getSources().back()->getNext();
-            for (; next.isAdvanced(); next = pipeline->getSources().back()->getNext()) {
+            auto& execPipeline = _facets[facetId].getExecPipeline();
+            auto next = execPipeline.getNextResult();
+            for (; next.isAdvanced(); next = execPipeline.getNextResult()) {
                 ensureUnderMemoryLimit(next.getDocument().getApproximateSize());
                 results[facetId].emplace_back(next.releaseDocument());
             }
             allPipelinesEOF = allPipelinesEOF && next.isEOF();
-            pipeline->accumulatePipelinePlanSummaryStats(_stats.planSummaryStats);
+            execPipeline.accumulatePlanSummaryStats(_stats.planSummaryStats);
         }
     }
 
@@ -252,20 +254,20 @@ intrusive_ptr<DocumentSource> DocumentSourceFacet::optimize() {
 
 void DocumentSourceFacet::detachFromOperationContext() {
     for (auto&& facet : _facets) {
-        facet.pipeline->detachFromOperationContext();
+        facet.getExecPipeline().detachFromOperationContext();
     }
 }
 
 void DocumentSourceFacet::reattachToOperationContext(OperationContext* opCtx) {
     for (auto&& facet : _facets) {
-        facet.pipeline->reattachToOperationContext(opCtx);
+        facet.getExecPipeline().reattachToOperationContext(opCtx);
     }
 }
 
 bool DocumentSourceFacet::validateOperationContext(const OperationContext* opCtx) const {
     return getContext()->getOperationContext() == opCtx &&
         std::all_of(_facets.begin(), _facets.end(), [opCtx](const auto& f) {
-               return f.pipeline->validateOperationContext(opCtx);
+               return f.getExecPipeline().validateOperationContext(opCtx);
            });
 }
 
@@ -284,7 +286,7 @@ StageConstraints DocumentSourceFacet::constraints(Pipeline::SplitState state) co
     // will be the $facet's final HostTypeRequirement.
     for (auto fi = _facets.begin(); fi != _facets.end() && host != kDefinitiveHost; fi++) {
         const auto& sources = fi->pipeline->getSources();
-        for (auto si = sources.begin(); si != sources.end() && host != kDefinitiveHost; si++) {
+        for (auto si = sources.cbegin(); si != sources.cend() && host != kDefinitiveHost; si++) {
             const auto subConstraints = (*si)->constraints(state);
             const auto hostReq = subConstraints.resolvedHostTypeRequirement(pExpCtx);
 
@@ -372,8 +374,8 @@ intrusive_ptr<DocumentSource> DocumentSourceFacet::createFromBson(
 
         auto pipeline =
             Pipeline::parseFacetPipeline(rawFacet.second, expCtx, [](const Pipeline& pipeline) {
-                auto sources = pipeline.getSources();
-                std::for_each(sources.begin(), sources.end(), [](auto& stage) {
+                const auto& sources = pipeline.getSources();
+                for (auto& stage : sources) {
                     auto stageConstraints = stage->constraints();
                     if (!stageConstraints.isAllowedInsideFacetStage()) {
                         uasserted(40600,
@@ -385,7 +387,7 @@ intrusive_ptr<DocumentSource> DocumentSourceFacet::createFromBson(
                     invariant(stageConstraints.requiredPosition ==
                               StageConstraints::PositionRequirement::kNone);
                     invariant(!stageConstraints.isIndependentOfAnyCollection);
-                });
+                }
             });
 
         // These checks potentially require that we check the catalog to determine where our data

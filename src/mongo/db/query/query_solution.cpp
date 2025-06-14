@@ -27,25 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/algorithm/string/join.hpp>
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/iterator/iterator_facade.hpp>
-#include <boost/range/adaptor/argument_fwd.hpp>
-#include <boost/range/adaptor/transformed.hpp>
-#include <boost/range/begin.hpp>
-#include <boost/range/end.hpp>
-#include <fmt/format.h>
-#include <queue>
-#include <s2cellid.h>
-#include <tuple>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/query/query_solution.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -68,7 +50,27 @@
 #include "mongo/db/query/planner_wildcard_helpers.h"
 #include "mongo/db/query/projection_ast_util.h"
 #include "mongo/db/query/query_planner_common.h"
-#include "mongo/db/query/query_solution.h"
+
+#include <algorithm>
+#include <queue>
+#include <tuple>
+#include <vector>
+
+#include <s2cellid.h>
+
+#include <boost/algorithm/string/join.hpp>
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/iterator/iterator_facade.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/range/adaptor/argument_fwd.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/begin.hpp>
+#include <boost/range/end.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -83,20 +85,20 @@ OrderedIntervalList buildStringBoundsOil(const std::string& keyName) {
     ret.name = keyName;
 
     BSONObjBuilder strBob;
-    strBob.appendMinForType("", BSONType::String);
-    strBob.appendMaxForType("", BSONType::String);
+    strBob.appendMinForType("", stdx::to_underlying(BSONType::string));
+    strBob.appendMaxForType("", stdx::to_underlying(BSONType::string));
     ret.intervals.push_back(
         IndexBoundsBuilder::makeRangeInterval(strBob.obj(), BoundInclusion::kIncludeStartKeyOnly));
 
     BSONObjBuilder objBob;
-    objBob.appendMinForType("", BSONType::Object);
-    objBob.appendMaxForType("", BSONType::Object);
+    objBob.appendMinForType("", stdx::to_underlying(BSONType::object));
+    objBob.appendMaxForType("", stdx::to_underlying(BSONType::object));
     ret.intervals.push_back(
         IndexBoundsBuilder::makeRangeInterval(objBob.obj(), BoundInclusion::kIncludeStartKeyOnly));
 
     BSONObjBuilder arrBob;
-    arrBob.appendMinForType("", BSONType::Array);
-    arrBob.appendMaxForType("", BSONType::Array);
+    arrBob.appendMinForType("", stdx::to_underlying(BSONType::array));
+    arrBob.appendMaxForType("", stdx::to_underlying(BSONType::array));
     ret.intervals.push_back(
         IndexBoundsBuilder::makeRangeInterval(arrBob.obj(), BoundInclusion::kIncludeStartKeyOnly));
 
@@ -1103,9 +1105,9 @@ ProvidedSortSet computeSortsForScan(const IndexEntry& index,
     if (!CollatorInterface::collatorsMatch(queryCollator, index.collator)) {
         for (auto&& collatedField :
              IndexScanNode::getFieldsWithStringBounds(bounds, index.keyPattern)) {
-            if (equalityFields.count(collatedField.toString())) {
+            if (equalityFields.count(std::string{collatedField})) {
                 ignoreFields.insert(collatedField);
-                equalityFields.erase(collatedField.toString());
+                equalityFields.erase(std::string{collatedField});
             } else {
                 unsupportedFields.insert(collatedField);
             }
@@ -1115,9 +1117,9 @@ ProvidedSortSet computeSortsForScan(const IndexEntry& index,
         for (auto&& multikeyField : multikeyFields) {
             if (!confirmBoundsProvideSortComponentGivenMultikeyness(
                     multikeyField, bounds, multikeyFields)) {
-                if (equalityFields.count(multikeyField.toString())) {
+                if (equalityFields.count(std::string{multikeyField})) {
                     ignoreFields.insert(multikeyField);
-                    equalityFields.erase(multikeyField.toString());
+                    equalityFields.erase(std::string{multikeyField});
                 } else {
                     unsupportedFields.insert(multikeyField);
                 }
@@ -1151,13 +1153,13 @@ ProvidedSortSet computeSortsForScan(const IndexEntry& index,
         }
 
         // Equality fields can be ignored for the purposes of sort order; see above.
-        if (equalityFields.contains(fieldName.toString())) {
+        if (equalityFields.contains(std::string{fieldName})) {
             continue;
         }
 
         // "Hashed" fields (or other special kinds of index) prohibit sorts on the later fields,
         // unless there is an equality on the hashed field (handled above).
-        if (elt.type() == mongo::String) {
+        if (elt.type() == BSONType::string) {
             break;
         }
 
@@ -1304,10 +1306,10 @@ void UnwindNode::appendToString(str::stream* ss, int indent) const {
     addIndent(ss, indent);
     *ss << "UNWIND\n";
     addIndent(ss, indent + 1);
-    *ss << "preserveNullAndEmptyArrays = " << preserveNullAndEmptyArrays << "\n";
-    if (indexPath) {
+    *ss << "preserveNullAndEmptyArrays = " << spec.preserveNullAndEmptyArrays << "\n";
+    if (spec.indexPath) {
         addIndent(ss, indent + 1);
-        *ss << "indexPath = " << indexPath->fullPath() << "\n";
+        *ss << "indexPath = " << spec.indexPath->fullPath() << "\n";
     }
 
     addCommon(ss, indent);
@@ -1317,8 +1319,7 @@ void UnwindNode::appendToString(str::stream* ss, int indent) const {
 }
 
 std::unique_ptr<QuerySolutionNode> UnwindNode::clone() const {
-    return std::make_unique<UnwindNode>(
-        children[0]->clone(), fieldPath, preserveNullAndEmptyArrays, indexPath);
+    return std::make_unique<UnwindNode>(children[0]->clone(), spec);
 }
 
 //
@@ -1876,10 +1877,10 @@ void EqLookupUnwindNode::appendToString(str::stream* ss, int indent) const {
     *ss << "shouldProduceBson = " << shouldProduceBson << "\n";
 
     addIndent(ss, indent + 1);
-    *ss << "preserveNullAndEmptyArrays = " << unwindNode.preserveNullAndEmptyArrays << "\n";
-    if (unwindNode.indexPath) {
+    *ss << "preserveNullAndEmptyArrays = " << unwindSpec.preserveNullAndEmptyArrays << "\n";
+    if (unwindSpec.indexPath) {
         addIndent(ss, indent + 1);
-        *ss << "indexPath = " << unwindNode.indexPath->fullPath() << "\n";
+        *ss << "indexPath = " << unwindSpec.indexPath->fullPath() << "\n";
     }
 
     addIndent(ss, indent + 1);
@@ -1903,8 +1904,8 @@ std::unique_ptr<QuerySolutionNode> EqLookupUnwindNode::clone() const {
                                                 idxEntry,
                                                 shouldProduceBson,
                                                 // $unwind-specific data members.
-                                                unwindNode.preserveNullAndEmptyArrays,
-                                                unwindNode.indexPath,
+                                                unwindSpec.preserveNullAndEmptyArrays,
+                                                unwindSpec.indexPath,
                                                 scanDirection);
 }
 

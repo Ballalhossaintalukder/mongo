@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <list>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_sample.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -43,7 +39,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/document_source_limit.h"
-#include "mongo/db/pipeline/document_source_sample.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/query/allowed_contexts.h"
@@ -51,13 +46,19 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <list>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 using boost::intrusive_ptr;
 
 constexpr StringData DocumentSourceSample::kStageName;
 
 DocumentSourceSample::DocumentSourceSample(const intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageName, pExpCtx), _size(0) {}
+    : DocumentSource(kStageName, pExpCtx), exec::agg::Stage(kStageName, pExpCtx), _size(0) {}
 
 REGISTER_DOCUMENT_SOURCE(sample,
                          LiteParsedDocumentSourceDefault::parse,
@@ -110,7 +111,9 @@ const BSONObj randSortSpec = BSON("$rand" << BSON("$meta" << "randVal"));
 
 intrusive_ptr<DocumentSource> DocumentSourceSample::createFromBson(
     BSONElement specElem, const intrusive_ptr<ExpressionContext>& expCtx) {
-    uassert(28745, "the $sample stage specification must be an object", specElem.type() == Object);
+    uassert(28745,
+            "the $sample stage specification must be an object",
+            specElem.type() == BSONType::object);
 
     bool sizeSpecified = false;
     long long size;

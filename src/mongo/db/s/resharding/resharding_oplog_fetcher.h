@@ -28,11 +28,6 @@
  */
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/base/status_with.h"
 #include "mongo/client/dbclient_base.h"
 #include "mongo/db/cancelable_operation_context.h"
@@ -54,6 +49,12 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -126,16 +127,16 @@ public:
     bool iterate(Client* client, CancelableOperationContextFactory factory);
 
     /**
-     * Notifies the oplog fetcher that the critical section has started. Currently, this makes the
-     * fetcher start doing the following to reduce the likelihood of not finishing oplog fetching
-     * within the critical section timeout:
-     * - Start fetch oplog entries from the primary node instead of the "nearest" node which could
-     *   be a lagged secondary.
+     * Makes the oplog fetcher prepare for the critical section. Currently, this makes the fetcher
+     * start doing the following to reduce the likelihood of not finishing oplog fetching within the
+     * critical section timeout:
+     * - Start fetching oplog entries from the primary node instead of the "nearest" node which
+     *   could be a lagged secondary.
      * - Sleep for reshardingOplogFetcherSleepMillisDuringCriticalSection instead of
      *   reshardingOplogFetcherSleepMillisBeforeCriticalSection after exhausting the oplog entries
      *   returned by the previous cursor.
      */
-    void onEnteringCriticalSection();
+    void prepareForCriticalSection();
 
     int getNumOplogEntriesCopied() const {
         return _numOplogEntriesCopied;
@@ -177,18 +178,18 @@ private:
 
     const UUID _reshardingUUID;
     const UUID _collUUID;
-    ReshardingDonorOplogId _startAt;
     const ShardId _donorShard;
     const ShardId _recipientShard;
     const NamespaceString _oplogBufferNss;
     const bool _storeProgress;
 
     int _numOplogEntriesCopied = 0;
-    AtomicWord<bool> _inCriticalSection;
 
     stdx::mutex _mutex;
+    ReshardingDonorOplogId _startAt;
     Promise<void> _onInsertPromise;
     Future<void> _onInsertFuture;
+    AtomicWord<bool> _isPreparingForCriticalSection;
     // The cancellation source for the current aggregation.
     boost::optional<CancellationSource> _aggCancelSource;
 

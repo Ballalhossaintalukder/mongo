@@ -29,12 +29,6 @@
 
 #include "mongo/db/matcher/match_expression_dependencies.h"
 
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/db/matcher/expression_always_boolean.h"
@@ -72,6 +66,12 @@
 #include "mongo/db/matcher/schema/expression_internal_schema_xor.h"
 #include "mongo/db/pipeline/expression_dependencies.h"
 #include "mongo/db/query/tree_walker.h"
+
+#include <cstddef>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::match_expression {
 
@@ -358,12 +358,12 @@ private:
             for (size_t i = 1; i < fieldRef.numParts(); ++i) {
                 if (fieldRef.isNumericPathComponentStrict(i)) {
                     auto prefix = fieldRef.dottedSubstring(0, i);
-                    _deps->fields.insert(prefix.toString());
+                    _deps->fields.insert(std::string{prefix});
                     return;
                 }
             }
 
-            _deps->fields.insert(path->toString());
+            _deps->fields.insert(std::string{*path});
         }
     }
 

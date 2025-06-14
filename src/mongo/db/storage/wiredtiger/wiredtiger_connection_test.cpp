@@ -27,20 +27,22 @@
  *    it in the license file.
  */
 
-#include <sstream>
-#include <string>
-
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 
 #include "mongo/base/string_data.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_server_status.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_session.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/system_clock_source.h"
+
+#include <sstream>
+#include <string>
+
+#include <wiredtiger.h>
 
 namespace mongo {
 
@@ -55,7 +57,7 @@ public:
         ss << extraStrings;
         string config = ss.str();
         _fastClockSource = std::make_unique<SystemClockSource>();
-        int ret = wiredtiger_open(dbpath.toString().c_str(), nullptr, config.c_str(), &_conn);
+        int ret = wiredtiger_open(std::string{dbpath}.c_str(), nullptr, config.c_str(), &_conn);
         ASSERT_OK(wtRCToStatus(ret, nullptr));
         ASSERT(_conn);
     }
@@ -79,7 +81,15 @@ public:
     WiredTigerConnectionHarnessHelper(StringData extraStrings)
         : _dbpath("wt_test"),
           _connectionTest(_dbpath.path(), extraStrings),
-          _connection(_connectionTest.getConnection(), _connectionTest.getClockSource()) {}
+          _connection(_connectionTest.getConnection(),
+                      _connectionTest.getClockSource(),
+                      /*sessionCacheMax=*/33000) {}
+
+    WiredTigerConnectionHarnessHelper(StringData extraStrings, unsigned long sessionCacheMax)
+        : _dbpath("wt_test"),
+          _connectionTest(_dbpath.path(), extraStrings),
+          _connection(
+              _connectionTest.getConnection(), _connectionTest.getClockSource(), sessionCacheMax) {}
 
 
     WiredTigerConnection* getConnection() {
@@ -103,7 +113,7 @@ TEST(WiredTigerConnectionTest, CheckSessionCacheCleanup) {
     // Destroying of a session puts it in the session cache
     ASSERT_EQUALS(connection->getIdleSessionsCount(), 1U);
 
-    // An idle timeout of 0 means never expire idle sessions
+    // An idle timeout of 0 means we never expire idle sessions
     connection->closeExpiredIdleSessions(0);
     ASSERT_EQUALS(connection->getIdleSessionsCount(), 1U);
     sleepmillis(10);
@@ -235,6 +245,51 @@ TEST(WiredTigerConnectionTest, resetConfigurationToDefault) {
 
     // Check that we do not store any undo config strings.
     ASSERT_EQ(session->getUndoConfigStrings().size(), 0);
+}
+
+TEST(WiredTigerConnectionTest, CheckSessionCacheMax) {
+    auto maxSessionCacheSize = 6;
+    WiredTigerConnectionHarnessHelper harnessHelper("", maxSessionCacheSize);
+    WiredTigerConnection* connection = harnessHelper.getConnection();
+
+    ASSERT_EQUALS(connection->getIdleSessionsCount(), 0U);
+
+    // An idle timeout of 0 means never expire idle sessions.
+    connection->closeExpiredIdleSessions(0);
+    {
+        std::array<WiredTigerManagedSession, 10> sessions;
+
+        for (auto& session : sessions) {
+            session = connection->getUninterruptibleSession();
+        }
+        // Check that the cache is empty here.
+        ASSERT_EQUALS(connection->getIdleSessionsCount(), 0U);
+    }
+    // Destroying a session puts it in the session cache
+    ASSERT_EQUALS(connection->getIdleSessionsCount(), 6U);
+}
+
+TEST(WiredTigerConnectionTest, SettingSessionCacheMaxToZeroDisablesSessionCaching) {
+    auto maxSessionCacheSize = 0;
+    WiredTigerConnectionHarnessHelper harnessHelper("", maxSessionCacheSize);
+    WiredTigerConnection* connection = harnessHelper.getConnection();
+
+    ASSERT_EQUALS(connection->getIdleSessionsCount(), 0U);
+
+    // An idle timeout of 0 means never expire idle sessions.
+    connection->closeExpiredIdleSessions(0);
+    {
+        std::array<WiredTigerManagedSession, 10> sessions;
+
+        for (auto& session : sessions) {
+            session = connection->getUninterruptibleSession();
+        }
+        // Check that the cache is empty here.
+        ASSERT_EQUALS(connection->getIdleSessionsCount(), 0U);
+    }
+    // Destroying a session puts it in the session cache. Here, since we disabled session caching,
+    // the session cache should still be empty.
+    ASSERT_EQUALS(connection->getIdleSessionsCount(), 0U);
 }
 
 }  // namespace mongo

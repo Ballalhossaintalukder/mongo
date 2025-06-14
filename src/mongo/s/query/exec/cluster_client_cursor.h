@@ -29,16 +29,18 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-
 #include "mongo/client/read_preference.h"
 #include "mongo/db/api_parameters.h"
 #include "mongo/db/auth/user_name.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/s/query/exec/cluster_client_cursor_params.h"
 #include "mongo/s/query/exec/cluster_query_result.h"
 #include "mongo/s/query/exec/router_exec_stage.h"
+#include "mongo/util/decorable.h"
 #include "mongo/util/time_support.h"
+
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -58,7 +60,11 @@ class StatusWith;
  * Does not throw exceptions.
  */
 class ClusterClientCursor {
+    ClusterClientCursor(const ClusterClientCursor&) = delete;
+    ClusterClientCursor& operator=(const ClusterClientCursor&) = delete;
+
 public:
+    ClusterClientCursor() = default;
     virtual ~ClusterClientCursor() = default;
 
     /**
@@ -285,6 +291,18 @@ public:
      */
     virtual boost::optional<query_stats::DataBearingNodeMetrics> takeRemoteMetrics() = 0;
 
+    std::unique_ptr<OperationMemoryUsageTracker> releaseMemoryUsageTracker() {
+        return std::move(_memoryTracker);
+    }
+
+    OperationMemoryUsageTracker* getMemoryUsageTracker() const {
+        return _memoryTracker.get();
+    }
+
+    void setMemoryUsageTracker(std::unique_ptr<OperationMemoryUsageTracker> memoryTracker) {
+        _memoryTracker = std::move(memoryTracker);
+    }
+
 protected:
     // Metrics that are accumulated over the lifetime of the cursor, incremented with each getMore.
     // Useful for diagnostics like queryStats.
@@ -296,6 +314,8 @@ protected:
 private:
     // Unused maxTime budget for this cursor.
     Microseconds _leftoverMaxTimeMicros = Microseconds::max();
+
+    std::unique_ptr<OperationMemoryUsageTracker> _memoryTracker;
 };
 
 }  // namespace mongo

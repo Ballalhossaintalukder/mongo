@@ -29,15 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_fill.h"
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -58,6 +49,15 @@
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
 
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 REGISTER_DOCUMENT_SOURCE_CONDITIONALLY(fill,
@@ -65,7 +65,7 @@ REGISTER_DOCUMENT_SOURCE_CONDITIONALLY(fill,
                                        document_source_fill::createFromBson,
                                        AllowedWithApiStrict::kNeverInVersion1,
                                        AllowedWithClientType::kAny,
-                                       kDoesNotRequireFeatureFlag,
+                                       nullptr,  // featureFlag
                                        true);
 namespace document_source_fill {
 
@@ -75,7 +75,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> createFromBson(
             str::stream() << "The " << kStageName
                           << " stage specification must be an object, found "
                           << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     auto spec = FillSpec::parse(IDLParserContext(kStageName), elem.embeddedObject());
     BSONObjBuilder setWindowFieldsSpec;
@@ -96,7 +96,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> createFromBson(
         StringData fieldName = fieldSpec.fieldName();
         uassert(6050200,
                 "Each fill output specification must be an object with exactly one field",
-                fieldSpec.type() == BSONType::Object);
+                fieldSpec.type() == BSONType::object);
         auto parsedSpec =
             FillOutputSpec::parse(IDLParserContext(kStageName), fieldSpec.embeddedObject());
         if (auto&& method = parsedSpec.getMethod()) {

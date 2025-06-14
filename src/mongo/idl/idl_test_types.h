@@ -29,11 +29,11 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/base/data_range.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
+
+#include <vector>
 
 namespace mongo {
 
@@ -134,7 +134,7 @@ public:
         return _str;
     }
     void setField1(StringData value) {
-        _str = value.toString();
+        _str = std::string{value};
     }
 
 private:

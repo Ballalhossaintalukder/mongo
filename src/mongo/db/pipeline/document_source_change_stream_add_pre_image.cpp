@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_add_pre_image.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -41,7 +36,6 @@
 #include "mongo/db/change_stream_serverless_helpers.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/pipeline/change_stream_preimage_gen.h"
-#include "mongo/db/pipeline/document_source_change_stream_add_pre_image.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
 #include "mongo/db/version_context.h"
 #include "mongo/idl/idl_parser.h"
@@ -49,17 +43,24 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
 
 namespace mongo {
 
-namespace {
 REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamAddPreImage,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamAddPreImage::createFromBson,
                                   true);
-}  // namespace
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamAddPreImage,
+                            DocumentSourceChangeStreamAddPreImage::id)
 
 constexpr StringData DocumentSourceChangeStreamAddPreImage::kStageName;
 constexpr StringData DocumentSourceChangeStreamAddPreImage::kFullDocumentBeforeChangeFieldName;
@@ -77,7 +78,7 @@ DocumentSourceChangeStreamAddPreImage::createFromBson(
     const BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5467610,
             str::stream() << "the '" << kStageName << "' stage spec must be an object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     auto parsedSpec = DocumentSourceChangeStreamAddPreImageSpec::parse(
         IDLParserContext("DocumentSourceChangeStreamAddPreImageSpec"), elem.Obj());
     return make_intrusive<DocumentSourceChangeStreamAddPreImage>(
@@ -93,7 +94,7 @@ DocumentSource::GetNextResult DocumentSourceChangeStreamAddPreImage::doGetNext()
     // If this is not an update, replace or delete, then just pass along the result.
     const auto kOpTypeField = DocumentSourceChangeStream::kOperationTypeField;
     const auto opType = input.getDocument()[kOpTypeField];
-    DocumentSourceChangeStream::checkValueType(opType, kOpTypeField, BSONType::String);
+    DocumentSourceChangeStream::checkValueType(opType, kOpTypeField, BSONType::string);
     if (opType.getStringData() != DocumentSourceChangeStream::kUpdateOpType &&
         opType.getStringData() != DocumentSourceChangeStream::kReplaceOpType &&
         opType.getStringData() != DocumentSourceChangeStream::kDeleteOpType) {
@@ -104,7 +105,7 @@ DocumentSource::GetNextResult DocumentSourceChangeStreamAddPreImage::doGetNext()
     tassert(6091900, "Pre-image id field is missing", !preImageId.missing());
     tassert(5868900,
             "Expected pre-image id field to be a document",
-            preImageId.getType() == BSONType::Object);
+            preImageId.getType() == BSONType::object);
 
     // Obtain the pre-image document, if available, given the specified preImageId.
     auto preImageDoc = lookupPreImage(pExpCtx, preImageId.getDocument());

@@ -28,12 +28,7 @@
  */
 
 
-#include <absl/container/flat_hash_map.h>
-#include <fmt/format.h>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/validate/validate_state.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/catalog/collection.h"
@@ -49,13 +44,19 @@
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/db/validate/validate_gen.h"
-#include "mongo/db/validate/validate_state.h"
 #include "mongo/db/views/view.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -135,7 +136,7 @@ void ValidateState::yieldCursors(OperationContext* opCtx) {
 
     // Restore all the cursors.
     for (const auto& indexCursor : _indexCursors) {
-        indexCursor.second->restore();
+        indexCursor.second->restore(opCtx);
     }
 
     uassert(ErrorCodes::Interrupted,
@@ -248,7 +249,7 @@ void ValidateState::initializeCursors(OperationContext* opCtx) {
     const IndexCatalog* indexCatalog = _collection->getIndexCatalog();
     // The index iterator for ready indexes is timestamp-aware and will only return indexes that
     // are visible at our read time.
-    const auto it = indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    const auto it = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (it->more()) {
         const IndexCatalogEntry* entry = it->next();
         const IndexDescriptor* desc = entry->descriptor();

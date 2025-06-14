@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <utility>
-
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/exec/sbe/values/row.h"
 #include "mongo/db/exec/sbe/values/slot.h"
@@ -39,8 +36,12 @@
 #include "mongo/db/record_id.h"
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/db/storage/record_store.h"
-#include "mongo/db/storage/temporary_record_store.h"
-#include "mongo/platform/basic.h"
+#include "mongo/db/storage/spill_table.h"
+#include "mongo/db/transaction_resources.h"
+
+#include <utility>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace sbe {
@@ -100,9 +101,7 @@ public:
                             bool update);
 
 
-    Status insertRecords(OperationContext* opCtx,
-                         std::vector<Record>* inOutRecords,
-                         const std::vector<Timestamp>& timestamps);
+    Status insertRecords(OperationContext* opCtx, std::vector<Record>* inOutRecords);
 
     // Reads a materialized row from the record store.
     boost::optional<value::MaterializedRow> readFromRecordStore(OperationContext* opCtx,
@@ -110,34 +109,30 @@ public:
 
     bool findRecord(OperationContext* opCtx, const RecordId& loc, RecordData* out);
 
-    auto rs() {
-        return _recordStore->rs();
-    }
-
     auto getCursor(OperationContext* opCtx) {
         switchToSpilling(opCtx);
         ON_BLOCK_EXIT([&] { switchToOriginal(opCtx); });
-        return rs()->getCursor(opCtx);
+        return _spillTable->getCursor(opCtx);
     }
 
-    void resetCursor(OperationContext* opCtx, std::unique_ptr<SeekableRecordCursor>& cursor) {
+    void resetCursor(OperationContext* opCtx, std::unique_ptr<SpillTable::Cursor>& cursor) {
         switchToSpilling(opCtx);
         ON_BLOCK_EXIT([&] { switchToOriginal(opCtx); });
         cursor.reset();
     }
 
-    auto saveCursor(OperationContext* opCtx, std::unique_ptr<SeekableRecordCursor>& cursor) {
+    auto saveCursor(OperationContext* opCtx, std::unique_ptr<SpillTable::Cursor>& cursor) {
         switchToSpilling(opCtx);
         ON_BLOCK_EXIT([&] { switchToOriginal(opCtx); });
 
         return cursor->save();
     }
 
-    auto restoreCursor(OperationContext* opCtx, std::unique_ptr<SeekableRecordCursor>& cursor) {
+    auto restoreCursor(OperationContext* opCtx, std::unique_ptr<SpillTable::Cursor>& cursor) {
         switchToSpilling(opCtx);
         ON_BLOCK_EXIT([&] { switchToOriginal(opCtx); });
 
-        return cursor->restore();
+        return cursor->restore(*shard_role_details::getRecoveryUnit(opCtx));
     }
 
     int64_t storageSize(OperationContext* opCtx);
@@ -149,7 +144,7 @@ private:
     void switchToSpilling(OperationContext* opCtx);
     void switchToOriginal(OperationContext* opCtx);
 
-    std::unique_ptr<TemporaryRecordStore> _recordStore;
+    std::unique_ptr<SpillTable> _spillTable;
 
     std::unique_ptr<RecoveryUnit> _originalUnit;
     WriteUnitOfWork::RecoveryUnitState _originalState;

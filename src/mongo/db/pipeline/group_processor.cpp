@@ -65,7 +65,7 @@ boost::optional<Document> GroupProcessor::getNextSpilled() {
     // Call startNewGroup on every accumulator.
     Value expandedId = expandId(currentId);
     Document idDoc =
-        expandedId.getType() == BSONType::Object ? expandedId.getDocument() : Document();
+        expandedId.getType() == BSONType::object ? expandedId.getDocument() : Document();
     for (size_t i = 0; i < numAccumulators; ++i) {
         Value initializerValue =
             _accumulatedFields[i].expr.initializer->evaluate(idDoc, &_expCtx->variables);
@@ -182,6 +182,10 @@ void GroupProcessor::readyGroups() {
         _groupsIterator = _groups.begin();
     }
 
+    // Update GroupStats here when reading groups in case the query finishes early without resetting
+    // the GroupProcessor. This guarantees we have $group-level statistics for explain.
+    _stats.maxUsedMemoryBytes = _memoryTracker.maxMemoryBytes();
+
     _groupsReady = true;
 }
 
@@ -217,6 +221,13 @@ void GroupProcessor::spill() {
         return;
     }
 
+    // If _groupsReady is true, we may have already returned some results, so we should skip them.
+    auto groupsIt = _groupsReady ? _groupsIterator : _groups.begin();
+    if (groupsIt == _groups.end()) {
+        // There is nothing to spill.
+        return;
+    }
+
     uassert(ErrorCodes::QueryExceededMemoryLimitNoDiskUseAllowed,
             "Exceeded memory limit for $group, but didn't allow external sort."
             " Pass allowDiskUse:true to opt in.",
@@ -231,10 +242,8 @@ void GroupProcessor::spill() {
     ptrs.reserve(_groups.size());
 
     int64_t spilledRecords = 0;
-    // If _groupsReady is true, we may have already returned some results, so we should skip them.
-    auto it = _groupsReady ? _groupsIterator : _groups.begin();
-    for (auto end = _groups.end(); it != end; ++it) {
-        ptrs.push_back(&*it);
+    for (auto end = _groups.end(); groupsIt != end; ++groupsIt) {
+        ptrs.push_back(&*groupsIt);
         ++spilledRecords;
     }
 
@@ -273,11 +282,12 @@ void GroupProcessor::spill() {
     }
     _sortedFiles.emplace_back(writer.done());
 
-    int64_t spilledBytes =
-        _spillStats->bytesSpilled() - _stats.spillingStats.getSpilledDataStorageSize();
-    groupCounters.incrementPerSpilling(1 /* spills */, spilledBytes, spilledRecords, spilledBytes);
-    _stats.spillingStats.updateSpillingStats(
+    auto spilledDataStorageIncrease = _stats.spillingStats.updateSpillingStats(
         1, _memoryTracker.currentMemoryBytes(), spilledRecords, _spillStats->bytesSpilled());
+    groupCounters.incrementPerSpilling(1 /* spills */,
+                                       _memoryTracker.currentMemoryBytes(),
+                                       spilledRecords,
+                                       spilledDataStorageIncrease);
 
     // Zero out the current per-accumulation statement memory consumption, as the memory has been
     // freed by spilling.

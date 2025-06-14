@@ -29,17 +29,6 @@
 
 #include "mongo/db/shard_role.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/utility/in_place_factory.hpp>  // IWYU pragma: keep
-#include <fmt/format.h>
-#include <iterator>
-
-#include <absl/meta/type_traits.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -53,7 +42,6 @@
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/concurrency/d_concurrency.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/direct_connection_util.h"
@@ -65,8 +53,10 @@
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/shard_filtering_util.h"
 #include "mongo/db/s/sharding_runtime_d_params_gen.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/capped_snapshots.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage/storage_options.h"
@@ -84,9 +74,22 @@
 #include "mongo/util/testing_proctor.h"
 #include "mongo/util/time_support.h"
 
+#include <algorithm>
+#include <iterator>
+
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/utility/in_place_factory.hpp>  // IWYU pragma: keep
+#include <fmt/format.h>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
 namespace mongo {
+
+MONGO_FAIL_POINT_DEFINE(hangShardRoleAfterEstablishCappedSnapshot);
 
 using TransactionResources = shard_role_details::TransactionResources;
 
@@ -220,7 +223,7 @@ ResolvedNamespaceOrViewAcquisitionRequests resolveNamespaceOrViewAcquisitionRequ
 
             resolvedAcquisitionRequests.emplace_back(std::move(resolvedAcquisitionRequest));
         } else {
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083530);
         }
     }
 
@@ -294,8 +297,13 @@ void checkPlacementVersion(OperationContext* opCtx,
                            const PlacementConcern& placementConcern) {
     const auto& receivedDbVersion = placementConcern.getDbVersion();
     if (receivedDbVersion) {
-        const auto scopedDss = DatabaseShardingState::acquireShared(opCtx, nss.dbName());
-        scopedDss->assertMatchingDbVersion(opCtx, *receivedDbVersion);
+        const auto scopedSs = ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+        if (scopedSs.isInTransitionalPhase(opCtx)) {
+            scopedSs.checkDbVersionOrThrow(opCtx, nss.dbName(), *receivedDbVersion);
+        } else {
+            const auto scopedDss = DatabaseShardingState::acquire(opCtx, nss.dbName());
+            scopedDss->checkDbVersionOrThrow(opCtx, *receivedDbVersion);
+        }
     }
 
     const auto& receivedShardVersion = placementConcern.getShardVersion();
@@ -583,7 +591,7 @@ void validateRequests(OperationContext* opCtx,
                     DatabaseName::isValid(ar.nssOrUUID.dbName(),
                                           DatabaseName::DollarInDbNameBehavior::Allow));
         } else {
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083531);
         }
 
         // Check that if the operation came from a router, all collection acquisitions declare an
@@ -644,12 +652,19 @@ void checkShardingPlacement(OperationContext* opCtx,
 
 ResolvedNamespaceOrViewAcquisitionRequest::LockFreeReadsResources takeGlobalLock(
     OperationContext* opCtx, const CollectionOrViewAcquisitionRequests& acquisitionRequests) {
+    invariant(!acquisitionRequests.empty());
+
+    const auto deadline =
+        std::min_element(acquisitionRequests.begin(),
+                         acquisitionRequests.end(),
+                         [](const auto& lhs, const auto& rhs) {
+                             return lhs.lockAcquisitionDeadline < rhs.lockAcquisitionDeadline;
+                         })
+            ->lockAcquisitionDeadline;
+
     auto lockFreeReadsBlock = std::make_shared<LockFreeReadsBlock>(opCtx);
-    auto globalLock = std::make_shared<Lock::GlobalLock>(opCtx,
-                                                         MODE_IS,
-                                                         Date_t::max(),
-                                                         Lock::InterruptBehavior::kThrow,
-                                                         kLockFreeReadsGlobalLockOptions);
+    auto globalLock = std::make_shared<Lock::GlobalLock>(
+        opCtx, MODE_IS, deadline, Lock::InterruptBehavior::kThrow, kLockFreeReadsGlobalLockOptions);
     return {lockFreeReadsBlock, globalLock};
 }
 
@@ -712,7 +727,6 @@ logv2::DynamicAttributes getCurOpLogAttrs(OperationContext* opCtx) {
     logv2::DynamicAttributes attr;
     const auto curop = CurOp::get(opCtx);
     curop->debug().report(opCtx,
-                          nullptr,
                           nullptr,
                           curop->getOperationStorageMetrics(),
                           curop->getPrepareReadConflicts(),
@@ -814,7 +828,10 @@ CollectionAcquisition& CollectionAcquisition::operator=(CollectionAcquisition&& 
 }
 
 CollectionAcquisition::CollectionAcquisition(CollectionOrViewAcquisition&& other) {
-    invariant(other.isCollection());
+    tassert(10566703,
+            "Cannot convert a CollectionOrViewAcquisition containing a view into a "
+            "CollectionAcquisition ",
+            other.isCollection());
     auto& acquisition = get<CollectionAcquisition>(other._collectionOrViewAcquisition);
     _txnResources = std::exchange(acquisition._txnResources, {});
     _acquiredCollection = std::exchange(acquisition._acquiredCollection, {});
@@ -855,16 +872,20 @@ bool CollectionAcquisition::exists() const {
 }
 
 UUID CollectionAcquisition::uuid() const {
-    invariant(exists(),
-              str::stream() << "Collection " << nss().toStringForErrorMsg()
-                            << " doesn't exist, so its UUID cannot be obtained");
+    tassert(10566702,
+            str::stream() << "Collection " << nss().toStringForErrorMsg()
+                          << " doesn't exist, so its UUID cannot be obtained",
+            exists());
     return _acquiredCollection->collectionPtr->uuid();
 }
 
 const ScopedCollectionDescription& CollectionAcquisition::getShardingDescription() const {
     // The collectionDescription will only not be set if the caller as acquired the acquisition
     // using the kLocalCatalogOnlyWithPotentialDataLoss placement concern
-    invariant(_acquiredCollection->collectionDescription);
+    tassert(10566704,
+            "Cannot retrieve sharding collectionDescription for kLocalCatalogOnly shard role "
+            "acquisitions",
+            _acquiredCollection->collectionDescription);
     return *_acquiredCollection->collectionDescription;
 }
 
@@ -953,7 +974,7 @@ const NamespaceString& ViewAcquisition::nss() const {
 }
 
 const ViewDefinition& ViewAcquisition::getViewDefinition() const {
-    invariant(_acquiredView->viewDefinition);
+    tassert(10566705, "Missing view definition", _acquiredView->viewDefinition);
     return *_acquiredView->viewDefinition;
 }
 
@@ -1120,6 +1141,7 @@ void SnapshotAttempt::openStorageSnapshot() {
     for (auto& nssOrUUID : _acquisitionRequests) {
         establishCappedSnapshotIfNeeded(_opCtx, *_catalogBeforeSnapshot, nssOrUUID);
     }
+    hangShardRoleAfterEstablishCappedSnapshot.pauseWhileSet(_opCtx);
 
     if (!shard_role_details::getRecoveryUnit(_opCtx)->isActive()) {
         shard_role_details::getRecoveryUnit(_opCtx)->preallocateSnapshot();
@@ -1406,7 +1428,10 @@ CollectionOrViewAcquisitions acquireCollectionsOrViewsMaybeLockFree(
 
 CollectionAcquisition acquireCollectionForLocalCatalogOnlyWithPotentialDataLoss(
     OperationContext* opCtx, const NamespaceString& nss, LockMode mode) {
-    invariant(!OperationShardingState::isComingFromRouter(opCtx));
+    tassert(10566706,
+            "Cannot use acquireCollectionForLocalCatalogOnlyWithPotentialDataLoss on "
+            "sharding-aware operations",
+            !OperationShardingState::isComingFromRouter(opCtx));
 
     auto& txnResources = TransactionResources::get(opCtx);
 
@@ -2065,6 +2090,18 @@ void shard_role_details::checkShardingAndLocalCatalogCollectionUUIDMatch(
                         "local uuid"_attr = localUuidString);
         }
     }
+}
+
+NamespaceString shard_role_nocheck::resolveNssWithoutAcquisition(OperationContext* opCtx,
+                                                                 const DatabaseName& dbName,
+                                                                 const UUID& uuid) {
+    return CollectionCatalog::get(opCtx)->resolveNamespaceStringFromDBNameAndUUID(
+        opCtx, dbName, uuid);
+}
+
+boost::optional<NamespaceString> shard_role_nocheck::lookupNssWithoutAcquisition(
+    OperationContext* opCtx, const UUID& uuid) {
+    return CollectionCatalog::get(opCtx)->lookupNSSByUUID(opCtx, uuid);
 }
 
 }  // namespace mongo

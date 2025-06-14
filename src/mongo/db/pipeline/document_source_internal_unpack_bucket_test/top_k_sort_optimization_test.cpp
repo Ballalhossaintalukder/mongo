@@ -27,15 +27,15 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
-
 #include "mongo/bson/json.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/pipeline.h"
 #include "mongo/db/query/explain_options.h"
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -116,7 +116,7 @@ TEST_F(TopKSortOptimization, MatchOnlyAfterTopKSortPushedDownWithTopKSortOptimiz
                                                firstLastGroupSpecObj),
                                     getExpCtx());
 
-    ASSERT_EQ(pipeline->getSources().size(), 4U);
+    ASSERT_EQ(pipeline->size(), 4U);
 
     pipeline->optimizePipeline();
 
@@ -143,7 +143,7 @@ TEST_F(TopKSortOptimization, MatchOnlyBeforeTopKSortPushedDownWithTopKSortOptimi
                                                firstLastGroupSpecObj),
                                     getExpCtx());
 
-    ASSERT_EQ(pipeline->getSources().size(), 4U);
+    ASSERT_EQ(pipeline->size(), 4U);
 
     pipeline->optimizePipeline();
 
@@ -220,7 +220,7 @@ TEST_F(TopKSortOptimization,
                                    firstSumGroupSpecObj),
                         getExpCtx());
 
-    ASSERT_EQ(pipeline->getSources().size(), 5U);
+    ASSERT_EQ(pipeline->size(), 5U);
 
     pipeline->optimizePipeline();
 
@@ -252,7 +252,7 @@ TEST_F(TopKSortOptimization,
                                    firstSumGroupSpecObj),
                         getExpCtx());
 
-    ASSERT_EQ(pipeline->getSources().size(), 5U);
+    ASSERT_EQ(pipeline->size(), 5U);
 
     pipeline->optimizePipeline();
 
@@ -307,7 +307,7 @@ TEST_F(TopKSortOptimization,
                                    firstSumGroupSpecObj),
                         getExpCtx());
 
-    ASSERT_EQ(pipeline->getSources().size(), 5U);
+    ASSERT_EQ(pipeline->size(), 5U);
 
     pipeline->optimizePipeline();
 

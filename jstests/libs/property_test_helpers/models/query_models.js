@@ -28,13 +28,14 @@ export function getSingleFieldProjectArb(isInclusion, {simpleFieldsOnly = false}
             return {$project: {_id: includeIdVal, [field]: includeFieldVal}};
         });
 }
-const projectArb = oneof(getSingleFieldProjectArb(true /*isInclusion*/),
-                         getSingleFieldProjectArb(false /*isInclusion*/));
+export const simpleProjectArb = oneof(getSingleFieldProjectArb(true /*isInclusion*/),
+                                      getSingleFieldProjectArb(false /*isInclusion*/));
 
 // Project from one field to another. {$project {a: '$b'}}
-const computedProjectArb = fc.tuple(fieldArb, dollarFieldArb).map(function([destField, srcField]) {
-    return {$project: {[destField]: srcField}};
-});
+export const computedProjectArb =
+    fc.tuple(fieldArb, dollarFieldArb).map(function([destField, srcField]) {
+        return {$project: {[destField]: srcField}};
+    });
 
 // Add field with a constant argument. {$addFields: {a: 5}}
 export const addFieldsConstArb =
@@ -42,15 +43,39 @@ export const addFieldsConstArb =
         return {$addFields: {[destField]: leafParams}};
     });
 // Add field from source field. {$addFields: {a: '$b'}}
-const addFieldsVarArb = fc.tuple(fieldArb, dollarFieldArb).map(function([destField, sourceField]) {
-    return {$addFields: {[destField]: sourceField}};
-});
+export const addFieldsVarArb =
+    fc.tuple(fieldArb, dollarFieldArb).map(function([destField, sourceField]) {
+        return {$addFields: {[destField]: sourceField}};
+    });
 
-export const sortArb = fc.tuple(fieldArb, fc.constantFrom(1, -1)).map(function([field, sortOrder]) {
-    // If we sort on two or more fields, we run into the problem of sorting keys that
-    // are parallel arrays. This is not allowed in MQL.
-    return {$sort: {[field]: sortOrder}};
-});
+/*
+ * Generates a random $sort, with [1, maxNumSortComponents] sort components.
+ *
+ * `maxNumSortComponents` defaults to 1, because combining $sort on multiple fields with other
+ * aggregation stages can lead to parallel key errors. For example
+ *    [{$addFields: {a: '$array'}}, {$sort: {a: 1, array: 1}}]
+ * attempts to sort on two array fields. This is not allowed in MQL.
+ *
+ * If the caller has guarantees about what stages will precede the $sort and can avoid parallel key
+ * issues, they may set `maxNumSortComponents` to something greater than 1.
+ */
+export function getSortArb(maxNumSortComponents = 1) {
+    const sortDirectionArb = fc.constantFrom(1, -1);
+    const sortComponent = fc.record({field: fieldArb, dir: sortDirectionArb});
+    return fc
+        .uniqueArray(sortComponent, {
+            minLength: 1,
+            maxLength: maxNumSortComponents,
+            selector: fieldAndDir => fieldAndDir.field,
+        })
+        .map(components => {
+            const sortSpec = {};
+            for (const {field, dir} of components) {
+                sortSpec[field] = dir;
+            }
+            return {$sort: sortSpec};
+        });
+}
 
 export const limitArb = fc.record({$limit: fc.integer({min: 1, max: 5})});
 export const skipArb = fc.record({$skip: fc.integer({min: 1, max: 5})});
@@ -66,12 +91,12 @@ export const skipArb = fc.record({$skip: fc.integer({min: 1, max: 5})});
 function getAllowedStages(allowOrs, deterministicBag) {
     if (deterministicBag) {
         return [
-            projectArb,
+            simpleProjectArb,
             getMatchArb(allowOrs),
             addFieldsConstArb,
             computedProjectArb,
             addFieldsVarArb,
-            sortArb,
+            getSortArb(),
             groupArb
         ];
     } else {
@@ -79,12 +104,12 @@ function getAllowedStages(allowOrs, deterministicBag) {
         return [
             limitArb,
             skipArb,
-            projectArb,
+            simpleProjectArb,
             getMatchArb(allowOrs),
             addFieldsConstArb,
             computedProjectArb,
             addFieldsVarArb,
-            sortArb,
+            getSortArb(),
             groupArb
         ];
     }
@@ -97,5 +122,5 @@ function getAllowedStages(allowOrs, deterministicBag) {
 export function getAggPipelineModel({allowOrs = true, deterministicBag = true} = {}) {
     const aggStageArb = oneof(...getAllowedStages(allowOrs, deterministicBag));
     // Length 6 seems long enough to cover interactions between stages.
-    return fc.array(aggStageArb, {minLength: 0, maxLength: 6});
+    return fc.array(aggStageArb, {minLength: 1, maxLength: 6});
 }

@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/exec/sbe/stages/window.h"
 
@@ -39,6 +38,7 @@
 #include "mongo/db/query/util/spill_util.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/storage/storage_options.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
 
 namespace mongo::sbe {
 
@@ -82,10 +82,6 @@ WindowStage::WindowStage(std::unique_ptr<PlanStage> input,
 
     _records.reserve(_batchSize);
     _recordBuffers.reserve(_batchSize);
-    _recordTimestamps.reserve(_batchSize);
-    for (size_t i = 0; i < _batchSize; i++) {
-        _recordTimestamps.push_back(Timestamp{});
-    }
 }
 
 std::unique_ptr<PlanStage> WindowStage::clone() const {
@@ -167,8 +163,10 @@ void WindowStage::spill() {
             _allowDiskUse);
 
     // Ensure there is sufficient disk space for spilling
-    uassertStatusOK(ensureSufficientDiskSpaceForSpilling(
-        storageGlobalParams.dbpath, internalQuerySpillingMinAvailableDiskSpaceBytes.load()));
+    if (!feature_flags::gFeatureFlagCreateSpillKVEngine.isEnabled()) {
+        uassertStatusOK(ensureSufficientDiskSpaceForSpilling(
+            storageGlobalParams.dbpath, internalQuerySpillingMinAvailableDiskSpaceBytes.load()));
+    }
 
     // Create spilled record storage if not created.
     if (!_recordStore) {
@@ -177,7 +175,7 @@ void WindowStage::spill() {
     }
 
     auto writeBatch = [&]() {
-        auto status = _recordStore->insertRecords(_opCtx, &_records, _recordTimestamps);
+        auto status = _recordStore->insertRecords(_opCtx, &_records);
         tassert(7870901, "Failed to spill records in the window stage", status.isOK());
         _records.clear();
         _recordBuffers.clear();
@@ -207,15 +205,10 @@ void WindowStage::spill() {
     }
 
     // Record spilling statistics.
-    auto storageSizeBeforeSpillUpdate = _specificStats.spillingStats.getSpilledDataStorageSize();
-    _specificStats.spillingStats.updateSpillingStats(
+    auto spilledDataStorageIncrease = _specificStats.spillingStats.updateSpillingStats(
         1 /* spills */, spilledBytes, spilledRecords, _recordStore->storageSize(_opCtx));
-    auto storageSizeAfterSpillUpdate = _specificStats.spillingStats.getSpilledDataStorageSize();
-    setWindowFieldsCounters.incrementPerSpilling(1 /* spills */,
-                                                 spilledBytes,
-                                                 _rows.size(),
-                                                 storageSizeAfterSpillUpdate -
-                                                     storageSizeBeforeSpillUpdate);
+    setWindowFieldsCounters.incrementPerSpilling(
+        1 /* spills */, spilledBytes, _rows.size(), spilledDataStorageIncrease);
 
     // Clear the in memory window buffer.
     _rows.clear();
@@ -841,7 +834,6 @@ std::unique_ptr<PlanStageStats> WindowStage::getStats(bool includeDebugInfo) con
     ret->specific = std::make_unique<WindowStats>(_specificStats);
 
     if (includeDebugInfo) {
-        DebugPrinter printer;
         BSONObjBuilder bob;
         // Spilling stats.
         bob.appendBool("usedDisk", _specificStats.usedDisk);

@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <cstdint>
-#include <deque>
-#include <fstream>  // IWYU pragma: keep
-#include <limits>
-#include <mutex>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <boost/filesystem/path.hpp>
+#include "mongo/db/traffic_recorder.h"
 
 #include "mongo/base/data_builder.h"
 #include "mongo/base/data_range_cursor.h"
@@ -56,13 +46,26 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/traffic_recorder.h"
 #include "mongo/db/traffic_recorder_gen.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/producer_consumer_queue.h"
+#include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <fstream>  // IWYU pragma: keep
+#include <limits>
+#include <mutex>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <boost/filesystem/fstream.hpp>
+#include <boost/filesystem/path.hpp>
 
 namespace mongo {
 
@@ -97,12 +100,13 @@ MONGO_INITIALIZER(ShouldAlwaysRecordTraffic)(InitializerContext*) {
  */
 class TrafficRecorder::Recording {
 public:
-    Recording(const StartRecordingTraffic& options)
-        : _path(_getPath(options.getFilename().toString())), _maxLogSize(options.getMaxFileSize()) {
+    Recording(const StartTrafficRecording& options)
+        : _path(_getPath(std::string{options.getDestination()})),
+          _maxLogSize(options.getMaxFileSize()) {
 
         MultiProducerSingleConsumerQueue<TrafficRecordingPacket, CostFunction>::Options
             queueOptions;
-        queueOptions.maxQueueDepth = options.getBufferSize();
+        queueOptions.maxQueueDepth = options.getMaxMemUsage();
         if (!shouldAlwaysRecordTraffic) {
             queueOptions.maxProducerQueueDepth = 0;
         }
@@ -110,8 +114,8 @@ public:
             queueOptions);
 
         _trafficStats.setRunning(true);
-        _trafficStats.setBufferSize(options.getBufferSize());
-        _trafficStats.setRecordingFile(_path);
+        _trafficStats.setBufferSize(options.getMaxMemUsage());
+        _trafficStats.setRecordingDir(_path);
         _trafficStats.setMaxFileSize(_maxLogSize);
     }
 
@@ -119,8 +123,15 @@ public:
         _thread = stdx::thread([consumer = std::move(_pcqPipe.consumer), this] {
             try {
                 DataBuilder db;
-                std::fstream out(_path,
-                                 std::ios_base::binary | std::ios_base::trunc | std::ios_base::out);
+                boost::filesystem::path recordingFile(boost::filesystem::absolute(_path));
+                if (!boost::filesystem::is_directory(recordingFile)) {
+                    boost::filesystem::create_directory(recordingFile);
+                }
+                recordingFile /= std::to_string(Date_t::now().toMillisSinceEpoch());
+                recordingFile += ".bin";
+                boost::filesystem::ofstream out(recordingFile,
+                                                std::ios_base::binary | std::ios_base::trunc |
+                                                    std::ios_base::out);
 
                 while (true) {
                     std::deque<TrafficRecordingPacket> storage;
@@ -151,9 +162,25 @@ public:
                             _written += size;
                         }
 
-                        uassert(ErrorCodes::LogWriteFailed,
-                                "hit maximum log size",
-                                _written < _maxLogSize);
+                        if (_written >= _maxLogSize) {
+                            // The current recording file hits the maximum file size, open a new
+                            // recording file.
+                            boost::filesystem::path recordingFile(
+                                boost::filesystem::absolute(_path));
+                            recordingFile /= std::to_string(Date_t::now().toMillisSinceEpoch());
+                            recordingFile += ".bin";
+                            out.close();
+                            out.open(recordingFile,
+                                     std::ios_base::binary | std::ios_base::trunc |
+                                         std::ios_base::out);
+                            // We assume that the size of one packet message is greater than the max
+                            // file size. It's intentional to not assert if
+                            // 'size' >= '_maxLogSize' for testing purposes.
+                            {
+                                stdx::lock_guard<stdx::mutex> lk(_mutex);
+                                _written = size;
+                            }
+                        }
 
                         out.write(db.getCursor().data(), db.size());
                         out.write(toWrite.buf(), toWrite.size());
@@ -258,7 +285,7 @@ private:
     }
 
     const std::string _path;
-    const size_t _maxLogSize;
+    const int64_t _maxLogSize;
 
     MultiProducerSingleConsumerQueue<TrafficRecordingPacket, CostFunction>::Pipe _pcqPipe;
     stdx::thread _thread;
@@ -266,7 +293,7 @@ private:
     stdx::mutex _mutex;
     bool _inShutdown = false;
     TrafficRecorderStats _trafficStats;
-    size_t _written = 0;
+    int64_t _written = 0;
     Status _result = Status::OK();
 };
 
@@ -286,7 +313,7 @@ TrafficRecorder::~TrafficRecorder() {
     }
 }
 
-void TrafficRecorder::start(const StartRecordingTraffic& options) {
+void TrafficRecorder::start(const StartTrafficRecording& options) {
     invariant(!shouldAlwaysRecordTraffic);
 
     uassert(ErrorCodes::BadValue,
@@ -329,9 +356,9 @@ void TrafficRecorder::observe(const std::shared_ptr<transport::Session>& ts,
             stdx::lock_guard<stdx::mutex> lk(_mutex);
 
             if (!_recording) {
-                StartRecordingTraffic options;
-                options.setFilename(gAlwaysRecordTraffic);
-                options.setMaxFileSize(std::numeric_limits<int64_t>::max());
+                StartTrafficRecording options;
+                options.setDestination(gAlwaysRecordTraffic);
+                options.setMaxFileSize({double(std::numeric_limits<int64_t>::max())});
 
                 _recording = std::make_shared<Recording>(options);
                 _recording->run();

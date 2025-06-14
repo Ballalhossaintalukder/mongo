@@ -29,10 +29,6 @@
 
 #include "mongo/db/commands/query_cmd/bulk_write_common.h"
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -54,6 +50,10 @@
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace bulk_write_common {
@@ -254,7 +254,7 @@ write_ops::UpdateCommandRequest makeUpdateCommandRequestFromUpdateOp(
     const BulkWriteUpdateOp* op,
     const BulkWriteCommandRequest& req,
     size_t currentOpIdx) {
-    auto idx = op->getUpdate();
+    auto idx = op->getNsInfoIdx();
     auto nsEntry = req.getNsInfo()[idx];
 
     auto stmtId = bulk_write_common::getStatementId(req, currentOpIdx);
@@ -321,12 +321,11 @@ BulkWriteCommandRequest makeSingleOpBulkWriteCommandRequest(
 
     // Make a copy of the operation and adjust its namespace index to 0.
     auto newOp = bulkWriteReq.getOps()[opIdx];
-    visit(OverloadedVisitor{
-              [](mongo::BulkWriteInsertOp& op) { op.setInsert(0); },
-              [](mongo::BulkWriteUpdateOp& op) { op.setUpdate(0); },
-              [](mongo::BulkWriteDeleteOp& op) { op.setDeleteCommand(0); },
-          },
-          newOp);
+    visit(
+        OverloadedVisitor{
+            [](auto& op) { op.setNsInfoIdx(0); },
+        },
+        newOp);
 
     BulkWriteCommandRequest singleOpRequest;
     singleOpRequest.setOps({newOp});

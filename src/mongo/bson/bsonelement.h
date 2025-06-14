@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstdint>
-#include <cstring>  // strlen
-#include <fmt/format.h>
-#include <limits>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#include "mongo/base/data_range.h"
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
@@ -57,10 +44,22 @@
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/platform/decimal128.h"
-#include "mongo/platform/strnlen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstring>  // strlen
+#include <limits>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <fmt/format.h>
 
 namespace mongo {
 class BSONObj;
@@ -89,6 +88,13 @@ class LegacyStrictGenerator;
 */
 class BSONElement {
 public:
+    /**
+     * Helper tag to create a BSONElement with a known field name length.
+     */
+    struct TrustedInitTag {
+        explicit constexpr TrustedInitTag() = default;
+    };
+
     // Declared in bsonobj_comparator_interface.h.
     class ComparatorInterface;
 
@@ -124,13 +130,13 @@ public:
      * std::string foo = obj["foo"].String(); // std::exception if not a std::string type or DNE
      */
     std::string String() const {
-        return chk(mongo::String).str();
+        return chk(BSONType::string).str();
     }
     StringData checkAndGetStringData() const {
-        return chk(mongo::String).valueStringData();
+        return chk(BSONType::string).valueStringData();
     }
     Date_t Date() const {
-        return chk(mongo::Date).date();
+        return chk(BSONType::date).date();
     }
     double Number() const {
         uassert(13118,
@@ -140,19 +146,19 @@ public:
         return number();
     }
     Decimal128 Decimal() const {
-        return chk(NumberDecimal)._numberDecimal();
+        return chk(BSONType::numberDecimal)._numberDecimal();
     }
     double Double() const {
-        return chk(NumberDouble)._numberDouble();
+        return chk(BSONType::numberDouble)._numberDouble();
     }
     long long Long() const {
-        return chk(NumberLong)._numberLong();
+        return chk(BSONType::numberLong)._numberLong();
     }
     int Int() const {
-        return chk(NumberInt)._numberInt();
+        return chk(BSONType::numberInt)._numberInt();
     }
     bool Bool() const {
-        return chk(mongo::Bool).boolean();
+        return chk(BSONType::boolean).boolean();
     }
 
     /**
@@ -163,7 +169,7 @@ public:
     std::vector<BSONElement> Array() const;
 
     mongo::OID OID() const {
-        return chk(jstOID).__oid();
+        return chk(BSONType::oid).__oid();
     }
 
     /**
@@ -298,7 +304,7 @@ public:
      * every BSON object.
      */
     bool eoo() const {
-        return type() == EOO;
+        return type() == BSONType::eoo;
     }
 
     /**
@@ -337,7 +343,11 @@ public:
     }
 
     StringData fieldNameStringData() const {
-        return StringData(fieldName(), eoo() ? 0 : fieldNameSize() - 1);
+        // if this dassert fails, someone passed bad arguments to the TrustedInit ctor.
+        // TODO SERVER-104738: delete this check once the 'dassert' in TrustedInitTag ctor is
+        // enabled.
+        dassert(bool(eoo()) != bool(fieldNameSize()));
+        return StringData(fieldName(), _fieldNameSize ? _fieldNameSize - 1 : 0);
     }
 
     /**
@@ -361,7 +371,7 @@ public:
     }
 
     bool isBoolean() const {
-        return type() == mongo::Bool;
+        return type() == BSONType::boolean;
     }
 
     /**
@@ -561,12 +571,12 @@ public:
      * True if element is null.
      */
     bool isNull() const {
-        return type() == jstNULL;
+        return type() == BSONType::null;
     }
 
     /**
      * Size of a BSON String element.
-     * Requires that type() == mongo::String.
+     * Requires that type() == BSONType::string.
      * @return String size including its null-termination.
      */
     int valuestrsize() const {
@@ -582,17 +592,18 @@ public:
 
     /**
      * Get a string's value. Returns a valid empty string if
-     * `type() != mongo::String`.
+     * `type() != BSONType::string`.
      */
     StringData valueStringDataSafe() const {
-        return type() == mongo::String ? StringData(valuestr(), valuestrsize() - 1) : StringData();
+        return type() == BSONType::string ? StringData(valuestr(), valuestrsize() - 1)
+                                          : StringData();
     }
 
     /**
      * Like valueStringDataSafe, but returns std::string.
      */
     std::string str() const {
-        return valueStringDataSafe().toString();
+        return std::string{valueStringDataSafe()};
     }
 
     /**
@@ -607,7 +618,7 @@ public:
      * Get javascript code of a CodeWScope data element.
      */
     const char* codeWScopeCode() const {
-        massert(16177, "not codeWScope", type() == CodeWScope);
+        massert(16177, "not codeWScope", type() == BSONType::codeWScope);
         return value() + 4 + 4;  // two ints precede code (see BSON spec)
     }
 
@@ -616,7 +627,7 @@ public:
      * This INCLUDES the null char at the end
      */
     int codeWScopeCodeLen() const {
-        massert(16178, "not codeWScope", type() == CodeWScope);
+        massert(16178, "not codeWScope", type() == BSONType::codeWScope);
         return ConstDataView(value() + 4).read<LittleEndian<int>>();
     }
 
@@ -644,7 +655,7 @@ public:
      */
     const char* binData(int& len) const {
         // BinData: <int len> <byte subtype> <byte[len] data>
-        MONGO_verify(type() == BinData);
+        MONGO_verify(type() == BSONType::binData);
         len = valuestrsize();
         return value() + 5;
     }
@@ -671,7 +682,7 @@ public:
 
     BinDataType binDataType() const {
         // BinData: <int len> <byte subtype> <byte[len] data>
-        MONGO_verify(type() == BinData);
+        MONGO_verify(type() == BSONType::binData);
         unsigned char c = (value() + 4)[0];
         return static_cast<BinDataType>(c);
     }
@@ -688,7 +699,7 @@ public:
      * Retrieve the regex std::string for a Regex element
      */
     const char* regex() const {
-        MONGO_verify(type() == RegEx);
+        MONGO_verify(type() == BSONType::regEx);
         return value();
     }
 
@@ -770,9 +781,9 @@ public:
      */
     bool mayEncapsulate() const {
         switch (type()) {
-            case Object:
-            case mongo::Array:
-            case CodeWScope:
+            case BSONType::object:
+            case BSONType::array:
+            case BSONType::codeWScope:
                 return true;
             default:
                 return false;
@@ -784,8 +795,8 @@ public:
      */
     bool isABSONObj() const {
         switch (type()) {
-            case Object:
-            case mongo::Array:
+            case BSONType::object:
+            case BSONType::array:
                 return true;
             default:
                 return false;
@@ -800,14 +811,14 @@ public:
      * is possible.
      */
     Timestamp timestamp() const {
-        if (type() == mongo::Date || type() == bsonTimestamp) {
+        if (type() == BSONType::date || type() == BSONType::timestamp) {
             return Timestamp(ConstDataView(value()).read<LittleEndian<unsigned long long>>().value);
         }
         return Timestamp();
     }
 
     bool isBinData(BinDataType bdt) const {
-        return (type() == BinData) && (binDataType() == bdt);
+        return (type() == BSONType::binData) && (binDataType() == bdt);
     }
 
     std::array<unsigned char, 16> uuid() const {
@@ -850,12 +861,12 @@ public:
     }
 
     const char* dbrefNS() const {
-        uassert(10063, "not a dbref", type() == DBRef);
+        uassert(10063, "not a dbref", type() == BSONType::dbRef);
         return value() + 4;
     }
 
     mongo::OID dbrefOID() const {
-        uassert(10064, "not a dbref", type() == DBRef);
+        uassert(10064, "not a dbref", type() == BSONType::dbRef);
         const char* start = value();
         start += 4 + ConstDataView(start).read<LittleEndian<int>>();
         return mongo::OID::from(start);
@@ -874,11 +885,15 @@ public:
 
     /**
      * Construct a BSONElement where you already know the length of the name.
-     * The fieldNameSize includes the null terminator.
+     * The fieldNameSize must match 'BSONElement(d).fieldNameSize()'. In particular,
+     * - it includes the NUL terminator
+     * - 'fieldNameSize == 0' iff *d == EOO
      */
-    struct TrustedInitTag {};
     constexpr BSONElement(const char* d, int fieldNameSize, TrustedInitTag)
-        : _data(d), _fieldNameSize(fieldNameSize) {}
+        : _data(d), _fieldNameSize(fieldNameSize) {
+        // TODO SERVER-104738: enable validation here once all callers have been adjusted/fixed.
+        // dassert(bool(eoo()) != bool(fieldNameSize()));
+    }
 
     std::string _asCode() const;
 
@@ -972,9 +987,13 @@ private:
      * bit test.
      */
     static constexpr uint32_t kVariableSizeMask =  // equal to 0xf03cu (61500)
-        (1u << mongo::String) | (1u << mongo::Object) | (1u << mongo::Array) |
-        (1u << mongo::BinData) | (1u << mongo::DBRef) | (1u << mongo::Code) |
-        (1u << mongo::Symbol) | (1u << mongo::CodeWScope);
+        (1u << stdx::to_underlying(BSONType::string)) |
+        (1u << stdx::to_underlying(BSONType::object)) |
+        (1u << stdx::to_underlying(BSONType::array)) |
+        (1u << stdx::to_underlying(BSONType::binData)) |
+        (1u << stdx::to_underlying(BSONType::dbRef)) | (1u << stdx::to_underlying(BSONType::code)) |
+        (1u << stdx::to_underlying(BSONType::symbol)) |
+        (1u << stdx::to_underlying(BSONType::codeWScope));
 
     /**
      * This is an out-of-line helper only for use as the slow path of valuesize()!
@@ -1009,7 +1028,7 @@ private:
      * valueStringDataSafe(). You should use the string's size when performing any operations
      * on the data to disambiguate between potential embedded null's and the terminating null.
      * This function is only used in limited forms internally. Not to be exposed publicly.
-     * If a char* is desired use valueStringDataSafe().rawData().
+     * If a char* is desired use valueStringDataSafe().data().
      */
     const char* valuestr() const {
         return value() + 4;
@@ -1045,19 +1064,19 @@ private:
 inline bool BSONElement::trueValue() const {
     // NOTE Behavior changes must be replicated in Value::coerceToBool().
     switch (type()) {
-        case NumberLong:
+        case BSONType::numberLong:
             return _numberLong() != 0;
-        case NumberDouble:
+        case BSONType::numberDouble:
             return _numberDouble() != 0;
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return _numberDecimal().isNotEqual(Decimal128(0));
-        case NumberInt:
+        case BSONType::numberInt:
             return _numberInt() != 0;
-        case mongo::Bool:
+        case BSONType::boolean:
             return boolean();
-        case EOO:
-        case jstNULL:
-        case Undefined:
+        case BSONType::eoo:
+        case BSONType::null:
+        case BSONType::undefined:
             return false;
         default:
             return true;
@@ -1069,10 +1088,10 @@ inline bool BSONElement::trueValue() const {
  */
 inline bool BSONElement::isNumber() const {
     switch (type()) {
-        case NumberLong:
-        case NumberDouble:
-        case NumberDecimal:
-        case NumberInt:
+        case BSONType::numberLong:
+        case BSONType::numberDouble:
+        case BSONType::numberDecimal:
+        case BSONType::numberInt:
             return true;
         default:
             return false;
@@ -1081,11 +1100,11 @@ inline bool BSONElement::isNumber() const {
 
 inline bool BSONElement::isNaN() const {
     switch (type()) {
-        case NumberDouble: {
+        case BSONType::numberDouble: {
             double d = _numberDouble();
             return std::isnan(d);
         }
-        case NumberDecimal: {
+        case BSONType::numberDecimal: {
             Decimal128 d = _numberDecimal();
             return d.isNaN();
         }
@@ -1096,13 +1115,13 @@ inline bool BSONElement::isNaN() const {
 
 inline Decimal128 BSONElement::numberDecimal() const {
     switch (type()) {
-        case NumberDouble:
+        case BSONType::numberDouble:
             return Decimal128(_numberDouble());
-        case NumberInt:
+        case BSONType::numberInt:
             return Decimal128(_numberInt());
-        case NumberLong:
+        case BSONType::numberLong:
             return Decimal128(static_cast<int64_t>(_numberLong()));
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return _numberDecimal();
         default:
             return Decimal128::kNormalizedZero;
@@ -1111,13 +1130,13 @@ inline Decimal128 BSONElement::numberDecimal() const {
 
 inline double BSONElement::numberDouble() const {
     switch (type()) {
-        case NumberDouble:
+        case BSONType::numberDouble:
             return _numberDouble();
-        case NumberInt:
+        case BSONType::numberInt:
             return _numberInt();
-        case NumberLong:
+        case BSONType::numberLong:
             return _numberLong();
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return _numberDecimal().toDouble();
         default:
             return 0;
@@ -1126,17 +1145,17 @@ inline double BSONElement::numberDouble() const {
 
 inline double BSONElement::safeNumberDouble() const {
     switch (type()) {
-        case NumberDouble: {
+        case BSONType::numberDouble: {
             double d = _numberDouble();
             if (std::isnan(d)) {
                 return 0;
             }
             return d;
         }
-        case NumberInt: {
+        case BSONType::numberInt: {
             return _numberInt();
         }
-        case NumberLong: {
+        case BSONType::numberLong: {
             long long d = _numberLong();
             if (d > 0 && d > kLargestSafeLongLongAsDouble) {
                 return static_cast<double>(kLargestSafeLongLongAsDouble);
@@ -1146,7 +1165,7 @@ inline double BSONElement::safeNumberDouble() const {
             }
             return d;
         }
-        case NumberDecimal: {
+        case BSONType::numberDecimal: {
             Decimal128 d = _numberDecimal();
             if (d.isNaN()) {
                 return 0;
@@ -1166,13 +1185,13 @@ inline double BSONElement::safeNumberDouble() const {
 
 inline int BSONElement::numberInt() const {
     switch (type()) {
-        case NumberDouble:
+        case BSONType::numberDouble:
             return (int)_numberDouble();
-        case NumberInt:
+        case BSONType::numberInt:
             return _numberInt();
-        case NumberLong:
+        case BSONType::numberLong:
             return (int)_numberLong();
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return _numberDecimal().toInt();
         default:
             return 0;
@@ -1186,13 +1205,13 @@ inline int BSONElement::safeNumberInt() const {
 
 inline long long BSONElement::numberLong() const {
     switch (type()) {
-        case NumberDouble:
+        case BSONType::numberDouble:
             return (long long)_numberDouble();
-        case NumberInt:
+        case BSONType::numberInt:
             return _numberInt();
-        case NumberLong:
+        case BSONType::numberLong:
             return _numberLong();
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return _numberDecimal().toLong();
         default:
             return 0;
@@ -1208,7 +1227,7 @@ inline long long BSONElement::numberLong() const {
  */
 inline long long BSONElement::safeNumberLong() const {
     switch (type()) {
-        case NumberDouble: {
+        case BSONType::numberDouble: {
             double d = numberDouble();
             if (std::isnan(d)) {
                 return 0;
@@ -1221,7 +1240,7 @@ inline long long BSONElement::safeNumberLong() const {
             }
             return numberLong();
         }
-        case NumberDecimal: {
+        case BSONType::numberDecimal: {
             Decimal128 d = numberDecimal();
             if (d.isNaN()) {
                 return 0;
@@ -1249,7 +1268,7 @@ template <typename T>
 Status BSONElement::tryCoerce(T* out) const {
     if constexpr (std::is_integral<T>::value && !std::is_same<bool, T>::value) {
         long long val;
-        if (type() == NumberDouble) {
+        if (type() == BSONType::numberDouble) {
             double d = numberDouble();
             if (!std::isfinite(d)) {
                 return {ErrorCodes::BadValue, "Unable to coerce NaN/Inf to integral type"};
@@ -1262,7 +1281,7 @@ Status BSONElement::tryCoerce(T* out) const {
                 return {ErrorCodes::BadValue, "Out of bounds coercing to integral value"};
             }
             val = static_cast<long long>(d);
-        } else if (type() == NumberDecimal) {
+        } else if (type() == BSONType::numberDecimal) {
             Decimal128 d = numberDecimal();
             if (!d.isFinite()) {
                 return {ErrorCodes::BadValue, "Unable to coerce NaN/Inf to integral type"};
@@ -1277,7 +1296,7 @@ Status BSONElement::tryCoerce(T* out) const {
             tassert(5732103,
                     "decimal128 number exact conversion to long failed",
                     Decimal128::SignalingFlag::kNoFlag == signalingFlags);
-        } else if (type() == mongo::Bool) {
+        } else if (type() == BSONType::boolean) {
             *out = Bool();
             return Status::OK();
         } else if (!coerce(&val)) {
@@ -1320,7 +1339,8 @@ Status BSONElement::tryCoerce(T* out) const {
 inline long long BSONElement::safeNumberLongForHash() const {
     // Rather than relying on the undefined overflow conversion, we maintain compatibility by
     // explicitly checking for a 2^63 double value and returning -2^63.
-    if (NumberDouble == type() && numberDouble() == BSONElement::kLongLongMaxPlusOneAsDouble) {
+    if (type() == BSONType::numberDouble &&
+        numberDouble() == BSONElement::kLongLongMaxPlusOneAsDouble) {
         return std::numeric_limits<long long>::lowest();
     } else {
         return safeNumberLong();

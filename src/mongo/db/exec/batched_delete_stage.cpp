@@ -28,13 +28,7 @@
  */
 
 
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/exec/batched_delete_stage.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -45,8 +39,6 @@
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
 #include "mongo/db/commands/server_status.h"
-#include "mongo/db/concurrency/exception_util.h"
-#include "mongo/db/exec/batched_delete_stage.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/plan_stage.h"
 #include "mongo/db/exec/working_set.h"
@@ -57,6 +49,7 @@
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/plan_executor_impl.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/db/storage/write_unit_of_work.h"
@@ -69,6 +62,14 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -155,8 +156,7 @@ BatchedDeleteStage::BatchedDeleteStage(
     WorkingSet* ws,
     CollectionAcquisition collection,
     PlanStage* child)
-    : DeleteStage::DeleteStage(
-          kStageType.rawData(), expCtx, std::move(params), ws, collection, child),
+    : DeleteStage::DeleteStage(kStageType.data(), expCtx, std::move(params), ws, collection, child),
       _batchedDeleteParams(std::move(batchedDeleteParams)),
       _stagedDeletesBuffer(ws),
       _stagedDeletesWatermarkBytes(0),
@@ -167,14 +167,8 @@ BatchedDeleteStage::BatchedDeleteStage(
     tassert(6303800,
             "batched deletions only support multi-document deletions (multi: true)",
             _params->isMulti);
-    tassert(6303802,
-            "batched deletions do not support the 'returnDelete' parameter",
-            !_params->returnDeleted);
     tassert(
         6303803, "batched deletions do not support the 'sort' parameter", _params->sort.isEmpty());
-    tassert(6303804,
-            "batched deletions do not support the 'removeSaver' parameter",
-            _params->sort.isEmpty());
     tassert(6303805,
             "batched deletions do not support the 'numStatsForDoc' parameter",
             !_params->numStatsForDoc);
@@ -407,15 +401,18 @@ long long BatchedDeleteStage::_commitBatch(WorkingSetID* out,
         tassert(
             6515700, "Expected document to have an _id field present", bsonObjDoc.hasField("_id"));
         applyOpsBytes += bsonObjDoc.getField("_id").size();
-        if (applyOpsBytes > BSONObjMaxUserSize) {
+        if (applyOpsBytes > BSONObjMaxUserSize && ((*bufferOffset) > 0)) {
             // There's no room to fit this deletion in the current batch, as doing so
             // would exceed 16MB of oplog entry: put this deletion back into the staging
-            // buffer and commit the batch.
-            invariant(*bufferOffset > 0);
+            // buffer and commit the batch. Very large _id fields may exceed this threshold. In that
+            // case, put them in their own batch.
             (*bufferOffset)--;
             wuow.commit();
             return batchTimer.millis();
         }
+        tassert(10118000,
+                "batch size may only exceed BSON cap for single, large documents",
+                applyOpsBytes <= BSONObjMaxUserSize || ((*bufferOffset) == 0));
 
         collection_internal::deleteDocument(
             opCtx(),

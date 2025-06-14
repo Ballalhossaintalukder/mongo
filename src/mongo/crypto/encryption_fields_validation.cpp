@@ -29,8 +29,6 @@
 
 #include "encryption_fields_validation.h"
 
-#include <fmt/format.h>
-
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -41,12 +39,8 @@
 #include <absl/container/node_hash_map.h>
 #include <boost/container/small_vector.hpp>
 #include <boost/cstdint.hpp>
-// IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/multiprecision/cpp_int.hpp>
-#include <boost/optional/optional.hpp>
 #include <fmt/format.h>
-
+// IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/crypto/encryption_fields_gen.h"
@@ -57,11 +51,18 @@
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 
+#include <boost/move/utility_core.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
+MONGO_FAIL_POINT_DEFINE(allowOutOfBoundsSubstringParameters);
 
 Value coerceValueToRangeIndexTypes(Value val, BSONType fieldType) {
     BSONType valType = val.getType();
@@ -69,7 +70,7 @@ Value coerceValueToRangeIndexTypes(Value val, BSONType fieldType) {
     if (valType == fieldType)
         return val;
 
-    if (valType == Date || fieldType == Date) {
+    if (valType == BSONType::date || fieldType == BSONType::date) {
         uassert(6720002,
                 "If the value type is a date, the type of the index must also be date (and vice "
                 "versa). ",
@@ -84,8 +85,8 @@ Value coerceValueToRangeIndexTypes(Value val, BSONType fieldType) {
 
     // If we get to this point, we've already established that valType and fieldType are NOT the
     // same type, so if either of them is a double or a decimal we can't coerce.
-    if (valType == NumberDecimal || valType == NumberDouble || fieldType == NumberDecimal ||
-        fieldType == NumberDouble) {
+    if (valType == BSONType::numberDecimal || valType == BSONType::numberDouble ||
+        fieldType == BSONType::numberDecimal || fieldType == BSONType::numberDouble) {
         uasserted(
             6742002,
             str::stream() << "If the value type and the field type are not the same type and one "
@@ -94,9 +95,9 @@ Value coerceValueToRangeIndexTypes(Value val, BSONType fieldType) {
     }
 
     switch (fieldType) {
-        case NumberInt:
+        case BSONType::numberInt:
             return Value(val.coerceToInt());
-        case NumberLong:
+        case BSONType::numberLong:
             return Value(val.coerceToLong());
         default:
             MONGO_UNREACHABLE;
@@ -169,19 +170,19 @@ uint32_t getNumberOfBitsInDomain(const boost::optional<Decimal128>& min,
 
 std::pair<mongo::Value, mongo::Value> getRangeMinMaxDefaults(BSONType fieldType) {
     switch (fieldType) {
-        case NumberDouble:
+        case BSONType::numberDouble:
             return {mongo::Value(std::numeric_limits<double>::lowest()),
                     mongo::Value(std::numeric_limits<double>::max())};
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return {mongo::Value(Decimal128::kLargestNegative),
                     mongo::Value(Decimal128::kLargestPositive)};
-        case NumberInt:
+        case BSONType::numberInt:
             return {mongo::Value(std::numeric_limits<int>::min()),
                     mongo::Value(std::numeric_limits<int>::max())};
-        case NumberLong:
+        case BSONType::numberLong:
             return {mongo::Value(std::numeric_limits<long long>::min()),
                     mongo::Value(std::numeric_limits<long long>::max())};
-        case Date:
+        case BSONType::date:
             return {mongo::Value(Date_t::min()), mongo::Value(Date_t::max())};
         default:
             uasserted(7018202, "Range index only supports numeric types and the Date type.");
@@ -277,17 +278,18 @@ uint32_t getNumberOfBitsInDomain(BSONType fieldType,
                                  const boost::optional<uint32_t>& precision) {
     uassert(8574112,
             "Precision may only be set when type is double or decimal",
-            !precision || fieldType == NumberDouble || fieldType == NumberDecimal);
+            !precision || fieldType == BSONType::numberDouble ||
+                fieldType == BSONType::numberDecimal);
     switch (fieldType) {
-        case NumberInt:
+        case BSONType::numberInt:
             return getNumberOfBitsInDomain(min.map(bsonToInt), max.map(bsonToInt));
-        case NumberLong:
+        case BSONType::numberLong:
             return getNumberOfBitsInDomain(min.map(bsonToLong), max.map(bsonToLong));
-        case Date:
+        case BSONType::date:
             return getNumberOfBitsInDomain(min.map(bsonToDateToLong), max.map(bsonToDateToLong));
-        case NumberDouble:
+        case BSONType::numberDouble:
             return getNumberOfBitsInDomain(min.map(bsonToDouble), max.map(bsonToDouble), precision);
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return getNumberOfBitsInDomain(
                 min.map(bsonToDecimal), max.map(bsonToDecimal), precision);
         default:
@@ -303,17 +305,18 @@ uint32_t getNumberOfBitsInDomain(BSONType fieldType,
                                  const boost::optional<uint32_t>& precision) {
     uassert(8574113,
             "Precision may only be set when type is double or decimal",
-            !precision || fieldType == NumberDouble || fieldType == NumberDecimal);
+            !precision || fieldType == BSONType::numberDouble ||
+                fieldType == BSONType::numberDecimal);
     switch (fieldType) {
-        case NumberInt:
+        case BSONType::numberInt:
             return getNumberOfBitsInDomain(min.map(valToInt), max.map(valToInt));
-        case NumberLong:
+        case BSONType::numberLong:
             return getNumberOfBitsInDomain(min.map(valToLong), max.map(valToLong));
-        case Date:
+        case BSONType::date:
             return getNumberOfBitsInDomain(min.map(valToDateToLong), max.map(valToDateToLong));
-        case NumberDouble:
+        case BSONType::numberDouble:
             return getNumberOfBitsInDomain(min.map(valToDouble), max.map(valToDouble), precision);
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return getNumberOfBitsInDomain(min.map(valToDecimal), max.map(valToDecimal), precision);
         default:
             uasserted(8574114,
@@ -355,7 +358,7 @@ void validateRangeIndex(BSONType fieldType, StringData fieldPath, QueryTypeConfi
                 Value::compare(*indexMin, *indexMax, nullptr) < 0);
     }
 
-    if (fieldType == NumberDouble || fieldType == NumberDecimal) {
+    if (fieldType == BSONType::numberDouble || fieldType == BSONType::numberDecimal) {
         if (!((indexMin.has_value() == indexMax.has_value()) &&
               (indexMin.has_value() == query.getPrecision().has_value()))) {
             uasserted(6967100,
@@ -364,7 +367,7 @@ void validateRangeIndex(BSONType fieldType, StringData fieldPath, QueryTypeConfi
         }
         if (query.getPrecision().has_value()) {
             uint32_t precision = query.getPrecision().value();
-            if (fieldType == NumberDouble) {
+            if (fieldType == BSONType::numberDouble) {
                 auto min = query.getMin()->coerceToDouble();
                 uassert(6966805,
                         fmt::format("The number of decimal digits for minimum value of field '{}' "
@@ -443,7 +446,7 @@ void validateTextSearchIndex(BSONType fieldType,
         fmt::format("Type '{}' is not a supported type for text search indexed encrypted field {}",
                     typeName(fieldType),
                     fieldPath),
-        fieldType == BSONType::String);
+        fieldType == BSONType::string);
     auto qTypeStr = QueryType_serializer(query.getQueryType());
 
     uassert(9783401,
@@ -483,6 +486,35 @@ void validateTextSearchIndex(BSONType fieldType,
         uassert(9783408,
                 "strMaxQueryLength cannot be greater than strMaxLength",
                 query.getStrMaxQueryLength().value() <= query.getStrMaxLength().value());
+
+        // Substring specifically strictly bounds strMinQueryLength to >= 2, strMaxQueryLength to <=
+        // 10, and strMaxLength to <= 400.
+        uassert(10453200,
+                fmt::format("strMinQueryLength ({}) must be >= 2 and <= strMaxQueryLength ({}) for "
+                            "{} query type of field {}",
+                            query.getStrMinQueryLength().value(),
+                            query.getStrMaxQueryLength().value(),
+                            qTypeStr,
+                            fieldPath),
+                MONGO_unlikely(allowOutOfBoundsSubstringParameters.shouldFail()) ||
+                    query.getStrMinQueryLength().value() >= 2);
+        uassert(10453201,
+                fmt::format("strMaxQueryLength ({}) must be <= 10 and >= strMinQueryLength ({}) "
+                            "for {} query type of field {}",
+                            query.getStrMaxQueryLength().value(),
+                            query.getStrMinQueryLength().value(),
+                            qTypeStr,
+                            fieldPath),
+                MONGO_unlikely(allowOutOfBoundsSubstringParameters.shouldFail()) ||
+                    query.getStrMaxQueryLength().value() <= 10);
+        uassert(10453202,
+                fmt::format("strMaxLength ({}) must be <= 400 "
+                            "{} query type of field {}",
+                            query.getStrMaxLength().value(),
+                            qTypeStr,
+                            fieldPath),
+                MONGO_unlikely(allowOutOfBoundsSubstringParameters.shouldFail()) ||
+                    query.getStrMaxLength().value() <= 400);
     }
 
     if (previousCaseSensitivity.has_value() &&
@@ -689,19 +721,19 @@ void validateRangeBounds(BSONType fieldType,
                          uint32_t trimFactor,
                          const boost::optional<uint32_t>& precision) {
     switch (fieldType) {
-        case NumberInt:
+        case BSONType::numberInt:
             return validateRangeBoundsInt32(
                 min.map(valToInt), max.map(valToInt), sparsity, trimFactor);
-        case NumberLong:
+        case BSONType::numberLong:
             return validateRangeBoundsInt64(
                 min.map(valToLong), max.map(valToLong), sparsity, trimFactor);
-        case Date:
+        case BSONType::date:
             return validateRangeBoundsInt64(
                 min.map(valToDateToLong), max.map(valToDateToLong), sparsity, trimFactor);
-        case NumberDouble:
+        case BSONType::numberDouble:
             return validateRangeBoundsDouble(
                 min.map(valToDouble), max.map(valToDouble), sparsity, trimFactor, precision);
-        case NumberDecimal:
+        case BSONType::numberDecimal:
             return validateRangeBoundsDecimal128(
                 min.map(valToDecimal), max.map(valToDecimal), sparsity, trimFactor, precision);
         default:

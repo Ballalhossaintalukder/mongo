@@ -47,7 +47,7 @@ void BinaryCompatibleFeatureFlag::appendFlagValueAndMetadata(BSONObjBuilder& fla
                            FeatureCompatibilityVersionParser::serializeVersionForFeatureFlags(
                                multiversion::GenericFCV::kLatest));
     }
-    flagBuilder.append("shouldBeFCVGated", false);
+    flagBuilder.append("fcv_gated", false);
 
     if (serverGlobalParams.featureCompatibility.acquireFCVSnapshot().isVersionInitialized()) {
         flagBuilder.append("currentlyEnabled", _enabled);
@@ -120,7 +120,7 @@ bool FCVGatedFeatureFlag::isEnabledUseLatestFCVWhenUninitialized(
 // isEnabled() is prefered over this function since it will prevent upgrade/downgrade issues,
 // or use isEnabledUseLatestFCVWhenUninitialized if your feature flag could be run while FCV
 // is uninitialized during initial sync.
-// Note that if the feature flag does not have any upgrade/downgrade concerns, then shouldBeFCVGated
+// Note that if the feature flag does not have any upgrade/downgrade concerns, then fcv_gated
 // should be set to false and BinaryCompatibleFeatureFlag should be used instead of this function.
 bool FCVGatedFeatureFlag::isEnabledAndIgnoreFCVUnsafe() const {
     return _enabled;
@@ -176,7 +176,7 @@ void FCVGatedFeatureFlag::appendFlagValueAndMetadata(BSONObjBuilder& flagBuilder
             "version",
             FeatureCompatibilityVersionParser::serializeVersionForFeatureFlags(_version));
     }
-    flagBuilder.append("shouldBeFCVGated", true);
+    flagBuilder.append("fcv_gated", true);
 
     auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
     if (fcvSnapshot.isVersionInitialized()) {
@@ -238,7 +238,7 @@ void IncrementalRolloutFeatureFlag::appendFlagValueAndMetadata(BSONObjBuilder& f
                            FeatureCompatibilityVersionParser::serializeVersionForFeatureFlags(
                                multiversion::GenericFCV::kLatest));
     }
-    flagBuilder.append("shouldBeFCVGated", false);
+    flagBuilder.append("fcv_gated", false);
 
     if (serverGlobalParams.featureCompatibility.acquireFCVSnapshot().isVersionInitialized()) {
         flagBuilder.append("currentlyEnabled", enabled);
@@ -260,6 +260,12 @@ void IncrementalRolloutFeatureFlag::appendFlagDetails(BSONObjBuilder& detailsBui
     detailsBuilder.append("incrementalFeatureRolloutPhase", phaseName);
 }
 
+bool IncrementalRolloutFeatureFlag::checkWithContext(const VersionContext& vCtx,
+                                                     IncrementalFeatureRolloutContext& ifrContext,
+                                                     ServerGlobalParams::FCVSnapshot fcv) {
+    return ifrContext.getSavedFlagValue(*this);
+}
+
 void IncrementalRolloutFeatureFlag::setForServerParameter(bool value) {
     auto previousValue = _value.swap(value);
 
@@ -270,5 +276,23 @@ void IncrementalRolloutFeatureFlag::setForServerParameter(bool value) {
 
 void IncrementalRolloutFeatureFlag::registerFlag(IncrementalRolloutFeatureFlag* flag) {
     getMutableAllIncrementalRolloutFeatureFlags().push_back(flag);
+}
+
+bool IncrementalFeatureRolloutContext::getSavedFlagValue(IncrementalRolloutFeatureFlag& flag) {
+    if (auto flagIt = _savedFlagValues.find(&flag); flagIt != _savedFlagValues.end()) {
+        return flagIt->second;
+    } else {
+        bool value = flag.checkEnabled();
+        _savedFlagValues.emplace(&flag, value);
+        return value;
+    }
+}
+
+void IncrementalFeatureRolloutContext::appendSavedFlagValues(BSONArrayBuilder& builder) const {
+    for (auto&& [flag, savedValue] : _savedFlagValues) {
+        BSONObjBuilder flagBuilder(builder.subobjStart());
+        flagBuilder.append("name", flag->getName());
+        flagBuilder.appendBool("value", savedValue);
+    }
 }
 }  // namespace mongo

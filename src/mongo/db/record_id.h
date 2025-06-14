@@ -29,24 +29,6 @@
 
 #pragma once
 
-#include <array>
-#include <boost/container_hash/extensions.hpp>
-#include <boost/functional/hash.hpp>
-#include <boost/optional.hpp>
-#include <climits>
-#include <compare>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <fmt/format.h>
-#include <limits>
-#include <new>
-#include <ostream>
-#include <span>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -60,6 +42,24 @@
 #include "mongo/util/bufreader.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/shared_buffer.h"
+
+#include <array>
+#include <climits>
+#include <compare>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <new>
+#include <ostream>
+#include <span>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <boost/functional/hash.hpp>
+#include <boost/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -196,11 +196,11 @@ public:
                 return onLong(_getLongNoCheck());
             case Format::kSmallStr: {
                 auto str = _getSmallStrNoCheck();
-                return onStr(str.rawData(), str.size());
+                return onStr(str.data(), str.size());
             }
             case Format::kBigStr: {
                 auto str = _getBigStrNoCheck();
-                return onStr(str.rawData(), str.size());
+                return onStr(str.data(), str.size());
             }
             default:
                 MONGO_UNREACHABLE;
@@ -364,12 +364,12 @@ public:
             case Format::kSmallStr: {
                 StringData str = _getSmallStrNoCheck();
                 return "kSmallStr size: " + std::to_string(str.size()) + " string: '" +
-                    std::string(str.rawData()) + "'";
+                    std::string(str.data()) + "'";
             }
             case Format::kBigStr: {
                 StringData str = _getBigStrNoCheck();
                 return "kBigStr size: " + std::to_string(str.size()) + " string: '" +
-                    std::string(str.rawData()) + "'";
+                    std::string(str.data()) + "'";
             }
             default:
                 MONGO_UNREACHABLE;
@@ -431,7 +431,7 @@ public:
             return RecordId();
         } else if (elem.isNumber()) {
             return RecordId(elem.numberLong());
-        } else if (elem.type() == BSONType::BinData) {
+        } else if (elem.type() == BSONType::binData) {
             int size;
             auto str = elem.binData(size);
             return RecordId(std::span(str, size));

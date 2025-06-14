@@ -28,14 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <list>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/initial_sync/collection_cloner.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -52,7 +45,6 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/find_command.h"
 #include "mongo/db/repl/collection_bulk_loader.h"
-#include "mongo/db/repl/initial_sync/collection_cloner.h"
 #include "mongo/db/repl/oplog_entry.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/repl/repl_server_parameters_gen.h"
@@ -71,6 +63,15 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <list>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplicationInitialSync
 
@@ -224,7 +225,7 @@ BaseCloner::AfterStageBehavior CollectionCloner::CollectionClonerStage::run() {
 
 BaseCloner::AfterStageBehavior CollectionCloner::collStatsStage() {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
-    BSONObjBuilder b(BSON("collStats" << _sourceNss.coll().toString()));
+    BSONObjBuilder b(BSON("collStats" << _sourceNss.coll()));
 
     BSONObj res;
     getClient()->runCommand(_sourceNss.dbName(), b.obj(), res);
@@ -360,7 +361,7 @@ BaseCloner::AfterStageBehavior CollectionCloner::setupIndexBuildersForUnfinished
         std::vector<BSONObj> indexSpecs;
         for (const auto& indexSpec : groupedIndexSpec.second) {
             std::string indexName =
-                indexSpec.getStringField(IndexDescriptor::kIndexNameFieldName).toString();
+                std::string{indexSpec.getStringField(IndexDescriptor::kIndexNameFieldName)};
             indexNames.push_back(indexName);
             indexSpecs.push_back(indexSpec.getOwned());
         }
@@ -531,7 +532,7 @@ void CollectionCloner::insertDocumentsCallback(const executor::TaskExecutor::Cal
             : ([](const BSONObj& doc) { return std::make_pair(RecordId(0), doc); });
         // The insert must be done within the lock, because CollectionBulkLoader is not
         // thread safe.
-        uassertStatusOK(_collLoader->insertDocuments(docs.cbegin(), docs.cend(), fn));
+        uassertStatusOK(_collLoader->insertDocuments(docs, fn));
     }
 
     initialSyncHangDuringCollectionClone.executeIf(

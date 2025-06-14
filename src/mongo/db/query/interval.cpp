@@ -29,12 +29,11 @@
 
 #include "mongo/db/query/interval.h"
 
-#include <utility>
-
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/debug_util.h"
+
+#include <utility>
 
 namespace mongo {
 
@@ -180,11 +179,11 @@ bool Interval::precedes(const Interval& other) const {
 }
 
 bool Interval::isMinToMax() const {
-    return (start.type() == BSONType::MinKey && end.type() == BSONType::MaxKey);
+    return (start.type() == BSONType::minKey && end.type() == BSONType::maxKey);
 }
 
 bool Interval::isMaxToMin() const {
-    return (start.type() == BSONType::MaxKey && end.type() == BSONType::MinKey);
+    return (start.type() == BSONType::maxKey && end.type() == BSONType::minKey);
 }
 
 bool Interval::isFullyOpen() const {

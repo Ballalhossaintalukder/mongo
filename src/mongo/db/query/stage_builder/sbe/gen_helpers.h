@@ -34,17 +34,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <limits>
-#include <memory>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,6 +44,7 @@
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/projection_ast.h"
+#include "mongo/db/query/sort_pattern.h"
 #include "mongo/db/query/stage_builder/sbe/abt/comparison_op.h"
 #include "mongo/db/query/stage_builder/sbe/builder_state.h"
 #include "mongo/db/query/stage_builder/sbe/sbexpr.h"
@@ -64,6 +54,17 @@
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <limits>
+#include <memory>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace mongo::projection_ast {
 class Projection;
@@ -341,7 +342,7 @@ SbExpr rehydrateIndexKey(StageBuilderState& state,
 template <typename T>
 inline const char* getRawStringData(const T& str) {
     if constexpr (std::is_same_v<T, StringData>) {
-        return str.rawData();
+        return str.data();
     } else {
         return str.data();
     }
@@ -725,6 +726,7 @@ public:
 
     static std::vector<Type> getNodeTypes(const std::vector<ProjectNode>& nodes) {
         std::vector<Type> nodeTypes;
+        nodeTypes.reserve(nodes.size());
         for (const auto& node : nodes) {
             nodeTypes.emplace_back(node.type());
         }
@@ -853,7 +855,7 @@ inline std::vector<std::string> getTopLevelFields(const std::vector<std::string>
 
         auto [_, inserted] = topLevelFieldsSet.insert(field);
         if (inserted) {
-            topLevelFields.emplace_back(field.toString());
+            topLevelFields.emplace_back(std::string{field});
         }
     }
 

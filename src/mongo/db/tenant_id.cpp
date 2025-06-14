@@ -29,8 +29,6 @@
 
 #include "mongo/db/tenant_id.h"
 
-#include <fmt/format.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -38,6 +36,8 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/oid.h"
 #include "mongo/util/assert_util.h"
+
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -59,7 +59,7 @@ TenantId TenantId::parseFromBSON(const BSONElement& elem) {
     }
 
     // Expect objectid in the element for tenant.
-    if (elem.type() != BSONType::jstOID) {
+    if (elem.type() != BSONType::oid) {
         uasserted(ErrorCodes::BadValue,
                   fmt::format("Could not deserialize TenantId with type {}", elem.type()));
     }

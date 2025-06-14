@@ -32,18 +32,12 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <compare>
-#include <iterator>
-#include <mutex>
-#include <set>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/hasher.h"
 #include "mongo/db/pipeline/document_source_exchange.h"
 #include "mongo/db/storage/key_string/key_string.h"
@@ -51,6 +45,13 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <compare>
+#include <iterator>
+#include <mutex>
+#include <set>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -104,7 +105,7 @@ constexpr size_t Exchange::kMaxBufferSize;
 constexpr size_t Exchange::kMaxNumberConsumers;
 
 const char* DocumentSourceExchange::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Value DocumentSourceExchange::serialize(const SerializationOptions& opts) const {
@@ -117,6 +118,7 @@ DocumentSourceExchange::DocumentSourceExchange(
     size_t consumerId,
     std::unique_ptr<ResourceYielder> yielder)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _exchange(exchange),
       _consumerId(consumerId),
       _resourceYielder(std::move(yielder)) {}
@@ -158,9 +160,8 @@ Exchange::Exchange(ExchangeSpec spec, std::unique_ptr<Pipeline, PipelineDeleter>
         uassert(50899, "Exchange boundaries must not be specified.", _boundaries.empty());
     }
 
-    // We will manually detach and reattach when iterating '_pipeline', we expect it to start in the
-    // detached state.
-    _pipeline->detachFromOperationContext();
+    _execPipeline = exec::agg::buildPipeline(_pipeline->getSources(), _pipeline->getContext());
+    _execPipeline->detachFromOperationContext();
 }
 
 std::vector<std::string> Exchange::extractBoundaries(
@@ -242,7 +243,7 @@ Ordering Exchange::extractOrdering(const BSONObj& keyPattern) {
     bool hasOrderKey = false;
 
     for (const auto& element : keyPattern) {
-        if (element.type() == BSONType::String) {
+        if (element.type() == BSONType::string) {
             uassert(50895,
                     str::stream() << "Exchange key description is invalid: " << element,
                     element.valueStringData() == "hashed"_sd);
@@ -315,7 +316,7 @@ DocumentSource::GetNextResult Exchange::getNext(OperationContext* opCtx,
                 // This consumer won the race and will fill the buffers.
                 _loadingThreadId = consumerId;
 
-                _pipeline->reattachToOperationContext(opCtx);
+                _execPipeline->reattachToOperationContext(opCtx);
 
                 // This will return when some exchange buffer is full and we cannot make any forward
                 // progress anymore.
@@ -328,7 +329,7 @@ DocumentSource::GetNextResult Exchange::getNext(OperationContext* opCtx,
                               "Asserting on loading the next batch due to failpoint.");
                 }
 
-                _pipeline->detachFromOperationContext();
+                _execPipeline->detachFromOperationContext();
 
                 // The loading cannot continue until the consumer with the full buffer consumes some
                 // documents.
@@ -356,9 +357,9 @@ DocumentSource::GetNextResult Exchange::getNext(OperationContext* opCtx,
 }
 
 size_t Exchange::loadNextBatch() {
-    auto input = _pipeline->getSources().back()->getNext();
+    auto input = _execPipeline->getNextResult();
 
-    for (; input.isAdvanced(); input = _pipeline->getSources().back()->getNext()) {
+    for (; input.isAdvanced(); input = _execPipeline->getNextResult()) {
         // We have a document and we will deliver it to a consumer(s) based on the policy.
         switch (_policy) {
             case ExchangePolicyEnum::kBroadcast: {
@@ -418,7 +419,7 @@ size_t Exchange::getTargetConsumer(const Document& input) {
             return 0;
         }
 
-        if (elem.type() == BSONType::String && elem.str() == "hashed") {
+        if (elem.type() == BSONType::string && elem.str() == "hashed") {
             kb << ""
                << BSONElementHasher::hash64(BSON("" << value).firstElement(),
                                             BSONElementHasher::DEFAULT_HASH_SEED);

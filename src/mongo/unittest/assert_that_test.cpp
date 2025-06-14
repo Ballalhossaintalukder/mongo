@@ -27,8 +27,19 @@
  *    it in the license file.
  */
 
+#include "mongo/unittest/assert_that.h"
+
+#include "mongo/base/error_codes.h"
+#include "mongo/base/status.h"
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/stdx/unordered_map.h"
+#include "mongo/unittest/framework.h"
+#include "mongo/unittest/matcher.h"
+#include "mongo/unittest/stringify.h"
+
 #include <array>
-#include <fmt/format.h>
 #include <list>
 #include <map>
 #include <ostream>
@@ -39,17 +50,7 @@
 #include <vector>
 
 #include <absl/container/node_hash_map.h>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/base/status.h"
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/stdx/unordered_map.h"
-#include "mongo/unittest/assert_that.h"
-#include "mongo/unittest/framework.h"
-#include "mongo/unittest/matcher.h"
-#include "mongo/unittest/stringify.h"
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -209,10 +210,10 @@ TEST(AssertThat, StatusIs) {
 
 TEST(AssertThat, BSONObj) {
     auto obj = BSONObjBuilder{}.append("i", 123).append("s", "hi").obj();
-    ASSERT_THAT(obj, BSONObjHas(BSONElementIs(Eq("i"), Eq(NumberInt), Any())));
+    ASSERT_THAT(obj, BSONObjHas(BSONElementIs(Eq("i"), Eq(BSONType::numberInt), Any())));
     ASSERT_THAT(obj,
-                AllOf(BSONObjHas(BSONElementIs(Eq("i"), Eq(NumberInt), Eq(123))),
-                      BSONObjHas(BSONElementIs(Eq("s"), Eq(String), Eq("hi")))));
+                AllOf(BSONObjHas(BSONElementIs(Eq("i"), Eq(BSONType::numberInt), Eq(123))),
+                      BSONObjHas(BSONElementIs(Eq("s"), Eq(BSONType::string), Eq("hi")))));
     ASSERT_THAT(obj, Not(BSONObjHas(BSONElementIs(Eq("x"), Any(), Any()))));
 }
 
@@ -256,8 +257,8 @@ TEST(AssertThat, Demo) {
     // BSONElement and BSONObj
     auto obj = BSONObjBuilder{}.append("i", 123).append("s", "hi").obj();
     ASSERT_THAT(obj,
-                AllOf(BSONObjHas(BSONElementIs(Eq("i"), Eq(NumberInt), Eq(123))),
-                      BSONObjHas(BSONElementIs(Eq("s"), Eq(String), Eq("hi")))));
+                AllOf(BSONObjHas(BSONElementIs(Eq("i"), Eq(BSONType::numberInt), Eq(123))),
+                      BSONObjHas(BSONElementIs(Eq("s"), Eq(BSONType::string), Eq("hi")))));
     ASSERT_THAT(obj, Not(BSONObjHas(BSONElementIs(Eq("x"), Any(), Any()))));
 }
 

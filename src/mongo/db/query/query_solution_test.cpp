@@ -27,15 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <initializer_list>
-#include <memory>
-#include <ostream>
-#include <utility>
+#include "mongo/db/query/query_solution.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -55,11 +47,21 @@
 #include "mongo/db/query/planner_wildcard_helpers.h"
 #include "mongo/db/query/projection_parser.h"
 #include "mongo/db/query/projection_policies.h"
-#include "mongo/db/query/query_solution.h"
 #include "mongo/db/query/query_test_service_context.h"
 #include "mongo/db/query/wildcard_test_utils.h"
 #include "mongo/stdx/type_traits.h"
 #include "mongo/unittest/unittest.h"
+
+#include <algorithm>
+#include <initializer_list>
+#include <memory>
+#include <ostream>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -1387,7 +1389,7 @@ TEST(QuerySolutionTest, MultikeyIndexWithoutPathLevelInfoCannotProvideAnySorts) 
 
     for (auto&& name : {"b"_sd, "c"_sd}) {
         OrderedIntervalList oil{};
-        oil.name = name.toString();
+        oil.name = std::string{name};
         oil.intervals.push_back(IndexBoundsBuilder::makeRangeInterval(
             BSON("" << 1 << "" << 2), BoundInclusion::kIncludeBothStartAndEndKeys));
         node.bounds.fields.push_back(oil);
@@ -1461,7 +1463,7 @@ TEST(QuerySolutionTest, NonSimpleRangeAllEqualExcludesFieldWithMultikeyComponent
 
     for (auto&& name : {"a"_sd, "b"_sd, "c.z"_sd, "d"_sd, "e"_sd}) {
         OrderedIntervalList oil{};
-        oil.name = name.toString();
+        oil.name = std::string{name};
         oil.intervals.push_back(IndexBoundsBuilder::makePointInterval(BSON("" << 1)));
         node.bounds.fields.push_back(oil);
     }

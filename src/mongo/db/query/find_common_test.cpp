@@ -27,15 +27,16 @@
  *    it in the license file.
  */
 
-#include <string>
+#include "mongo/db/query/find_common.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/query/find_common.h"
 #include "mongo/rpc/op_msg_rpc_impls.h"
 #include "mongo/unittest/unittest.h"
+
+#include <string>
 
 namespace {
 
@@ -87,23 +88,18 @@ TEST(BSONObjCursorAppenderTest, FailsToAppendWhenPBRTDoesNotFit) {
     // large enough BSON object.
     BSONObj resumeToken = doc2;
 
-    ResourceConsumption::DocumentUnitCounter docUnitsReturned;
     rpc::OpMsgReplyBuilder reply;
     CursorResponseBuilder::Options options;
     CursorResponseBuilder nextBatch(&reply, options);
 
     // Append 'doc1' to the cursor response.
     nextBatch.append(doc1);
-    docUnitsReturned.observeOne(doc1.objsize());
     // There should be enough space for the resume token.
     ASSERT(FindCommon::fitsInBatch(nextBatch.bytesUsed(), resumeToken.objsize()));
 
     bool failedToAppend = false;
-    FindCommon::BSONObjCursorAppender appenderFn{false /* alwaysAcceptFirstDoc */,
-                                                 &nextBatch,
-                                                 &docUnitsReturned,
-                                                 resumeToken,
-                                                 failedToAppend};
+    FindCommon::BSONObjCursorAppender appenderFn{
+        false /* alwaysAcceptFirstDoc */, &nextBatch, resumeToken, failedToAppend};
 
     uint64_t numResults = 1;
 

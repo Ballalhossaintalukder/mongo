@@ -29,6 +29,8 @@
 
 #include "mongo/db/catalog/collection_impl.h"
 
+#include <mutex>
+
 #include <absl/container/flat_hash_map.h>
 #include <boost/container/flat_set.hpp>
 #include <boost/container/small_vector.hpp>
@@ -40,7 +42,6 @@
 #include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
-#include <mutex>
 // IWYU pragma: no_include "ext/alloc_traits.h"
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
 
@@ -55,8 +56,10 @@
 #include "mongo/db/catalog/catalog_stats.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/document_validation.h"
+#include "mongo/db/catalog/durable_catalog.h"
 #include "mongo/db/catalog/index_catalog_impl.h"
 #include "mongo/db/catalog/index_key_validate.h"
+#include "mongo/db/catalog/local_oplog_info.h"
 #include "mongo/db/catalog/storage_engine_collection_options_flags_parser.h"
 #include "mongo/db/catalog/uncommitted_multikey.h"
 #include "mongo/db/client.h"
@@ -86,7 +89,8 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/capped_snapshots.h"
-#include "mongo/db/storage/durable_catalog.h"
+#include "mongo/db/storage/mdb_catalog.h"
+#include "mongo/db/storage/oplog_truncate_markers.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
@@ -204,12 +208,12 @@ StatusWith<bool> doesMinMaxHaveMixedSchemaData(const BSONObj& min, const BSONObj
 
         if (minIt->canonicalType() != maxIt->canonicalType()) {
             return true;
-        } else if (minIt->type() == Object) {
+        } else if (minIt->type() == BSONType::object) {
             auto result = doesMinMaxHaveMixedSchemaData(minIt->Obj(), maxIt->Obj());
             if (!result.isOK() || result.getValue()) {
                 return result;
             }
-        } else if (minIt->type() == Array) {
+        } else if (minIt->type() == BSONType::array) {
             auto result = doesMinMaxHaveMixedSchemaData(minIt->Obj(), maxIt->Obj());
             if (!result.isOK() || result.getValue()) {
                 return result;
@@ -258,7 +262,7 @@ StatusWith<std::shared_ptr<Ident>> findSharedIdentForIndex(OperationContext* opC
 
     // The index ident is expired, but it could still be drop pending. Mark it as in use if
     // possible.
-    auto newIdent = storageEngine->markIdentInUse(ident.toString());
+    auto newIdent = storageEngine->markIdentInUse(std::string{ident});
     if (newIdent) {
         return newIdent;
     }
@@ -347,7 +351,7 @@ CollectionImpl::SharedState::~SharedState() {
 CollectionImpl::CollectionImpl(OperationContext* opCtx,
                                const NamespaceString& nss,
                                RecordId catalogId,
-                               std::shared_ptr<BSONCollectionCatalogEntry::MetaData> metadata,
+                               std::shared_ptr<durable_catalog::CatalogEntryMetaData> metadata,
                                std::unique_ptr<RecordStore> recordStore)
     : _ns(nss),
       _catalogId(std::move(catalogId)),
@@ -370,7 +374,7 @@ std::shared_ptr<Collection> CollectionImpl::FactoryImpl::make(
     OperationContext* opCtx,
     const NamespaceString& nss,
     RecordId catalogId,
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData> metadata,
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData> metadata,
     std::unique_ptr<RecordStore> rs) const {
     return std::make_shared<CollectionImpl>(
         opCtx, nss, std::move(catalogId), std::move(metadata), std::move(rs));
@@ -415,7 +419,7 @@ void CollectionImpl::init(OperationContext* opCtx) {
 
 Status CollectionImpl::initFromExisting(OperationContext* opCtx,
                                         const std::shared_ptr<const Collection>& collection,
-                                        const DurableCatalogEntry& catalogEntry,
+                                        const durable_catalog::CatalogEntry& catalogEntry,
                                         boost::optional<Timestamp> readTimestamp) {
     if (collection) {
         // Use the shared state from the existing collection.
@@ -517,21 +521,21 @@ void CollectionImpl::_initCommon(OperationContext* opCtx) {
 }
 
 void CollectionImpl::_setMetadata(
-    std::shared_ptr<BSONCollectionCatalogEntry::MetaData>&& metadata) {
+    std::shared_ptr<durable_catalog::CatalogEntryMetaData>&& metadata) {
     if (metadata->options.timeseries) {
         // If present, reuse the storageEngine options to work around the issue described in
         // SERVER-91194.
-        _shared->_durableTimeseriesBucketsMayHaveMixedSchemaData = getFlagFromStorageEngineBson(
+        metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData = getFlagFromStorageEngineBson(
             metadata->options.storageEngine,
             backwards_compatible_collection_options::kTimeseriesBucketsMayHaveMixedSchemaData);
-        if (_shared->_durableTimeseriesBucketsMayHaveMixedSchemaData.has_value()) {
+        if (metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData.has_value()) {
             metadata->timeseriesBucketsMayHaveMixedSchemaData =
-                *_shared->_durableTimeseriesBucketsMayHaveMixedSchemaData;
+                *metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData;
         }
 
         // If present, reuse storageEngine options to work around the issue described in
         // SERVER-91193
-        _shared->_durableTimeseriesBucketingParametersHaveChanged = getFlagFromStorageEngineBson(
+        metadata->_durableTimeseriesBucketingParametersHaveChanged = getFlagFromStorageEngineBson(
             metadata->options.storageEngine,
             backwards_compatible_collection_options::kTimeseriesBucketingParametersHaveChanged);
     }
@@ -701,9 +705,7 @@ Status CollectionImpl::checkValidationAndParseResult(OperationContext* opCtx,
 Collection::Validator CollectionImpl::parseValidator(
     OperationContext* opCtx,
     const BSONObj& validator,
-    MatchExpressionParser::AllowedFeatureSet allowedFeatures,
-    boost::optional<multiversion::FeatureCompatibilityVersion> maxFeatureCompatibilityVersion)
-    const {
+    MatchExpressionParser::AllowedFeatureSet allowedFeatures) const {
     if (MONGO_unlikely(allowSettingMalformedCollectionValidators.shouldFail())) {
         return {validator, nullptr, nullptr};
     }
@@ -727,8 +729,6 @@ Collection::Validator CollectionImpl::parseValidator(
                       // The match expression parser needs to know that we're parsing an expression
                       // for a validator to apply some additional checks.
                       .isParsingCollectionValidator(true)
-                      // Enforce a maximum feature version if requested.
-                      .maxFeatureCompatibilityVersion(maxFeatureCompatibilityVersion)
                       .build();
 
     expCtx->variables.setDefaultRuntimeConstants(opCtx);
@@ -793,7 +793,7 @@ Collection::Validator CollectionImpl::parseValidator(
     LOGV2_DEBUG(6364301,
                 5,
                 "Combined match expression",
-                "expression"_attr = combinedMatchExpr->serialize());
+                "expression"_attr = combinedMatchExpr ? combinedMatchExpr->serialize() : BSONObj{});
 
     return Collection::Validator{validator, std::move(expCtx), std::move(combinedMatchExpr)};
 }
@@ -816,8 +816,8 @@ bool CollectionImpl::isCappedAndNeedsDelete(OperationContext* opCtx) const {
         return false;
     }
 
-    if (getRecordStore()->oplog() && getRecordStore()->oplog()->selfManagedTruncation()) {
-        // Storage engines can choose to manage oplog truncation internally.
+    if (getRecordStore()->oplog()) {
+        // Oplog truncation is managed through OplogTruncateMarkers.
         return false;
     }
 
@@ -863,12 +863,12 @@ timeseries::MixedSchemaBucketsState CollectionImpl::getTimeseriesMixedSchemaBuck
         return timeseries::MixedSchemaBucketsState::Invalid;
     }
 
-    if (!_shared->_durableTimeseriesBucketsMayHaveMixedSchemaData.has_value() &&
+    if (!_metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData.has_value() &&
         !_metadata->timeseriesBucketsMayHaveMixedSchemaData.has_value()) {
         return timeseries::MixedSchemaBucketsState::Invalid;
     }
 
-    if (_shared->_durableTimeseriesBucketsMayHaveMixedSchemaData.value_or(false)) {
+    if (_metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData.value_or(false)) {
         return timeseries::MixedSchemaBucketsState::DurableMayHaveMixedSchemaBuckets;
     }
 
@@ -876,7 +876,7 @@ timeseries::MixedSchemaBucketsState CollectionImpl::getTimeseriesMixedSchemaBuck
         return timeseries::MixedSchemaBucketsState::NonDurableMayHaveMixedSchemaBuckets;
     }
 
-    invariant(!_shared->_durableTimeseriesBucketsMayHaveMixedSchemaData.value_or(true) ||
+    invariant(!_metadata->_durableTimeseriesBucketsMayHaveMixedSchemaData.value_or(true) ||
               !_metadata->timeseriesBucketsMayHaveMixedSchemaData.value_or(true));
     return timeseries::MixedSchemaBucketsState::NoMixedSchemaBuckets;
 }
@@ -898,7 +898,7 @@ boost::optional<bool> CollectionImpl::timeseriesBucketingParametersHaveChanged()
         return true;
     }
 
-    return _shared->_durableTimeseriesBucketingParametersHaveChanged;
+    return _metadata->_durableTimeseriesBucketingParametersHaveChanged;
 }
 
 void CollectionImpl::setTimeseriesBucketingParametersChanged(OperationContext* opCtx,
@@ -906,9 +906,9 @@ void CollectionImpl::setTimeseriesBucketingParametersChanged(OperationContext* o
     tassert(7625800, "This is not a time-series collection", _metadata->options.timeseries);
 
     // TODO SERVER-92265 properly set this catalog option
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         // Reuse storageEngine options to work around the issue described in SERVER-91193
-        _shared->_durableTimeseriesBucketingParametersHaveChanged = value;
+        md._durableTimeseriesBucketingParametersHaveChanged = value;
         md.options.storageEngine = setFlagToStorageEngineBson(
             md.options.storageEngine,
             backwards_compatible_collection_options::kTimeseriesBucketingParametersHaveChanged,
@@ -917,7 +917,7 @@ void CollectionImpl::setTimeseriesBucketingParametersChanged(OperationContext* o
 }
 
 void CollectionImpl::removeLegacyTimeseriesBucketingParametersHaveChanged(OperationContext* opCtx) {
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.timeseriesBucketingParametersHaveChanged_DO_NOT_USE.reset();
     });
 }
@@ -934,16 +934,16 @@ void CollectionImpl::setTimeseriesBucketsMayHaveMixedSchemaData(OperationContext
                 "setting"_attr = setting);
 
     // TODO SERVER-92265 properly set this catalog option
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         // Reuse storageEngine options to work around the issue described in SERVER-91194
         if (setting.has_value()) {
-            _shared->_durableTimeseriesBucketsMayHaveMixedSchemaData =
+            md._durableTimeseriesBucketsMayHaveMixedSchemaData =
                 MONGO_unlikely(simulateLegacyTimeseriesMixedSchemaFlag.shouldFail()) ? boost::none
                                                                                      : setting;
             md.options.storageEngine = setFlagToStorageEngineBson(
                 md.options.storageEngine,
                 backwards_compatible_collection_options::kTimeseriesBucketsMayHaveMixedSchemaData,
-                _shared->_durableTimeseriesBucketsMayHaveMixedSchemaData);
+                md._durableTimeseriesBucketsMayHaveMixedSchemaData);
         }
 
         // Also update legacy parameter for compatibility when downgrading to older sub-versions
@@ -1011,7 +1011,7 @@ void CollectionImpl::updateClusteredIndexTTLSetting(OperationContext* opCtx,
             "The collection doesn't have a clustered index",
             _metadata->options.clusteredIndex);
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.expireAfterSeconds = expireAfterSeconds;
     });
 }
@@ -1035,12 +1035,15 @@ Status CollectionImpl::updateCappedSize(OperationContext* opCtx,
         if (!status.isOK()) {
             return status;
         }
+        if (auto truncateMarkers = LocalOplogInfo::get(opCtx)->getTruncateMarkers()) {
+            truncateMarkers->adjust(*newCappedSize);
+        }
     }
 
     boost::optional<long long> oldCappedSize, oldCappedMax;
     bool shouldLog = false;
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         oldCappedSize = md.options.cappedSize;
         oldCappedMax = md.options.cappedMaxDocs;
 
@@ -1080,7 +1083,7 @@ void CollectionImpl::unsetRecordIdsReplicated(OperationContext* opCtx) {
                 logAttrs(ns()),
                 logAttrs(uuid()));
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.recordIdsReplicated = false;
     });
 }
@@ -1095,7 +1098,7 @@ void CollectionImpl::setChangeStreamPreAndPostImages(OperationContext* opCtx,
         uassertStatusOK(validateChangeStreamPreAndPostImagesOptionIsPermitted(_ns));
     }
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.changeStreamPreAndPostImagesOptions = val;
     });
 }
@@ -1186,8 +1189,8 @@ int64_t CollectionImpl::sizeOnDisk(OperationContext* opCtx,
     auto& ru = *shard_role_details::getRecoveryUnit(opCtx);
 
     int64_t size = getRecordStore()->storageSize(ru);
-    auto it = getIndexCatalog()->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished);
+    auto it = getIndexCatalog()->getIndexIterator(IndexCatalog::InclusionPolicy::kReady |
+                                                  IndexCatalog::InclusionPolicy::kUnfinished);
     while (it->more()) {
         size += storageEngine.getIdentSize(ru, it->next()->getIdent());
     }
@@ -1224,8 +1227,8 @@ uint64_t CollectionImpl::getIndexSize(OperationContext* opCtx,
                                       int scale) const {
     const IndexCatalog* idxCatalog = getIndexCatalog();
 
-    auto ii = idxCatalog->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished);
+    auto ii = idxCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady |
+                                           IndexCatalog::InclusionPolicy::kUnfinished);
 
     uint64_t totalSize = 0;
 
@@ -1234,7 +1237,7 @@ uint64_t CollectionImpl::getIndexSize(OperationContext* opCtx,
         const IndexDescriptor* descriptor = entry->descriptor();
         const IndexAccessMethod* iam = entry->accessMethod();
 
-        long long ds = iam->getSpaceUsedBytes(opCtx);
+        long long ds = iam->getSpaceUsedBytes(opCtx, *shard_role_details::getRecoveryUnit(opCtx));
 
         totalSize += ds;
         if (details) {
@@ -1257,12 +1260,13 @@ uint64_t CollectionImpl::getIndexFreeStorageBytes(OperationContext* const opCtx)
     //  anyways as the build is in progress.
     // - Once the index build is finished, this will be eventually accounted for.
     const auto idxCatalog = getIndexCatalog();
-    auto indexIt = idxCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto indexIt = idxCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
 
     uint64_t totalSize = 0;
     while (indexIt->more()) {
         auto entry = indexIt->next();
-        totalSize += entry->accessMethod()->getFreeStorageBytes(opCtx);
+        totalSize += entry->accessMethod()->getFreeStorageBytes(
+            opCtx, *shard_role_details::getRecoveryUnit(opCtx));
     }
     return totalSize;
 }
@@ -1281,7 +1285,7 @@ Status CollectionImpl::truncate(OperationContext* opCtx) {
     // 1) store index specs
     std::vector<BSONObj> indexSpecs;
     {
-        auto ii = _indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+        auto ii = _indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
         while (ii->more()) {
             const IndexDescriptor* idx = ii->next()->descriptor();
             indexSpecs.push_back(idx->infoObj().getOwned());
@@ -1295,6 +1299,11 @@ Status CollectionImpl::truncate(OperationContext* opCtx) {
     auto status = _shared->_recordStore->truncate(opCtx);
     if (!status.isOK())
         return status;
+    if (ns().isOplog()) {
+        if (auto truncateMarkers = LocalOplogInfo::get(opCtx)->getTruncateMarkers()) {
+            truncateMarkers->clearMarkersOnCommit(opCtx);
+        }
+    }
 
     // 4) re-create indexes
     for (size_t i = 0; i < indexSpecs.size(); i++) {
@@ -1314,7 +1323,7 @@ void CollectionImpl::setValidator(OperationContext* opCtx, Validator validator) 
     auto validationLevel = validationLevelOrDefault(_metadata->options.validationLevel);
     auto validationAction = validationActionOrDefault(_metadata->options.validationAction);
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.validator = validatorDoc;
         md.options.validationLevel = validationLevel;
         md.options.validationAction = validationAction;
@@ -1352,7 +1361,7 @@ Status CollectionImpl::setValidationLevel(OperationContext* opCtx, ValidationLev
         return _validator.getStatus();
     }
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.validator = _validator.validatorDoc;
         md.options.validationLevel = storedValidationLevel;
         md.options.validationAction = validationActionOrDefault(md.options.validationAction);
@@ -1384,7 +1393,7 @@ Status CollectionImpl::setValidationAction(OperationContext* opCtx,
         return _validator.getStatus();
     }
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.validator = _validator.validatorDoc;
         md.options.validationLevel = validationLevelOrDefault(md.options.validationLevel);
         md.options.validationAction = storedValidationAction;
@@ -1410,7 +1419,7 @@ Status CollectionImpl::updateValidator(OperationContext* opCtx,
         return validator.getStatus();
     }
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.validator = newValidator;
         md.options.validationLevel = newLevel;
         md.options.validationAction = newAction;
@@ -1426,7 +1435,7 @@ const boost::optional<TimeseriesOptions>& CollectionImpl::getTimeseriesOptions()
 
 void CollectionImpl::setTimeseriesOptions(OperationContext* opCtx,
                                           const TimeseriesOptions& tsOptions) {
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.options.timeseries = tsOptions;
     });
 }
@@ -1525,12 +1534,12 @@ StatusWith<std::vector<BSONObj>> CollectionImpl::addCollationDefaultsToIndexSpec
 }
 
 Status CollectionImpl::rename(OperationContext* opCtx, const NamespaceString& nss, bool stayTemp) {
-    auto metadata = std::make_shared<BSONCollectionCatalogEntry::MetaData>(*_metadata);
+    auto metadata = std::make_shared<durable_catalog::CatalogEntryMetaData>(*_metadata);
     metadata->nss = nss;
     if (!stayTemp)
         metadata->options.temp = false;
-    Status status =
-        DurableCatalog::get(opCtx)->renameCollection(opCtx, getCatalogId(), nss, *metadata);
+    Status status = durable_catalog::renameCollection(
+        opCtx, getCatalogId(), nss, *metadata, MDBCatalog::get(opCtx));
     if (!status.isOK()) {
         return status;
     }
@@ -1547,7 +1556,7 @@ void CollectionImpl::indexBuildSuccess(OperationContext* opCtx, IndexCatalogEntr
               str::stream() << "cannot mark index " << indexName << " as ready @ " << getCatalogId()
                             << " : " << _metadata->toBSON());
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.indexes[offset].ready = true;
         md.indexes[offset].buildUUID = boost::none;
     });
@@ -1582,7 +1591,7 @@ void CollectionImpl::updateTTLSetting(OperationContext* opCtx,
     invariant(offset >= 0,
               str::stream() << "cannot update TTL setting for index " << idxName << " @ "
                             << getCatalogId() << " : " << _metadata->toBSON());
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.indexes[offset].updateTTLSetting(newExpireSeconds);
     });
 }
@@ -1591,7 +1600,7 @@ void CollectionImpl::updateHiddenSetting(OperationContext* opCtx, StringData idx
     int offset = _metadata->findIndexOffset(idxName);
     invariant(offset >= 0);
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.indexes[offset].updateHiddenSetting(hidden);
     });
 }
@@ -1600,7 +1609,7 @@ void CollectionImpl::updateUniqueSetting(OperationContext* opCtx, StringData idx
     int offset = _metadata->findIndexOffset(idxName);
     invariant(offset >= 0);
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.indexes[offset].updateUniqueSetting(unique);
     });
 }
@@ -1611,7 +1620,7 @@ void CollectionImpl::updatePrepareUniqueSetting(OperationContext* opCtx,
     int offset = _metadata->findIndexOffset(idxName);
     invariant(offset >= 0);
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         md.indexes[offset].updatePrepareUniqueSetting(prepareUnique);
     });
 }
@@ -1623,7 +1632,7 @@ std::vector<std::string> CollectionImpl::repairInvalidIndexOptions(OperationCont
         ? index_key_validate::kNonDeprecatedAllowedFieldNames
         : index_key_validate::kAllowedFieldNames;
 
-    _writeMetadata(opCtx, [&](BSONCollectionCatalogEntry::MetaData& md) {
+    _writeMetadata(opCtx, [&](durable_catalog::CatalogEntryMetaData& md) {
         for (auto& index : md.indexes) {
             if (index.isPresent()) {
                 BSONObj oldSpec = index.spec;
@@ -1647,7 +1656,7 @@ std::vector<std::string> CollectionImpl::repairInvalidIndexOptions(OperationCont
 
 void CollectionImpl::setIsTemp(OperationContext* opCtx, bool isTemp) {
     _writeMetadata(opCtx,
-                   [&](BSONCollectionCatalogEntry::MetaData& md) { md.options.temp = isTemp; });
+                   [&](durable_catalog::CatalogEntryMetaData& md) { md.options.temp = isTemp; });
 }
 
 void CollectionImpl::removeIndex(OperationContext* opCtx, StringData indexName) {
@@ -1655,15 +1664,14 @@ void CollectionImpl::removeIndex(OperationContext* opCtx, StringData indexName) 
         return;  // never had the index so nothing to do.
 
     _writeMetadata(opCtx,
-                   [&](BSONCollectionCatalogEntry::MetaData& md) { md.eraseIndex(indexName); });
+                   [&](durable_catalog::CatalogEntryMetaData& md) { md.eraseIndex(indexName); });
 }
 
 Status CollectionImpl::prepareForIndexBuild(OperationContext* opCtx,
                                             const IndexDescriptor* spec,
                                             boost::optional<UUID> buildUUID) {
 
-    auto durableCatalog = DurableCatalog::get(opCtx);
-    BSONCollectionCatalogEntry::IndexMetaData imd;
+    durable_catalog::CatalogEntryMetaData::IndexMetaData imd;
     imd.spec = spec->infoObj();
     imd.ready = false;
     imd.multikey = false;
@@ -1691,12 +1699,16 @@ Status CollectionImpl::prepareForIndexBuild(OperationContext* opCtx,
     }
 
     _writeMetadata(
-        opCtx, [indexMetaData = std::move(imd)](BSONCollectionCatalogEntry::MetaData& md) mutable {
+        opCtx, [indexMetaData = std::move(imd)](durable_catalog::CatalogEntryMetaData& md) mutable {
             md.insertIndex(std::move(indexMetaData));
         });
 
-    return durableCatalog->createIndex(
-        opCtx, getCatalogId(), ns(), getCollectionOptions(), spec->toIndexConfig());
+    return durable_catalog::createIndex(opCtx,
+                                        getCatalogId(),
+                                        ns(),
+                                        getCollectionOptions(),
+                                        spec->toIndexConfig(),
+                                        MDBCatalog::get(opCtx));
 }
 
 boost::optional<UUID> CollectionImpl::getIndexBuildUUID(StringData indexName) const {
@@ -1761,7 +1773,7 @@ bool CollectionImpl::isIndexMultikey(OperationContext* opCtx,
     // reading between the multikey write committing in the storage engine but before its onCommit
     // handler made the write visible for readers.
     const auto catalogEntry =
-        DurableCatalog::get(opCtx)->getParsedCatalogEntry(opCtx, getCatalogId());
+        durable_catalog::getParsedCatalogEntry(opCtx, getCatalogId(), MDBCatalog::get(opCtx));
     const auto snapshotMetadata = catalogEntry->metadata;
     int snapshotOffset = snapshotMetadata->findIndexOffset(indexName);
     invariant(snapshotOffset >= 0,
@@ -1799,7 +1811,7 @@ bool CollectionImpl::setIndexIsMultikey(OperationContext* opCtx,
     }
 
     auto setMultikey = [offset,
-                        multikeyPaths](const BSONCollectionCatalogEntry::MetaData& metadata) {
+                        multikeyPaths](const durable_catalog::CatalogEntryMetaData& metadata) {
         auto* index = &metadata.indexes[offset];
         stdx::lock_guard lock(index->multikeyMutex);
 
@@ -1856,9 +1868,10 @@ bool CollectionImpl::setIndexIsMultikey(OperationContext* opCtx,
     if (!uncommittedMultikeys) {
         uncommittedMultikeys = std::make_shared<UncommittedMultikey::MultikeyMap>();
     }
-    BSONCollectionCatalogEntry::MetaData* metadata = nullptr;
+    durable_catalog::CatalogEntryMetaData* metadata = nullptr;
     bool hasSetMultikey = false;
 
+    auto mdbCatalog = MDBCatalog::get(opCtx);
     if (auto it = uncommittedMultikeys->find(this); it != uncommittedMultikeys->end()) {
         metadata = &it->second;
         hasSetMultikey = setMultikey(*metadata);
@@ -1868,7 +1881,7 @@ bool CollectionImpl::setIndexIsMultikey(OperationContext* opCtx,
         // committed a multikey change concurrently to the storage engine without being able to
         // observe it if its onCommit handlers haven't run yet.
         const auto catalogEntry =
-            DurableCatalog::get(opCtx)->getParsedCatalogEntry(opCtx, getCatalogId());
+            durable_catalog::getParsedCatalogEntry(opCtx, getCatalogId(), mdbCatalog);
         auto metadataLocal = *catalogEntry->metadata;
         // When reading from the durable catalog the index offsets are different because when
         // removing indexes in-memory just zeros out the slot instead of actually removing it. We
@@ -1897,14 +1910,14 @@ bool CollectionImpl::setIndexIsMultikey(OperationContext* opCtx,
     shard_role_details::getRecoveryUnit(opCtx)->onRollback(
         [this, uncommittedMultikeys](OperationContext*) { uncommittedMultikeys->erase(this); });
 
-    DurableCatalog::get(opCtx)->putMetaData(opCtx, getCatalogId(), *metadata);
+    durable_catalog::putMetaData(opCtx, getCatalogId(), *metadata, mdbCatalog);
 
     // RAII Helper object to ensure we decrement the concurrent counter if and only if we
     // incremented it in a preCommit handler.
     class ConcurrentMultikeyWriteTracker {
     public:
         ConcurrentMultikeyWriteTracker(
-            std::shared_ptr<const BSONCollectionCatalogEntry::MetaData> meta, int indexOffset)
+            std::shared_ptr<const durable_catalog::CatalogEntryMetaData> meta, int indexOffset)
             : metadata(std::move(meta)), offset(indexOffset) {}
 
         ~ConcurrentMultikeyWriteTracker() {
@@ -1919,7 +1932,7 @@ bool CollectionImpl::setIndexIsMultikey(OperationContext* opCtx,
         }
 
     private:
-        std::shared_ptr<const BSONCollectionCatalogEntry::MetaData> metadata;
+        std::shared_ptr<const durable_catalog::CatalogEntryMetaData> metadata;
         int offset;
         bool hasIncremented = false;
     };
@@ -1956,7 +1969,7 @@ void CollectionImpl::forceSetIndexIsMultikey(OperationContext* opCtx,
                              indexName = desc->indexName(),
                              accessMethod = desc->getAccessMethodName(),
                              numKeyPatternFields = desc->keyPattern().nFields(),
-                             multikeyPaths](const BSONCollectionCatalogEntry::MetaData& metadata) {
+                             multikeyPaths](const durable_catalog::CatalogEntryMetaData& metadata) {
         int offset = metadata.findIndexOffset(indexName);
         invariant(offset >= 0,
                   str::stream() << "cannot set index " << indexName << " multikey state @ "
@@ -1981,7 +1994,7 @@ void CollectionImpl::forceSetIndexIsMultikey(OperationContext* opCtx,
     if (!uncommittedMultikeys) {
         uncommittedMultikeys = std::make_shared<UncommittedMultikey::MultikeyMap>();
     }
-    BSONCollectionCatalogEntry::MetaData* metadata = nullptr;
+    durable_catalog::CatalogEntryMetaData* metadata = nullptr;
     if (auto it = uncommittedMultikeys->find(this); it != uncommittedMultikeys->end()) {
         metadata = &it->second;
     } else {
@@ -1992,7 +2005,7 @@ void CollectionImpl::forceSetIndexIsMultikey(OperationContext* opCtx,
     shard_role_details::getRecoveryUnit(opCtx)->onRollback(
         [this, uncommittedMultikeys](OperationContext*) { uncommittedMultikeys->erase(this); });
 
-    DurableCatalog::get(opCtx)->putMetaData(opCtx, getCatalogId(), *metadata);
+    durable_catalog::putMetaData(opCtx, getCatalogId(), *metadata, MDBCatalog::get(opCtx));
 
     shard_role_details::getRecoveryUnit(opCtx)->onCommit(
         [this, uncommittedMultikeys, forceSetMultikey = std::move(forceSetMultikey)](
@@ -2032,7 +2045,7 @@ void CollectionImpl::getAllIndexes(std::vector<std::string>* names) const {
             continue;
         }
 
-        names->push_back(index.nameStringData().toString());
+        names->push_back(std::string{index.nameStringData()});
     }
 }
 
@@ -2057,8 +2070,8 @@ bool CollectionImpl::isIndexReady(StringData indexName) const {
 }
 
 void CollectionImpl::replaceMetadata(OperationContext* opCtx,
-                                     std::shared_ptr<BSONCollectionCatalogEntry::MetaData> md) {
-    DurableCatalog::get(opCtx)->putMetaData(opCtx, getCatalogId(), *md);
+                                     std::shared_ptr<durable_catalog::CatalogEntryMetaData> md) {
+    durable_catalog::putMetaData(opCtx, getCatalogId(), *md, MDBCatalog::get(opCtx));
     _setMetadata(std::move(md));
 }
 
@@ -2071,7 +2084,7 @@ void CollectionImpl::_writeMetadata(OperationContext* opCtx, Func func) {
     // Even though we are holding an exclusive lock on the Collection there may be an ongoing
     // multikey change on this OperationContext. Make sure we include that update when we copy the
     // metadata for this operation.
-    const BSONCollectionCatalogEntry::MetaData* sourceMetadata = _metadata.get();
+    const durable_catalog::CatalogEntryMetaData* sourceMetadata = _metadata.get();
     auto& uncommittedMultikeys = UncommittedMultikey::get(opCtx).resources();
     if (uncommittedMultikeys) {
         if (auto it = uncommittedMultikeys->find(this); it != uncommittedMultikeys->end()) {
@@ -2080,7 +2093,7 @@ void CollectionImpl::_writeMetadata(OperationContext* opCtx, Func func) {
     }
 
     // Copy metadata and apply provided function to make change.
-    auto metadata = std::make_shared<BSONCollectionCatalogEntry::MetaData>(*sourceMetadata);
+    auto metadata = std::make_shared<durable_catalog::CatalogEntryMetaData>(*sourceMetadata);
     func(*metadata);
 
     // Remove the cached multikey change, it is now included in the copied metadata. If we left it
@@ -2090,7 +2103,7 @@ void CollectionImpl::_writeMetadata(OperationContext* opCtx, Func func) {
     }
 
     // Store in durable catalog and replace pointer with our copied instance.
-    DurableCatalog::get(opCtx)->putMetaData(opCtx, getCatalogId(), *metadata);
+    durable_catalog::putMetaData(opCtx, getCatalogId(), *metadata, MDBCatalog::get(opCtx));
     _metadata = std::move(metadata);
 }
 

@@ -29,15 +29,6 @@
 
 #include "mongo/db/collection_crud/capped_utils.h"
 
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -80,6 +71,15 @@
 #include "mongo/db/transaction_resources.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -210,6 +210,10 @@ void cloneCollectionAsCapped(OperationContext* opCtx,
             // Because of that, we acquire an optime for the insert now to ensure that the insert
             // oplog entry gets logged before any delete oplog entries.
             if (!isOplogDisabledForCappedCollection) {
+                if (toCollection->needsCappedLock()) {
+                    Lock::ResourceLock heldUntilEndOfWUOW{
+                        opCtx, ResourceId(RESOURCE_METADATA, toCollection->ns()), MODE_X};
+                }
                 auto oplogInfo = LocalOplogInfo::get(opCtx);
                 auto oplogSlots = oplogInfo->getNextOpTimes(opCtx, /*batchSize=*/1);
                 insertStmt.oplogSlot = oplogSlots.front();

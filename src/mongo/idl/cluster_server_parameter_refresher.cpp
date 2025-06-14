@@ -28,19 +28,7 @@
  */
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <map>
-#include <mutex>
-#include <set>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <vector>
+#include "mongo/idl/cluster_server_parameter_refresher.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -66,7 +54,6 @@
 #include "mongo/executor/inline_executor.h"
 #include "mongo/executor/task_executor_pool.h"
 #include "mongo/idl/cluster_server_parameter_common.h"
-#include "mongo/idl/cluster_server_parameter_refresher.h"
 #include "mongo/idl/cluster_server_parameter_refresher_gen.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
@@ -80,6 +67,21 @@
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/version/releases.h"
+
+#include <iterator>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -180,7 +182,7 @@ getFCVAndClusterParametersFromConfigServer() {
             }
 
             return {fcv, allDocs};
-        } catch (const ExceptionForCat<ErrorCategory::SnapshotError>& e) {
+        } catch (const ExceptionFor<ErrorCategory::SnapshotError>& e) {
             if (retry < kOnSnapshotErrorNumRetries) {
                 LOGV2_DEBUG(9565402,
                             3,
@@ -330,24 +332,35 @@ Status ClusterServerParameterRefresher::_refreshParameters(OperationContext* opC
         updatedParameters.reserve(tenantParamDocs.size());
         for (const auto& [name, sp] : clusterParameterCache->getMap()) {
             if (fcvChanged) {
-                // Use canBeEnabled because if we previously temporarily disabled the parameter,
-                // isEnabled will be false
-                if (sp->canBeEnabledOnVersion(_lastFcv) && !sp->canBeEnabledOnVersion(fcv)) {
+                auto parameterState = sp->getState();
+
+                // Execute any change in enabled/disabled status that should result from the FCV
+                // change and then move on to the next parameter if this one is disabled. We avoid
+                // using `isEnabledOnVersion()` check (preferring `canBeEnabledOnVersion()`) so that
+                // we can determine the _new_ enabled status of the parameter without it being
+                // affected by the current status.
+                if (sp->canBeEnabledOnVersion(parameterState, _lastFcv) &&
+                    !sp->canBeEnabledOnVersion(parameterState, fcv)) {
                     // Parameter is newly disabled on cluster
                     LOGV2_DEBUG(
                         7410703, 3, "Disabling parameter during refresh", "name"_attr = name);
                     sp->disable(false /* permanent */);
                     continue;
-                } else if (sp->canBeEnabledOnVersion(fcv) && !sp->canBeEnabledOnVersion(_lastFcv)) {
+                } else if (!sp->canBeEnabledOnVersion(parameterState, _lastFcv) &&
+                           sp->canBeEnabledOnVersion(parameterState, fcv)) {
                     // Parameter is newly enabled on cluster
                     LOGV2_DEBUG(
                         7410704, 3, "Enabling parameter during refresh", "name"_attr = name);
-                    sp->enable();
+                    if (!sp->enable()) {
+                        // This parameter is permanently disabled.
+                        continue;
+                    }
                 }
-            }
-            if (!sp->isEnabled()) {
+            } else if (!sp->isEnabledOnVersion(fcv)) {
                 continue;
             }
+
+            // Continue refreshing any parameters that are enabled.
             BSONObjBuilder oldClusterParameterBob;
             sp->append(opCtx, &oldClusterParameterBob, name, tenantId);
 

@@ -32,6 +32,23 @@ SYS_PLATFORM = sys.platform
 # which means if the task has been split to run in sub-tasks, an extra "_0", "_1", ... will be
 # appended to the task name. For this reason, most task names should end with a ".*".
 
+# Task factor overrides common to several {A,UB}SAN variants.
+_AUBSAN_TASK_FACTOR_OVERRIDES = [
+    {"task": r"bulk_write_targeted_override.*", "factor": 0.25},
+    {"task": r".*causally_consistent_jscore_passthrough.*", "factor": 0.25},
+    {"task": r"change_streams_mongos_sessions_passthrough", "factor": 0.25},
+    {"task": r"fcv_upgrade_downgrade_sharded_collections_jscore_passthrough", "factor": 0.25},
+    {"task": r"fcv_upgrade_downgrade_sharding_jscore_passthrough", "factor": 0.25},
+    {"task": r"noPassthrough", "factor": 0.75},
+    {"task": r"shard.*uninitialized_fcv_jscore_passthrough.*", "factor": 0.125},
+    {"task": r"sharded_causally_consistent_jscore_passthrough", "factor": 0.125},
+    {"task": "sharded_causally_consistent_read_concern_snapshot_passthrough", "factor": 0.25},
+    {
+        "task": r"sharding_jscore_passthrough.*",
+        "factor": 0.25,
+    },
+    {"task": r"sharding_kill_stepdown_terminate_jscore_passthrough", "factor": 0.125},
+]
 # Apply factor for a task based on the build variant it is running on.
 VARIANT_TASK_FACTOR_OVERRIDES = {
     "enterprise-rhel-8-64-bit": [{"task": r"logical_session_cache_replication.*", "factor": 0.75}],
@@ -46,6 +63,7 @@ VARIANT_TASK_FACTOR_OVERRIDES = {
         {"task": r"fcv_upgrade_downgrade_sharded_collections_jscore_passthrough.*", "factor": 0.27},
         {"task": r"shard.*uninitialized_fcv_jscore_passthrough.*", "factor": 0.125},
         {"task": r"sharding_kill_stepdown_terminate_jscore_passthrough.*", "factor": 0.125},
+        {"task": r"bulk_write_targeted_override.*", "factor": 0.25},
     ],
     "enterprise-rhel8-debug-tsan-all-feature-flags": [
         # Lower the default resmoke_jobs_factor for TSAN to reduce memory pressure for this suite,
@@ -60,12 +78,10 @@ VARIANT_TASK_FACTOR_OVERRIDES = {
         {"task": r"shard.*uninitialized_fcv_jscore_passthrough.*", "factor": 0.125},
         {"task": r"sharding_kill_stepdown_terminate_jscore_passthrough.*", "factor": 0.125},
     ],
-    "rhel8-debug-aubsan-classic-engine": [
-        {"task": r"shard.*uninitialized_fcv_jscore_passthrough.*", "factor": 0.25}
-    ],
-    "rhel8-debug-aubsan-all-feature-flags": [
-        {"task": r"shard.*uninitialized_fcv_jscore_passthrough.*", "factor": 0.25}
-    ],
+    "rhel8-debug-aubsan-classic-engine": _AUBSAN_TASK_FACTOR_OVERRIDES,
+    "rhel8-debug-aubsan-all-feature-flags": _AUBSAN_TASK_FACTOR_OVERRIDES,
+    "rhel8-debug-aubsan": _AUBSAN_TASK_FACTOR_OVERRIDES,
+    "linux-debug-aubsan-compile-grpc": _AUBSAN_TASK_FACTOR_OVERRIDES,
     "enterprise-rhel-8-64-bit-dynamic-debug-mode": [
         {"task": "aggregation_one_shard_sharded_collections", "factor": 0.25},
         {"task": "aggregation_sharded_collections_causally_consistent_passthrough", "factor": 0.25},
@@ -75,11 +91,9 @@ VARIANT_TASK_FACTOR_OVERRIDES = {
             "factor": 0.25,
         },
         {
-            "task": "aggregation_unsplittable_collections_on_random_shard_passthrough_with_config_transitions",
+            "task": "aggregation_unsplittable_collections_on_random_shard_passthrough_with_config_transitions_and_add_remove_shard",
             "factor": 0.25,
         },
-        {"task": "embedded_router_jscore_passthrough_with_config_shard", "factor": 0.25},
-        {"task": "embedded_router_sharded_collections_jscore_passthrough", "factor": 0.25},
         {"task": "fcv_upgrade_downgrade_sharded_collections_jscore_passthrough", "factor": 0.25},
         {"task": "fcv_upgrade_downgrade_sharding_jscore_passthrough", "factor": 0.25},
         {"task": "fle2_sharding", "factor": 0.25},
@@ -89,13 +103,19 @@ VARIANT_TASK_FACTOR_OVERRIDES = {
         {"task": "sharded_collections_causally_consistent_jscore_txns_passthrough", "factor": 0.25},
         {"task": "sharded_collections_jscore_passthrough", "factor": 0.25},
         {"task": "sharded_collections_jscore_passthrough_with_auto_bootstrap", "factor": 0.25},
-        {"task": "sharded_collections_jscore_passthrough_with_config_transitions", "factor": 0.25},
+        {
+            "task": "sharded_collections_jscore_passthrough_with_config_transitions_and_add_remove_shard",
+            "factor": 0.25,
+        },
         {"task": "sharded_multi_stmt_txn_jscore_passthrough", "factor": 0.25},
         {"task": "sharding_api_version_jscore_passthrough", "factor": 0.25},
         {"task": "sharding_jscore_passthrough", "factor": 0.25},
         {"task": "sharding_jscore_passthrough_with_auto_bootstrap", "factor": 0.25},
         {"task": "sharding_jscore_passthrough_with_balancer", "factor": 0.25},
-        {"task": "sharding_jscore_passthrough_with_config_transitions", "factor": 0.25},
+        {
+            "task": "sharding_jscore_passthrough_with_config_transitions_and_add_remove_shard",
+            "factor": 0.25,
+        },
         {
             "task": "unsplittable_collections_created_on_any_shard_jscore_passthrough",
             "factor": 0.25,
@@ -250,9 +270,9 @@ def maybe_override_num_jobs_on_required(task_name, variant, jobs):
         "concurrency_sharded": 0.25,
         "concurrency.*simultaneous": 0.5,
         "replica_sets.*passthrough": 1,
-        "sharded_collections.*with_config_transitions": 2,
+        "sharded_collections.*with_config_transitions_and_add_remove_shard": 2,
         "^sharding_.*jscore_passthrough$": 1,
-        "^sharding_.*passthrough.*with_config_transitions": 2,
+        "^sharding_.*passthrough.*with_config_transitions_and_add_remove_shard": 2,
         "sharding_jscore_passthrough_with_balancer": 1,
         "^search(_auth)?$": 0.5,
         "fuzzer.*deterministic": 1,

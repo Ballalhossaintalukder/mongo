@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -49,6 +45,10 @@
 #include "mongo/db/query/interval.h"
 #include "mongo/db/query/interval_evaluation_tree.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -178,12 +178,12 @@ TEST_F(IndexBoundsBuilderTest, TranslateEqualsToNullShouldBuildOneIntervalForHas
     {
         const BSONObj nullElementObj = BSON("" << BSONNULL);
         const BSONObj hashedNullInterval = ExpressionMapping::hash(nullElementObj.firstElement());
-        ASSERT_EQ(hashedNullInterval.firstElement().type(), BSONType::NumberLong);
+        ASSERT_EQ(hashedNullInterval.firstElement().type(), BSONType::numberLong);
 
         const auto& secondInterval = oil.intervals[0];
         ASSERT_TRUE(secondInterval.startInclusive);
         ASSERT_TRUE(secondInterval.endInclusive);
-        ASSERT_EQ(secondInterval.start.type(), BSONType::NumberLong);
+        ASSERT_EQ(secondInterval.start.type(), BSONType::numberLong);
         ASSERT_EQ(secondInterval.start.numberLong(),
                   hashedNullInterval.firstElement().numberLong());
     }

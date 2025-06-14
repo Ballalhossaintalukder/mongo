@@ -36,16 +36,11 @@
 #include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <exception>
-#include <iterator>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/exact_cast.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/builder_fwd.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/plan_stats.h"
 #include "mongo/db/matcher/expression_algo.h"
@@ -75,6 +70,12 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
 
+#include <algorithm>
+#include <exception>
+#include <iterator>
+#include <string>
+#include <utility>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
 
@@ -85,7 +86,7 @@ namespace {
 // Given a serialized document source, appends execution stats 'nReturned' and
 // 'executionTimeMillisEstimate' to it.
 Value appendCommonExecStats(Value docSource, const CommonStats& stats) {
-    invariant(docSource.getType() == BSONType::Object);
+    invariant(docSource.getType() == BSONType::object);
     MutableDocument doc(docSource.getDocument());
     auto nReturned = static_cast<long long>(stats.advanced);
     doc.addField("nReturned", Value(nReturned));
@@ -257,11 +258,11 @@ std::unique_ptr<Pipeline, PipelineDeleter> Pipeline::parseFromArray(
 
     tassert(6253719,
             "Expected array for Pipeline::parseFromArray",
-            rawPipelineElement.type() == BSONType::Array);
+            rawPipelineElement.type() == BSONType::array);
     auto rawStages = rawPipelineElement.Array();
 
     return parseCommon<BSONElement>(rawStages, expCtx, validator, false, [](BSONElement e) {
-        uassert(6253720, "Pipeline array element must be an object", e.type() == BSONType::Object);
+        uassert(6253720, "Pipeline array element must be an object", e.type() == BSONType::object);
         return e.embeddedObject();
     });
 }
@@ -296,8 +297,6 @@ void Pipeline::validateCommon(bool alreadyOptimized) const {
             str::stream() << "Pipeline length must be no longer than "
                           << internalPipelineLengthLimit << " stages",
             static_cast<int>(_sources.size()) <= internalPipelineLengthLimit);
-
-    checkValidOperationContext();
 
     // Keep track of stages which can only appear once.
     std::set<StringData> singleUseStages;
@@ -399,12 +398,12 @@ void Pipeline::optimizeEachStage(SourceContainer* container) {
 
 bool Pipeline::aggHasWriteStage(const BSONObj& cmd) {
     auto pipelineElement = cmd["pipeline"];
-    if (pipelineElement.type() != BSONType::Array) {
+    if (pipelineElement.type() != BSONType::array) {
         return false;
     }
 
     for (auto stage : pipelineElement.Obj()) {
-        if (stage.type() != BSONType::Object) {
+        if (stage.type() != BSONType::object) {
             return false;
         }
 
@@ -417,43 +416,6 @@ bool Pipeline::aggHasWriteStage(const BSONObj& cmd) {
     return false;
 }
 
-void Pipeline::detachFromOperationContext() {
-    pCtx->setOperationContext(nullptr);
-
-    for (auto&& source : _sources) {
-        source->detachFromOperationContext();
-    }
-
-    // Check for a null operation context to make sure that all children detached correctly.
-    checkValidOperationContext();
-}
-
-void Pipeline::reattachToOperationContext(OperationContext* opCtx) {
-    pCtx->setOperationContext(opCtx);
-
-    for (auto&& source : _sources) {
-        source->reattachToOperationContext(opCtx);
-    }
-
-    checkValidOperationContext();
-}
-
-bool Pipeline::validateOperationContext(const OperationContext* opCtx) const {
-    return std::all_of(_sources.begin(), _sources.end(), [this, opCtx](const auto& s) {
-        // All sources in a pipeline must share its expression context. Subpipelines may have a
-        // different expression context, but must point to the same operation context. Let the
-        // sources validate this themselves since they don't all have the same subpipelines, etc.
-        return s->getContext() == getContext() && s->validateOperationContext(opCtx);
-    });
-}
-
-void Pipeline::checkValidOperationContext() const {
-    tassert(7406000,
-            str::stream()
-                << "All DocumentSources and subpipelines must have the same operation context",
-            validateOperationContext(getContext()->getOperationContext()));
-}
-
 void Pipeline::dispose(OperationContext* opCtx) {
     try {
         pCtx->setOperationContext(opCtx);
@@ -463,7 +425,8 @@ void Pipeline::dispose(OperationContext* opCtx) {
         stitch();
 
         if (!_sources.empty()) {
-            _sources.back()->dispose();
+            auto& stage = dynamic_cast<exec::agg::Stage&>(*_sources.back());
+            stage.dispose();
         }
         _disposed = true;
     } catch (...) {
@@ -473,13 +436,16 @@ void Pipeline::dispose(OperationContext* opCtx) {
 
 void Pipeline::forceSpill() {
     if (!_sources.empty()) {
-        _sources.back()->forceSpill();
+        auto& stage = dynamic_cast<exec::agg::Stage&>(*_sources.back());
+        stage.forceSpill();
     }
 }
 
 bool Pipeline::usedDisk() const {
-    return std::any_of(
-        _sources.begin(), _sources.end(), [](const auto& stage) { return stage->usedDisk(); });
+    return std::any_of(_sources.begin(), _sources.end(), [](const auto& source) {
+        auto& stage = dynamic_cast<exec::agg::Stage&>(*source);
+        return stage.usedDisk();
+    });
 }
 
 BSONObj Pipeline::getInitialQuery() const {
@@ -608,7 +574,7 @@ std::vector<BSONObj> Pipeline::serializeContainerForLogging(
     std::vector<Value> serialized = serializeContainer(container, opts);
     std::vector<BSONObj> redacted;
     for (auto&& stage : serialized) {
-        invariant(stage.getType() == BSONType::Object);
+        invariant(stage.getType() == BSONType::object);
         redacted.push_back(redact(stage.getDocument().toBson()));
     }
     return redacted;
@@ -633,7 +599,7 @@ std::vector<BSONObj> Pipeline::serializeToBson(
     std::vector<BSONObj> asBson;
     asBson.reserve(serialized.size());
     for (auto&& stage : serialized) {
-        invariant(stage.getType() == BSONType::Object);
+        invariant(stage.getType() == BSONType::object);
         asBson.push_back(stage.getDocument().toBson());
     }
     return asBson;
@@ -649,30 +615,17 @@ void Pipeline::stitch(SourceContainer* container) {
     }
 
     // Chain together all the stages.
-    DocumentSource* prevSource = container->front().get();
+    // TODO SERVER-105683: Temporary cast to Stage until method is moved to agg::Pipeline.
+    auto prevSource = dynamic_cast<exec::agg::Stage*>(container->front().get());
     prevSource->setSource(nullptr);
     for (Pipeline::SourceContainer::iterator iter(++container->begin()), listEnd(container->end());
          iter != listEnd;
          ++iter) {
         intrusive_ptr<DocumentSource> pTemp(*iter);
-        pTemp->setSource(prevSource);
-        prevSource = pTemp.get();
+        auto stage = dynamic_cast<exec::agg::Stage*>(pTemp.get());
+        stage->setSource(prevSource);
+        prevSource = stage;
     }
-}
-
-boost::optional<Document> Pipeline::getNext() {
-    if (MONGO_likely(!_sources.empty())) {
-        auto nextResult = _sources.back()->getNext();
-        while (nextResult.isPaused()) {
-            nextResult = _sources.back()->getNext();
-        }
-        if (!nextResult.isEOF()) {
-            // We'll get here for both statuses 'GetNextResult::ReturnStatus::kAdvanced' and
-            // 'GetNextResult::ReturnStatus::kAdvancedControlDocument'.
-            return nextResult.releaseDocument();
-        }
-    }
-    return boost::none;
 }
 
 std::vector<Value> Pipeline::writeExplainOps(const SerializationOptions& opts) const {
@@ -686,7 +639,10 @@ std::vector<Value> Pipeline::writeExplainOps(const SerializationOptions& opts) c
         invariant(afterSize - beforeSize == 1u);
         if (*opts.verbosity >= ExplainOptions::Verbosity::kExecStats) {
             auto serializedStage = array.back();
-            array.back() = appendCommonExecStats(serializedStage, stage->getCommonStats());
+            // TODO SERVER-104226: Temporary cast to Stage until explain is handled by
+            // agg::Pipeline.
+            array.back() = appendCommonExecStats(
+                serializedStage, dynamic_cast<exec::agg::Stage&>(*stage).getCommonStats());
         }
     }
     return array;
@@ -694,14 +650,16 @@ std::vector<Value> Pipeline::writeExplainOps(const SerializationOptions& opts) c
 
 void Pipeline::addInitialSource(intrusive_ptr<DocumentSource> source) {
     if (!_sources.empty()) {
-        _sources.front()->setSource(source.get());
+        auto& initialStage = dynamic_cast<exec::agg::Stage&>(*_sources.front());
+        initialStage.setSource(dynamic_cast<exec::agg::Stage*>(source.get()));
     }
     _sources.push_front(source);
 }
 
 void Pipeline::addFinalSource(intrusive_ptr<DocumentSource> source) {
     if (!_sources.empty()) {
-        source->setSource(_sources.back().get());
+        auto& finalStage = dynamic_cast<exec::agg::Stage&>(*_sources.back());
+        finalStage.setSource(dynamic_cast<exec::agg::Stage*>(_sources.back().get()));
     }
     _sources.push_back(source);
 }
@@ -882,7 +840,8 @@ Status Pipeline::canRunOnRouter() const {
 
 void Pipeline::pushBack(boost::intrusive_ptr<DocumentSource> newStage) {
     if (!_sources.empty()) {
-        newStage->setSource(_sources.back().get());
+        auto& stage = dynamic_cast<exec::agg::Stage&>(*newStage);
+        stage.setSource(dynamic_cast<exec::agg::Stage*>(_sources.back().get()));
     }
     _sources.push_back(std::move(newStage));
 }
@@ -1048,7 +1007,8 @@ std::unique_ptr<Pipeline, PipelineDeleter> Pipeline::viewPipelineHelperForSearch
     // need to set the resolved namespace so that idLookup knows to apply the view.
     if (!search_helper_bson_obj::isStoredSource(currentPipeline)) {
         const ResolvedView resolvedView{resolvedNs.ns, resolvedNs.pipeline, BSONObj()};
-        search_helpers::addResolvedNamespaceForSearch(originalNs, resolvedView, subPipelineExpCtx);
+        subPipelineExpCtx->setView(
+            boost::make_optional(std::make_pair(originalNs, resolvedView.getPipeline())));
     }
     // return the user pipeline without appending the view stages.
     return Pipeline::makePipeline(currentPipeline, subPipelineExpCtx, opts);
@@ -1086,14 +1046,4 @@ std::unique_ptr<Pipeline, PipelineDeleter> Pipeline::makePipelineFromViewDefinit
 
     return Pipeline::makePipeline(resolvedPipeline, subPipelineExpCtx, opts);
 }
-
-void Pipeline::accumulatePipelinePlanSummaryStats(PlanSummaryStats& planSummaryStats) {
-    auto visitor = PlanSummaryStatsVisitor(planSummaryStats);
-    for (auto&& source : this->getSources()) {
-        if (auto specificStats = source->getSpecificStats()) {
-            specificStats->acceptVisitor(&visitor);
-        }
-    }
-}
-
 }  // namespace mongo

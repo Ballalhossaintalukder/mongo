@@ -29,10 +29,6 @@
 
 #include "mongo/client/sasl_client_authenticate.h"
 
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/util/bson_extract.h"
@@ -40,6 +36,10 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/base64.h"
 #include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 
@@ -54,14 +54,14 @@ Status saslExtractPayload(const BSONObj& cmdObj, std::string* payload, BSONType*
         return status;
 
     *type = payloadElement.type();
-    if (payloadElement.type() == BinData) {
+    if (payloadElement.type() == BSONType::binData) {
         const char* payloadData;
         int payloadLen;
         payloadData = payloadElement.binData(payloadLen);
         if (payloadLen < 0)
             return Status(ErrorCodes::InvalidLength, "Negative payload length");
         *payload = std::string(payloadData, payloadData + payloadLen);
-    } else if (payloadElement.type() == String) {
+    } else if (payloadElement.type() == BSONType::string) {
         try {
             *payload = base64::decode(payloadElement.str());
         } catch (AssertionException& e) {

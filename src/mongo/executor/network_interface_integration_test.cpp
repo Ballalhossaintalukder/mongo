@@ -29,23 +29,6 @@
 
 
 // IWYU pragma: no_include "cxxabi.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <initializer_list>
-#include <memory>
-#include <mutex>
-#include <ostream>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -96,6 +79,24 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <initializer_list>
+#include <memory>
+#include <mutex>
+#include <ostream>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -412,6 +413,7 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, CancelLocally) {
 
 TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, CancelRemotely) {
     // Enable blockConnection for "echo".
+    FailPointEnableBlock fpb("increaseTimeoutOnKillOp");
     assertCommandOK(DatabaseName::kAdmin,
                     BSON("configureFailPoint"
                          << "failCommand"
@@ -475,7 +477,7 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, CancelRemotelyTimedOut) {
                          << "data"
                          << BSON("blockConnection"
                                  << true << "blockTimeMS"
-                                 << NetworkInterfaceTL::kCancelCommandTimeout_forTest.count() + 1000
+                                 << NetworkInterfaceTL::kCancelCommandTimeout.count() + 4000
                                  << "failCommands" << BSON_ARRAY("echo" << "_killOperations"))),
                     kNoTimeout);
 
@@ -657,7 +659,7 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, TimeoutGeneralNetworkInterfa
     auto result = deferred.get(interruptible());
 
     ASSERT_EQ(ErrorCodes::NetworkInterfaceExceededTimeLimit, result.status);
-    assertNumOps(0u, 1u, 0u, 1u);
+    assertNumOpsSoon(0u, 1u, 0u, 2u, kMaxWait);
 }
 
 /**
@@ -709,7 +711,7 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, AsyncOpTimeout) {
     ASSERT_EQ(ErrorCodes::MaxTimeMSExpired, result.status);
     ASSERT(result.elapsed);
     ASSERT_EQ(result.target, fixture().getServers().front());
-    assertNumOps(0u, 1u, 0u, 0u);
+    assertNumOpsSoon(0u, 1u, 0u, 1u, kMaxWait);
 }
 
 TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, AsyncOpTimeoutWithOpCtxDeadlineSooner) {
@@ -1358,11 +1360,11 @@ TEST_F(NetworkInterfaceInternalClientTest,
     // Verify that the "hello" reply has the expected internalClient data.
     auto wireSpec = WireSpec::getWireSpec(getGlobalServiceContext()).get();
     auto internalClientElem = helloHandshake.request["internalClient"];
-    ASSERT_EQ(internalClientElem.type(), BSONType::Object);
+    ASSERT_EQ(internalClientElem.type(), BSONType::object);
     auto minWireVersionElem = internalClientElem.Obj()["minWireVersion"];
     auto maxWireVersionElem = internalClientElem.Obj()["maxWireVersion"];
-    ASSERT_EQ(minWireVersionElem.type(), BSONType::NumberInt);
-    ASSERT_EQ(maxWireVersionElem.type(), BSONType::NumberInt);
+    ASSERT_EQ(minWireVersionElem.type(), BSONType::numberInt);
+    ASSERT_EQ(maxWireVersionElem.type(), BSONType::numberInt);
     ASSERT_EQ(minWireVersionElem.numberInt(), wireSpec->outgoing.minWireVersion);
     ASSERT_EQ(maxWireVersionElem.numberInt(), wireSpec->outgoing.maxWireVersion);
 
@@ -1430,6 +1432,57 @@ TEST_F(NetworkInterfaceTestWithHangingHook, HookHangs) {
     auto res = runCommandSync(request);
     ASSERT(ErrorCodes::isExceededTimeLimitError(res.status.code()));
 }
+
+TEST_F(NetworkInterfaceIntegrationFixture, BasicRejectConnection) {
+    SKIP_ON_GRPC("gRPC doesn't use ConnectionPool");
+
+    FailPointEnableBlock fpb2("connectionPoolRejectsConnectionRequests");
+
+    startNet();
+
+    RemoteCommandRequest request{fixture().getServers()[0],
+                                 DatabaseName::kAdmin,
+                                 BSON("ping" << 1),
+                                 BSONObj(),
+                                 nullptr,
+                                 Minutes(5)};
+
+    auto fut2 = runCommand(makeCallbackHandle(), request);
+    ASSERT_FALSE(fut2.get(interruptible()).isOK());
+
+    auto result = fut2.get(interruptible());
+    ASSERT_NOT_OK(result.status);
+    ASSERT_EQ(ErrorCodes::PooledConnectionAcquisitionRejected, result.status);
+}
+
+TEST_F(NetworkInterfaceIntegrationFixture, RejectConnection) {
+    SKIP_ON_GRPC("gRPC doesn't use ConnectionPool");
+
+    FailPointEnableBlock fpb("connectionPoolDoesNotFulfillRequests");
+
+    ConnectionPool::Options opts;
+    opts.connectionRequestsMaxQueueDepth = 1;
+    setConnectionPoolOptions(opts);
+
+    startNet();
+
+    RemoteCommandRequest request{fixture().getServers()[0],
+                                 DatabaseName::kAdmin,
+                                 BSON("ping" << 1),
+                                 BSONObj(),
+                                 nullptr,
+                                 Minutes(5)};
+
+    auto fut = runCommand(makeCallbackHandle(), request);
+
+    auto fut2 = runCommand(makeCallbackHandle(), request);
+    ASSERT_FALSE(fut2.get(interruptible()).isOK());
+
+    auto result = fut2.get(interruptible());
+    ASSERT_NOT_OK(result.status);
+    ASSERT_EQ(ErrorCodes::PooledConnectionAcquisitionRejected, result.status);
+}
+
 
 }  // namespace
 }  // namespace executor

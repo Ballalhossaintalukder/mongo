@@ -28,16 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <cstdint>
-#include <ctime>
-#include <iterator>
-#include <map>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/cloner.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -58,7 +49,6 @@
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog_raii.h"
-#include "mongo/db/cloner.h"
 #include "mongo/db/cloner_gen.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
 #include "mongo/db/commands/list_collections_filter.h"
@@ -94,6 +84,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <ctime>
+#include <iterator>
+#include <map>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
 
@@ -112,7 +113,7 @@ BSONObj DefaultClonerImpl::_getIdIndexSpec(const std::list<BSONObj>& indexSpecs)
     for (auto&& indexSpec : indexSpecs) {
         BSONElement indexName;
         uassertStatusOK(bsonExtractTypedField(
-            indexSpec, IndexDescriptor::kIndexNameFieldName, String, &indexName));
+            indexSpec, IndexDescriptor::kIndexNameFieldName, BSONType::string, &indexName));
         if (indexName.valueStringData() == IndexConstants::kIdIndexName) {
             return indexSpec;
         }

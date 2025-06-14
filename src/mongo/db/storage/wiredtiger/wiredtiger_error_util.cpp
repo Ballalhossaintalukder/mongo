@@ -27,12 +27,11 @@
  *    it in the license file.
  */
 
-#include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
-
-#include "mongo/db/concurrency/exception_util.h"
-#include "mongo/db/concurrency/exception_util_gen.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/storage_options.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_global_options_gen.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_session.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWiredTiger
 
@@ -165,7 +164,18 @@ Status wtRCToStatus_slow(int retCode, WT_SESSION* session, StringData prefix) {
     // Don't abort on WT_PANIC when repairing, as the error will be handled at a higher layer.
     fassert(28559, retCode != WT_PANIC || storageGlobalParams.repair);
 
-    auto s = generateContextStrStream(prefix, wiredtiger_strerror(retCode), retCode);
+    int err = 0;
+    int subLevelErr = WT_NONE;
+    const char* reason = "";
+    const char* strerror = wiredtiger_strerror(retCode);
+
+    if (session) {
+        session->get_last_error(session, &err, &subLevelErr, &reason);
+    }
+
+    // Combine the sublevel err context with the generic context
+    std::string errContext = std::string(strerror) + (reason ? " - " : "") + reason;
+    auto s = generateContextStrStream(prefix, errContext.c_str(), retCode);
 
     if (retCode == EINVAL) {
         return Status(ErrorCodes::BadValue, s);

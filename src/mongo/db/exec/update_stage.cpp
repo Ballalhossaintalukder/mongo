@@ -29,14 +29,6 @@
 
 #include "mongo/db/exec/update_stage.h"
 
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
@@ -47,7 +39,6 @@
 #include "mongo/db/catalog/document_validation.h"
 #include "mongo/db/client.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/matcher/match_details.h"
 #include "mongo/db/exec/matcher/matcher.h"
@@ -64,6 +55,7 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/shard_id.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/write_unit_of_work.h"
@@ -81,6 +73,14 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -137,7 +137,7 @@ UpdateStage::UpdateStage(ExpressionContext* expCtx,
                          const UpdateStageParams& params,
                          WorkingSet* ws,
                          CollectionAcquisition collection)
-    : RequiresWritableCollectionStage(kStageType.rawData(), expCtx, collection),
+    : RequiresWritableCollectionStage(kStageType.data(), expCtx, collection),
       _params(params),
       _ws(ws),
       _doc(params.driver->getDocument()),

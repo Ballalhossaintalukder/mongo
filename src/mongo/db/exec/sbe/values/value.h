@@ -37,21 +37,6 @@
 // IWYU pragma: no_include "boost/predef/hardware/simd/x86/versions.h"
 // IWYU pragma: no_include "ext/alloc_traits.h"
 // IWYU pragma: no_include "emmintrin.h"
-#include <algorithm>
-#include <array>
-#include <bitset>
-#include <climits>
-#include <cstdint>
-#include <cstring>
-#include <limits>
-#include <memory>
-#include <ostream>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/string_data.h"
@@ -78,6 +63,21 @@
 #include "mongo/util/represent_as.h"
 #include "mongo/util/shared_buffer.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <array>
+#include <bitset>
+#include <climits>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <ostream>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 /**
@@ -1557,7 +1557,7 @@ inline CellBlock* getCellBlock(Value v) {
 
 inline bool canUseSmallString(StringData input) {
     auto length = input.size();
-    auto ptr = input.rawData();
+    auto ptr = input.data();
     auto end = ptr + length;
     return length <= kSmallStringMaxLength && std::find(ptr, end, '\0') == end;
 }
@@ -1571,14 +1571,14 @@ inline std::pair<TypeTags, Value> makeSmallString(StringData input) {
 
     Value smallString{0};
     auto buf = getRawStringView(TypeTags::StringSmall, smallString);
-    tassert(9462500, "'input.rawData()' can't be a nullptr", input.rawData());
-    memcpy(buf, input.rawData(), input.size());
+    tassert(9462500, "'input.data()' can't be a nullptr", input.data());
+    memcpy(buf, input.data(), input.size());
     return {TypeTags::StringSmall, smallString};
 }
 
 inline std::pair<TypeTags, Value> makeBigString(StringData input) {
     auto len = input.size();
-    auto ptr = input.rawData();
+    auto ptr = input.data();
 
     invariant(len < static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
 

@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <iosfwd>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -52,6 +39,8 @@
 #include "mongo/db/catalog/collection_operation_source.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_options_gen.h"
+#include "mongo/db/catalog/durable_catalog_entry.h"
+#include "mongo/db/catalog/durable_catalog_entry_metadata.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/collection_crud/capped_visibility.h"
@@ -69,10 +58,9 @@
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/session/logical_session_id.h"
-#include "mongo/db/storage/bson_collection_catalog_entry.h"
-#include "mongo/db/storage/durable_catalog_entry.h"
 #include "mongo/db/storage/ident.h"
 #include "mongo/db/storage/record_store.h"
+#include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/db/timeseries/mixed_schema_buckets_state.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
@@ -84,6 +72,20 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <iosfwd>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -167,7 +169,7 @@ public:
             OperationContext* opCtx,
             const NamespaceString& nss,
             RecordId catalogId,
-            std::shared_ptr<BSONCollectionCatalogEntry::MetaData> metadata,
+            std::shared_ptr<durable_catalog::CatalogEntryMetaData> metadata,
             std::unique_ptr<RecordStore> rs) const = 0;
     };
 
@@ -247,7 +249,7 @@ public:
      */
     virtual Status initFromExisting(OperationContext* opCtx,
                                     const std::shared_ptr<const Collection>& collection,
-                                    const DurableCatalogEntry& catalogEntry,
+                                    const durable_catalog::CatalogEntry& catalogEntry,
                                     boost::optional<Timestamp> readTimestamp) = 0;
 
     virtual bool isInitialized() const {
@@ -340,11 +342,10 @@ public:
     /**
      * Returns a non-ok Status if validator is not legal for this collection.
      */
-    virtual Validator parseValidator(OperationContext* opCtx,
-                                     const BSONObj& validator,
-                                     MatchExpressionParser::AllowedFeatureSet allowedFeatures,
-                                     boost::optional<multiversion::FeatureCompatibilityVersion>
-                                         maxFeatureCompatibilityVersion) const = 0;
+    virtual Validator parseValidator(
+        OperationContext* opCtx,
+        const BSONObj& validator,
+        MatchExpressionParser::AllowedFeatureSet allowedFeatures) const = 0;
 
     /**
      * Sets the validator for this collection.
@@ -627,7 +628,7 @@ public:
     virtual bool isIndexReady(StringData indexName) const = 0;
 
     virtual void replaceMetadata(OperationContext* opCtx,
-                                 std::shared_ptr<BSONCollectionCatalogEntry::MetaData> md) = 0;
+                                 std::shared_ptr<durable_catalog::CatalogEntryMetaData> md) = 0;
 
     virtual bool isMetadataEqual(const BSONObj& otherMetadata) const = 0;
 

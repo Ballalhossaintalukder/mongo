@@ -34,12 +34,6 @@
 #error This file assumes a UNICODE WIN32 build
 #endif
 
-#include "mongo/platform/basic.h"
-
-#include <string>
-#include <vector>
-#include <versionhelpers.h>
-#include <winhttp.h>
 
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -52,6 +46,12 @@
 #include "mongo/util/str.h"
 #include "mongo/util/text.h"
 #include "mongo/util/winutil.h"
+
+#include <string>
+#include <vector>
+
+#include <versionhelpers.h>
+#include <winhttp.h>
 
 namespace mongo {
 namespace {
@@ -184,7 +184,7 @@ public:
         };
 
         // Break down URL for handling below.
-        const auto urlString = toNativeString(urlSD.toString().c_str());
+        const auto urlString = toNativeString(std::string{urlSD}.c_str());
         auto url = uassertStatusOK(parseUrl(urlString));
         uassert(
             ErrorCodes::BadValue, "URL endpoint must be https://", url.https || _allowInsecureHTTP);

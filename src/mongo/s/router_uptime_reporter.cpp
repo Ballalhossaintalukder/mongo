@@ -28,8 +28,7 @@
  */
 
 
-#include <memory>
-#include <string>
+#include "mongo/s/router_uptime_reporter.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -49,7 +48,6 @@
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/s/catalog/type_mongos.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/router_uptime_reporter.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
 #include "mongo/util/duration.h"
@@ -60,6 +58,9 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/version.h"
+
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -91,11 +92,11 @@ void reportStatus(OperationContext* opCtx,
     MongosType mType;
     mType.setName(instanceId);
     mType.setCreated(created);
-    mType.setPing(jsTime());
+    mType.setPing(Date_t::now());
     mType.setUptime(upTimeTimer.seconds());
     // balancer is never active in the router. Here for backwards compatibility only.
     mType.setWaiting(true);
-    mType.setMongoVersion(VersionInfoInterface::instance().version().toString());
+    mType.setMongoVersion(std::string{VersionInfoInterface::instance().version()});
     auto statusWith = getHostFQDNs(hostName, HostnameCanonicalizationMode::kForwardAndReverse);
     if (statusWith.isOK()) {
         mType.setAdvisoryHostFQDNs(statusWith.getValue());
@@ -130,7 +131,7 @@ RouterUptimeReporter& RouterUptimeReporter::get(ServiceContext* serviceContext) 
 void RouterUptimeReporter::startPeriodicThread(ServiceContext* serviceContext) {
     invariant(!_thread.joinable());
 
-    Date_t created = jsTime();
+    Date_t created = Date_t::now();
 
     _thread = stdx::thread([serviceContext, created] {
         // TODO(SERVER-74658): Please revisit if this thread could be made killable.

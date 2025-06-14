@@ -27,19 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <set>
-#include <stack>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <absl/container/flat_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <s2cellid.h>
+#include "mongo/db/matcher/doc_validation_error.h"
 
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
@@ -51,7 +39,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/matcher/matcher.h"
 #include "mongo/db/geo/geometry_container.h"
-#include "mongo/db/matcher/doc_validation_error.h"
 #include "mongo/db/matcher/doc_validation_util.h"
 #include "mongo/db/matcher/expression_always_boolean.h"
 #include "mongo/db/matcher/expression_array.h"
@@ -91,6 +78,21 @@
 #include "mongo/util/pcre.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <set>
+#include <stack>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <s2cellid.h>
+
+#include <absl/container/flat_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::doc_validation_error {
 namespace {
@@ -538,9 +540,9 @@ ItemsKeywordType toItemsKeywordType(
     }
     if ("additionalItems" == errorAnnotation->tag) {
         switch (errorAnnotation->annotation.firstElementType()) {
-            case BSONType::Bool:
+            case BSONType::boolean:
                 return ItemsKeywordType::kAdditionalItemsFalse;
-            case BSONType::Object:
+            case BSONType::object:
                 return ItemsKeywordType::kAdditionalItemsSchema;
             default:
                 MONGO_UNREACHABLE;
@@ -644,7 +646,7 @@ void generatePatternPropertyError(const InternalSchemaAllowedPropertiesMatchExpr
     // Only generate an error if we found a regex which matches a property that failed to match
     // against the corresponding sub-schema.
     if (ctx->shouldGenerateError(expr) && ctx->haveLatestCompleteError() && element) {
-        auto propertyName = element.fieldNameStringData().toString();
+        auto propertyName = std::string{element.fieldNameStringData()};
         BSONObjBuilder patternBuilder;
         patternBuilder.append("propertyName", propertyName);
         appendSchemaAnnotations(*patternSchema.second->getFilter(), patternBuilder);
@@ -684,7 +686,7 @@ void generateAdditionalPropertiesSchemaError(
     builder.append("operatorName", "additionalProperties");
     appendSchemaAnnotations(*expr.getChild(0), builder);
     builder.append("reason", "at least one additional property did not match the subschema");
-    builder.append("failingProperty", firstFailingElement.fieldNameStringData().toString());
+    builder.append("failingProperty", std::string{firstFailingElement.fieldNameStringData()});
     ctx->appendLatestCompleteError(&builder);
 }
 
@@ -704,7 +706,7 @@ void generateAllowedPropertiesSchemaError(
         if (childIndex == 0) {
             // We handle the {'additionalProperties': <schema>} case here after we've walked the
             // tree corresponding to the additionalProperties keyword.
-            if (expr.getErrorAnnotation()->annotation.firstElementType() == BSONType::Object) {
+            if (expr.getErrorAnnotation()->annotation.firstElementType() == BSONType::object) {
                 generateAdditionalPropertiesSchemaError(expr, ctx);
             }
         } else {
@@ -902,11 +904,11 @@ public:
 
             // Only generate an error in the boolean case if the 'additionalProperties' expression
             // evaluates to false.
-            if (additionalPropertiesType == BSONType::Bool &&
+            if (additionalPropertiesType == BSONType::boolean &&
                 !exec::matcher::matchesBSON(additionalPropertiesExpr,
                                             _context->getCurrentDocument())) {
                 generateAdditionalPropertiesFalseError(additionalProperties, _context);
-            } else if (additionalPropertiesType == BSONType::Object) {
+            } else if (additionalPropertiesType == BSONType::object) {
                 // In the case of an additionalProperties keyword which takes a schema argument,
                 // identify the first additional property which violates the subschema, if such a
                 // property exists.
@@ -933,7 +935,7 @@ public:
             // Only generate an error in the normal case since if the value exists and it is
             // encrypted, in the inverted case, this node's sibling expression will generate an
             // appropriate error.
-            if (elem.type() == BSONType::BinData && elem.binDataType() == BinDataType::Encrypt &&
+            if (elem.type() == BSONType::binData && elem.binDataType() == BinDataType::Encrypt &&
                 _context->getCurrentInversion() == InvertError::kNormal) {
                 appendOperatorName(*expr);
                 appendErrorReason(kNormalReason, kInvertedReason);
@@ -958,7 +960,7 @@ public:
             auto elem = cursor->next().element();
 
             appendOperatorName(*expr);
-            if (elem.type() != BSONType::BinData || elem.binDataType() != BinDataType::Encrypt) {
+            if (elem.type() != BSONType::binData || elem.binDataType() != BinDataType::Encrypt) {
                 appendErrorReason(kNotEncryptedReason, kInvertedReason);
             } else {
                 appendErrorReason(kBadValueTypeReason, kInvertedReason);
@@ -993,10 +995,10 @@ public:
             "considered value is not a multiple of the specified value";
         static constexpr auto kInvertedReason =
             "considered value is a multiple of the specified value";
-        static const std::set<BSONType> kExpectedTypes{BSONType::NumberLong,
-                                                       BSONType::NumberDouble,
-                                                       BSONType::NumberDecimal,
-                                                       BSONType::NumberInt};
+        static const std::set<BSONType> kExpectedTypes{BSONType::numberLong,
+                                                       BSONType::numberDouble,
+                                                       BSONType::numberDecimal,
+                                                       BSONType::numberInt};
         generatePathError(*expr,
                           kNormalReason,
                           kInvertedReason,
@@ -1016,7 +1018,7 @@ public:
             // AndMatchExpression with error annotation "items".
             tassert(9740317,
                     "Must have array to generate error for",
-                    attributeValue.type() == BSONType::Array);
+                    attributeValue.type() == BSONType::array);
             auto valueAsArray = BSONArray(attributeValue.embeddedObject());
 
             // If array is shorter than the index the match expression applies to, then document
@@ -1077,7 +1079,7 @@ public:
             // ExistsMatchExpression which will explain a missing path error or an explicit
             // InternalSchemaTypeExpression that will explain a type did not match error.
             bool ignoreSubTree = false;
-            if (elem.type() == BSONType::Object) {
+            if (elem.type() == BSONType::object) {
                 _context->setChildInput(elem.embeddedObject(), _context->getCurrentInversion());
             } else {
                 ignoreSubTree = true;
@@ -1101,7 +1103,7 @@ public:
         static constexpr auto normalReason = "found a duplicate item";
         _context->pushNewFrame(*expr);
         if (auto attributeValue =
-                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::Array})) {
+                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::array})) {
             appendErrorDetails(*expr);
             appendErrorReason(normalReason, "");
             auto attributeValueAsArray = BSONArray(attributeValue.embeddedObject());
@@ -1155,10 +1157,10 @@ public:
     void visit(const ModMatchExpression* expr) final {
         static constexpr auto kNormalReason = "$mod did not evaluate to expected remainder";
         static constexpr auto kInvertedReason = "$mod did evaluate to expected remainder";
-        static const std::set<BSONType> kExpectedTypes{BSONType::NumberLong,
-                                                       BSONType::NumberDouble,
-                                                       BSONType::NumberDecimal,
-                                                       BSONType::NumberInt};
+        static const std::set<BSONType> kExpectedTypes{BSONType::numberLong,
+                                                       BSONType::numberDouble,
+                                                       BSONType::numberDecimal,
+                                                       BSONType::numberInt};
         generatePathError(*expr, kNormalReason, kInvertedReason, &kExpectedTypes);
     }
     void visit(const NorMatchExpression* expr) final {
@@ -1201,7 +1203,7 @@ public:
         static constexpr auto kNormalReason = "regular expression did not match";
         static constexpr auto kInvertedReason = "regular expression did match";
         static const std::set<BSONType> kExpectedTypes{
-            BSONType::String, BSONType::Symbol, BSONType::RegEx};
+            BSONType::string, BSONType::symbol, BSONType::regEx};
         bool isJsonSchemaKeyword = expr->getErrorAnnotation()->tag == "pattern";
         generatePathError(*expr,
                           kNormalReason,
@@ -1499,10 +1501,10 @@ private:
         static const std::set<std::string> kJsonSchemaKeywords = {"minimum", "maximum"};
         if (kJsonSchemaKeywords.find(expr->getErrorAnnotation()->tag) !=
             kJsonSchemaKeywords.end()) {
-            static const std::set<BSONType> kExpectedTypes{BSONType::NumberLong,
-                                                           BSONType::NumberDouble,
-                                                           BSONType::NumberDecimal,
-                                                           BSONType::NumberInt};
+            static const std::set<BSONType> kExpectedTypes{BSONType::numberLong,
+                                                           BSONType::numberDouble,
+                                                           BSONType::numberDecimal,
+                                                           BSONType::numberInt};
             generatePathError(*expr,
                               kNormalReason,
                               kInvertedReason,
@@ -1551,7 +1553,7 @@ private:
     void generateArrayError(const ArrayMatchingMatchExpression* expr,
                             const std::string& normalReason,
                             const std::string& invertedReason) {
-        static const std::set<BSONType> expectedTypes{BSONType::Array};
+        static const std::set<BSONType> expectedTypes{BSONType::array};
         generatePathError(
             *expr, normalReason, invertedReason, &expectedTypes, LeafArrayBehavior::kNoTraversal);
     }
@@ -1585,11 +1587,11 @@ private:
     void generateError(const BitTestMatchExpression* expr) {
         static constexpr auto kNormalReason = "bitwise operator failed to match";
         static constexpr auto kInvertedReason = "bitwise operator matched successfully";
-        static const std::set<BSONType> kExpectedTypes{BSONType::NumberInt,
-                                                       BSONType::NumberLong,
-                                                       BSONType::NumberDouble,
-                                                       BSONType::NumberDecimal,
-                                                       BSONType::BinData};
+        static const std::set<BSONType> kExpectedTypes{BSONType::numberInt,
+                                                       BSONType::numberLong,
+                                                       BSONType::numberDouble,
+                                                       BSONType::numberDecimal,
+                                                       BSONType::binData};
         generatePathError(*expr, kNormalReason, kInvertedReason, &kExpectedTypes);
     }
 
@@ -1678,7 +1680,7 @@ private:
     void generateStringLengthError(const InternalSchemaStrLengthMatchExpression& expr) {
         static constexpr auto kNormalReason = "specified string length was not satisfied";
         static constexpr auto kInvertedReason = "specified string length was satisfied";
-        static const std::set<BSONType> expectedTypes{BSONType::String};
+        static const std::set<BSONType> expectedTypes{BSONType::string};
         generatePathError(expr,
                           kNormalReason,
                           kInvertedReason,
@@ -1753,7 +1755,7 @@ private:
         static constexpr auto normalReason = "array did not match specified length";
         _context->pushNewFrame(*expr);
         if (auto attributeValue =
-                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::Array})) {
+                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::array})) {
             appendErrorDetails(*expr);
             appendErrorReason(normalReason, "");
             auto attributeValueAsArray = BSONArray(attributeValue.embeddedObject());
@@ -1774,7 +1776,7 @@ private:
         static constexpr auto normalReason = "found additional items";
         _context->pushNewFrame(*expr);
         if (auto attributeValue =
-                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::Array})) {
+                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::array})) {
             appendErrorDetails(*expr);
             appendErrorReason(normalReason, "");
             appendAdditionalItems(BSONArray(attributeValue.embeddedObject()), expr->startIndex());
@@ -1805,7 +1807,7 @@ private:
                 expr.getChild(0)->matchType() ==
                     MatchExpression::MatchType::INTERNAL_SCHEMA_MATCH_ARRAY_INDEX);
         if (getValueForKeywordExpressionIfShouldGenerateError(*expr.getChild(0),
-                                                              {BSONType::Array})) {
+                                                              {BSONType::array})) {
             appendOperatorName(expr);
 
             // Since the "items" keyword set to an array of subschemas logically behaves as "$and",
@@ -1846,7 +1848,7 @@ private:
         const std::string& invertedReason) {
         _context->pushNewFrame(*expr);
         if (auto attributeValue =
-                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::Array})) {
+                getValueForKeywordExpressionIfShouldGenerateError(*expr, {BSONType::array})) {
             appendOperatorName(*expr);
             appendSchemaAnnotations(*expr->getChild(0), _context->getCurrentObjBuilder());
             appendErrorReason(normalReason, invertedReason);
@@ -1858,7 +1860,7 @@ private:
                 "'InternalSchemaAllElemMatchFromIndexMatchExpression' expression",
                 failingElement);
             _context->getCurrentObjBuilder().appendNumber(
-                "itemIndex"_sd, std::stoll(failingElement.fieldNameStringData().toString()));
+                "itemIndex"_sd, std::stoll(std::string{failingElement.fieldNameStringData()}));
             _context->setChildInput(toObjectWithPlaceholder(failingElement),
                                     _context->getCurrentInversion());
         } else {
@@ -2105,7 +2107,7 @@ public:
         // If this node reports a path as its error, set 'latestCompleteError' appropriately.
         if (_context->shouldGenerateError(*expr) &&
             expr->getErrorAnnotation()->tag == "_propertyExists") {
-            _context->latestCompleteError = expr->path().toString();
+            _context->latestCompleteError = std::string{expr->path()};
             _context->popFrame();
         } else {
             _context->finishCurrentError(expr);
@@ -2388,7 +2390,7 @@ bool checkValidationErrorDepth(const BSONObj& generatedError) {
             return false;
         }
         auto next = stack.top().next();
-        if (next.type() == BSONType::Object || next.type() == BSONType::Array) {
+        if (next.type() == BSONType::object || next.type() == BSONType::array) {
             stack.emplace(next.embeddedObject());
         }
         if (!stack.top().more()) {
@@ -2458,7 +2460,7 @@ std::shared_ptr<const ErrorExtraInfo> DocumentValidationFailureInfo::parse(const
     auto errInfo = obj["errInfo"];
     uassert(4878100,
             "DocumentValidationFailureInfo must have a field 'errInfo' of type object",
-            errInfo.type() == BSONType::Object);
+            errInfo.type() == BSONType::object);
     return std::make_shared<DocumentValidationFailureInfo>(errInfo.embeddedObject());
 }
 

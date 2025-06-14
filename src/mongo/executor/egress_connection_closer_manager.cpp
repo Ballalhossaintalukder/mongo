@@ -28,14 +28,15 @@
  */
 
 
+#include "mongo/executor/egress_connection_closer_manager.h"
+
+#include "mongo/util/decorable.h"
+#include "mongo/util/net/hostandport.h"
+
 #include <mutex>
 #include <utility>
 
 #include <absl/container/node_hash_set.h>
-
-#include "mongo/executor/egress_connection_closer_manager.h"
-#include "mongo/util/decorable.h"
-#include "mongo/util/net/hostandport.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kExecutor
 
@@ -62,20 +63,32 @@ void EgressConnectionCloserManager::remove(EgressConnectionCloser* ecc) {
     _egressConnectionClosers.erase(ecc);
 }
 
-void EgressConnectionCloserManager::dropConnections() {
+void EgressConnectionCloserManager::dropConnections(const Status& status) {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
     for (auto ecc : _egressConnectionClosers) {
-        ecc->dropConnections();
+        ecc->dropConnections(status);
     }
 }
 
-void EgressConnectionCloserManager::dropConnections(const HostAndPort& hostAndPort) {
+void EgressConnectionCloserManager::dropConnections() {
+    dropConnections(
+        Status(ErrorCodes::PooledConnectionsDropped, "Dropping all egress connections"));
+}
+
+void EgressConnectionCloserManager::dropConnections(const HostAndPort& target,
+                                                    const Status& status) {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
     for (auto ecc : _egressConnectionClosers) {
-        ecc->dropConnections(hostAndPort);
+        ecc->dropConnections(target, status);
     }
+}
+
+void EgressConnectionCloserManager::dropConnections(const HostAndPort& target) {
+    dropConnections(
+        target,
+        Status(ErrorCodes::PooledConnectionsDropped, "Drop all egress connections with a target"));
 }
 
 void EgressConnectionCloserManager::setKeepOpen(const HostAndPort& hostAndPort, bool keepOpen) {

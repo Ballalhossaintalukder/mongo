@@ -31,18 +31,6 @@
 #include "mongo/db/ttl/ttl.h"
 
 // IWYU pragma: no_include "cxxabi.h"
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstdint>
-#include <limits>
-#include <mutex>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -82,7 +70,6 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_role.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/transaction_resources.h"
@@ -108,6 +95,19 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <cstdint>
+#include <limits>
+#include <mutex>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -442,7 +442,7 @@ bool TTLMonitor::_doTTLIndexDelete(OperationContext* opCtx,
     try {
         uassertStatusOK(userAllowedWriteNS(opCtx, *nss));
 
-        const auto shardVersion = ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none);
+        const auto shardVersion = ShardVersionFactory::make(ChunkVersion::IGNORED());
         auto scopedRole = ScopedSetShardRole(opCtx, *nss, shardVersion, boost::none);
         const auto coll =
             acquireCollection(opCtx,
@@ -470,8 +470,6 @@ bool TTLMonitor::_doTTLIndexDelete(OperationContext* opCtx,
             return false;
         }
 
-        ResourceConsumption::ScopedMetricsCollector scopedMetrics(opCtx, nss->dbName());
-
         if (info.isClustered()) {
             const auto& collOptions = collectionPtr->getCollectionOptions();
             uassert(5400701,
@@ -496,7 +494,7 @@ bool TTLMonitor::_doTTLIndexDelete(OperationContext* opCtx,
             return _deleteExpiredWithIndex(
                 opCtx, at, ttlCollectionCache, coll, info.getIndexName());
         }
-    } catch (const ExceptionForCat<ErrorCategory::StaleShardVersionError>& ex) {
+    } catch (const ExceptionFor<ErrorCategory::StaleShardVersionError>& ex) {
         // The TTL index tried to delete some information from a sharded collection
         // through a direct operation against the shard but the filtering metadata was
         // not available or the index version in the cache was stale.
@@ -695,7 +693,7 @@ bool TTLMonitor::_deleteExpiredWithCollscanForTimeseriesExtendedRange(
 
     auto timeSeriesOptions = collectionPtr->getTimeseriesOptions();
     std::string timeField =
-        timeseries::kControlMaxFieldNamePrefix.toString() + timeSeriesOptions->getTimeField();
+        std::string{timeseries::kControlMaxFieldNamePrefix} + timeSeriesOptions->getTimeField();
     LTEMatchExpression filter(boost::optional<StringData>{timeField},
                               Value{at - Seconds(expireAfterSeconds)});
 

@@ -27,9 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/client_cursor/cursor_response.h"
 
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
@@ -38,12 +36,15 @@
 #include "mongo/bson/oid.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/resume_token.h"
-#include "mongo/db/query/client_cursor/cursor_response.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/rpc/op_msg_rpc_impls.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -860,7 +861,7 @@ TEST_F(CursorResponseBuilderTest, buildInitialResponseEmptyBatch) {
     // This doesn't appear in the parsed response, so check it directly in the BSON
     auto cursorElt = responseBson["cursor"];
     ASSERT_FALSE(cursorElt.eoo());
-    ASSERT_EQ(cursorElt.type(), BSONType::Object);
+    ASSERT_EQ(cursorElt.type(), BSONType::object);
     auto cursorObj = cursorElt.Obj();
     ASSERT_TRUE(cursorObj.hasField("firstBatch"));
     ASSERT_FALSE(cursorObj.hasField("nextBatch"));
@@ -882,7 +883,7 @@ TEST_F(CursorResponseBuilderTest, buildSubsequentResponseEmptyBatch) {
     // This doesn't appear in the parsed response, so check it directly in the BSON
     auto cursorElt = responseObj["cursor"];
     ASSERT_FALSE(cursorElt.eoo());
-    ASSERT_EQ(cursorElt.type(), BSONType::Object);
+    ASSERT_EQ(cursorElt.type(), BSONType::object);
     auto cursorObj = cursorElt.Obj();
     ASSERT_FALSE(cursorObj.hasField("firstBatch"));
     ASSERT_TRUE(cursorObj.hasField("nextBatch"));

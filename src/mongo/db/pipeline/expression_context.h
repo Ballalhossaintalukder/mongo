@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_set.h>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -52,6 +39,7 @@
 #include "mongo/db/exec/document_value/document_comparator.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
+#include "mongo/db/feature_flag.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/document_source_change_stream_gen.h"
@@ -82,6 +70,20 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -296,14 +298,17 @@ public:
     boost::intrusive_ptr<ExpressionContext> copyWith(
         NamespaceString ns,
         boost::optional<UUID> uuid = boost::none,
-        boost::optional<std::unique_ptr<CollatorInterface>> updatedCollator = boost::none) const;
+        boost::optional<std::unique_ptr<CollatorInterface>> updatedCollator = boost::none,
+        boost::optional<std::pair<NamespaceString, std::vector<BSONObj>>> view = boost::none) const;
 
     /**
      * Returns an ExpressionContext that is identical to 'this' except for the 'subPipelineDepth'
      * and 'needsMerge' fields.
      */
     boost::intrusive_ptr<ExpressionContext> copyForSubPipeline(
-        NamespaceString nss, boost::optional<UUID> uuid = boost::none) {
+        NamespaceString nss,
+        boost::optional<UUID> uuid = boost::none,
+        boost::optional<std::pair<NamespaceString, std::vector<BSONObj>>> view = boost::none) {
         uassert(ErrorCodes::MaxSubPipelineDepthExceeded,
                 str::stream() << "Maximum number of nested sub-pipelines exceeded. Limit is "
                               << internalMaxSubPipelineViewDepth.load(),
@@ -311,7 +316,7 @@ public:
         // Initialize any referenced system variables now so that the subpipeline has the same
         // values for these variables.
         this->initializeReferencedSystemVariables();
-        auto newCopy = copyWith(std::move(nss), uuid);
+        auto newCopy = copyWith(std::move(nss), uuid, boost::none, view);
         newCopy->_params.subPipelineDepth += 1;
         // The original expCtx might have been attached to an aggregation pipeline running on the
         // shards. We must reset 'needsMerge' in order to get fully merged results for the
@@ -330,6 +335,11 @@ public:
                 str::stream() << "No resolved namespace provided for " << nss.toStringForErrorMsg(),
                 it != _params.resolvedNamespaces.end());
         return it->second;
+    }
+
+    bool hasResolvedNamespace(const NamespaceString& nss) const {
+        auto it = _params.resolvedNamespaces.find(nss);
+        return it != _params.resolvedNamespaces.end();
     }
 
     /**
@@ -370,7 +380,7 @@ public:
         _params.resolvedNamespaces = std::move(resolvedNamespaces);
     }
 
-    void addResolvedNamespace(NamespaceString nss, const ResolvedNamespace& resolvedNs) {
+    void addResolvedNamespace(const NamespaceString& nss, const ResolvedNamespace& resolvedNs) {
         auto it = _params.resolvedNamespaces.find(nss);
 
         // Assert that the resolved namespace we are adding either doesn't exist in the map or we
@@ -414,7 +424,7 @@ public:
                 getGlobalScriptEngine());
         const auto isMapReduce =
             (variables.hasValue(Variables::kIsMapReduceId) &&
-             variables.getValue(Variables::kIsMapReduceId).getType() == BSONType::Bool &&
+             variables.getValue(Variables::kIsMapReduceId).getType() == BSONType::boolean &&
              variables.getValue(Variables::kIsMapReduceId).coerceToBool());
         if (_params.inRouter) {
             invariant(!forceLoadOfStoredProcedures);
@@ -517,11 +527,32 @@ public:
     }
 
     /**
-     * Throws if the provided feature flag is not enabled in the current FCV or
-     * 'maxFeatureCompatibilityVersion' if set. Will do nothing if the feature flag is enabled
-     * or boost::none.
+     * Throws if the provided feature flag is not enabled according to the expressions
+     * VersionContext and IncrementalFeatureRolloutContext. This function assumes the caller has
+     * verified that the feature flag should be checked.
      */
-    void throwIfFeatureFlagIsNotEnabledOnFCV(StringData name, CheckableFeatureFlagRef flag);
+    void throwIfParserShouldRejectFeature(StringData name, FeatureFlag& flag);
+
+    /**
+     * Returns true if parsers should not check if feature flags are enabled on the expressions
+     * VersionContext or IncrementalFeatureRolloutContext and false otherwise.
+     *
+     * TODO SERVER-99552 remove function when support is added for 'VersionContext' for all DDL
+     * operations in replica sets. Currently, secondaries can fail to apply oplog entries when
+     * creating collections that have validators or views that depend on expressions with new query
+     * features.
+     */
+    bool shouldParserIgnoreFeatureFlagCheck() const {
+        tassert(10499200, "Operation context is not initialized", _params.opCtx);
+        return (_params.isParsingCollectionValidator || _params.isParsingViewDefinition) &&
+            !_params.opCtx->isEnforcingConstraints();
+    }
+
+    /**
+     * Throws only if the parser should check the feature flag and the feature flag provided is not
+     * enabled in the expressions VersionContext and IncrementalFeatureRolloutContext
+     */
+    void ignoreFeatureInParserOrRejectAndThrow(StringData name, FeatureFlag& flag);
 
     void setOperationContext(OperationContext* opCtx) {
         _params.opCtx = opCtx;
@@ -531,12 +562,28 @@ public:
         return _params.opCtx;
     }
 
+    VersionContext& getVersionContext() {
+        return _params.vCtx;
+    }
+
+    const VersionContext& getVersionContext() const {
+        return _params.vCtx;
+    }
+
+    IncrementalFeatureRolloutContext& getIfrContext() {
+        return _params.ifrContext;
+    }
+
+    const IncrementalFeatureRolloutContext& getIfrContext() const {
+        return _params.ifrContext;
+    }
+
     const NamespaceString& getNamespaceString() const {
         return _params.ns;
     }
 
     const NamespaceString& getUserNss() const {
-        return _params.view ? _params.view->first : getNamespaceString();
+        return _params.originalNs;
     }
 
     void setNamespaceString(NamespaceString ns) {
@@ -814,11 +861,6 @@ public:
         _params.sbePipelineCompatibility = sbePipelineCompatibility;
     }
 
-    void setMaxFeatureCompatibilityVersion(
-        boost::optional<multiversion::FeatureCompatibilityVersion> maxFeatureCompatibilityVersion) {
-        _params.maxFeatureCompatibilityVersion = std::move(maxFeatureCompatibilityVersion);
-    }
-
     const ServerSideJsConfig& getServerSideJsConfig() const {
         return _params.serverSideJsConfig;
     }
@@ -872,15 +914,6 @@ public:
     // Sets or clears the flag indicating whether we've received a TemporarilyUnavailableException.
     void setTemporarilyUnavailableException(bool v) {
         _gotTemporarilyUnavailableException = v;
-    }
-
-    // Sets or clears a flag which tells DocumentSource parsers whether any involved Collection
-    // may contain extended-range dates.
-    void setRequiresTimeseriesExtendedRangeSupport(bool v) {
-        _requiresTimeseriesExtendedRangeSupport = v;
-    }
-    bool getRequiresTimeseriesExtendedRangeSupport() const {
-        return _requiresTimeseriesExtendedRangeSupport;
     }
 
     // Sets a flag which tells DocumentSource parsers whether the pipeline contains an exchange
@@ -955,25 +988,40 @@ public:
             VersionContext::getDecoration(getOperationContext()));
     }
 
-    bool isFeatureFlagStreamsEnabled() const {
-        return _featureFlagStreams.get(VersionContext::getDecoration(getOperationContext()));
+    bool shouldParserAllowStreams() const {
+        return shouldParserIgnoreFeatureFlagCheck() || _featureFlagStreams.get(_params.vCtx);
     }
 
     bool isMapReduceCommand() const {
         return _params.isMapReduceCommand;
     }
 
+    // TODO SERVER-104725 Generalize this to hybrid search. Optionally figure out if it can be
+    // deleted.
     void setIsRankFusion() {
         _params.isRankFusion = true;
     }
 
+    // TODO SERVER-104725 Generalize this to hybrid search. Optionally figure out if it can be
+    // deleted.
     bool isRankFusion() const {
         return _params.isRankFusion;
+    }
+
+    // Sets or clears a flag which tells DocumentSource parsers whether any involved Collection
+    // may contain extended-range dates.
+    void setRequiresTimeseriesExtendedRangeSupport(bool v) {
+        _params.requiresTimeseriesExtendedRangeSupport = v;
+    }
+    bool getRequiresTimeseriesExtendedRangeSupport() const {
+        return _params.requiresTimeseriesExtendedRangeSupport;
     }
 
 protected:
     struct ExpressionContextParams {
         OperationContext* opCtx = nullptr;
+        VersionContext vCtx;
+        IncrementalFeatureRolloutContext ifrContext;
         std::unique_ptr<CollatorInterface> collator = nullptr;
         // An interface for accessing information or performing operations that have different
         // implementations on mongod and mongos, or that only make sense on one of the two.
@@ -981,6 +1029,7 @@ protected:
         // libraries from having large numbers of dependencies. This pointer is always non-null.
         std::shared_ptr<MongoProcessInterface> mongoProcessInterface = nullptr;
         NamespaceString ns;
+        NamespaceString originalNs;
         // A map from the user namespace to the resolved namespace (underlying nss and resolved view
         // pipeline), in case any views are involved. This map is only for *secondary* namespaces.
         // See `view` below for information on the resolved *primary* namespace.
@@ -1035,9 +1084,6 @@ protected:
         // The resume token version that should be generated by a change stream.
         int changeStreamTokenVersion = ResumeTokenData::kDefaultTokenVersion;
         ServerSideJsConfig serverSideJsConfig;
-        // If set, this will disallow use of features introduced in versions above the provided
-        // version.
-        boost::optional<multiversion::FeatureCompatibilityVersion> maxFeatureCompatibilityVersion;
         // Tracks the depth of nested aggregation sub-pipelines. Used to enforce depth limits.
         long long subPipelineDepth = 0;
         TailableModeEnum tailableMode = TailableModeEnum::kNormal;
@@ -1094,10 +1140,10 @@ protected:
         bool allowGenericForeignDbLookup = false;
 
         // Indicates that the pipeline is a desugared representation of a user's $rankFusion
-        // pipeline. This is necessary for guarding that $rankFusion is not yet allowed to be run
-        // over views.
-        // TODO SERVER-101661 Remove this internal flag once $rankFusion works on views.
+        // pipeline.
         bool isRankFusion = false;
+
+        bool requiresTimeseriesExtendedRangeSupport = false;
     };
 
     ExpressionContextParams _params;
@@ -1169,7 +1215,7 @@ protected:
         }
 
         void setCollator(std::shared_ptr<CollatorInterface> collator) {
-            _ptr = collator;
+            _ptr = std::move(collator);
             // If we are manually setting the collator, we shouldn't ignore it.
             _ignore = false;
         }
@@ -1205,8 +1251,6 @@ private:
     bool _gotTemporarilyUnavailableException = false;
 
     bool _isCappedDelete = false;
-
-    bool _requiresTimeseriesExtendedRangeSupport = false;
 
     bool _isIncompatibleWithMemoryTracking = false;
 
@@ -1251,7 +1295,19 @@ private:
 
 class ExpressionContextBuilder {
 public:
+    // When building an ExpressionContext, call exactly one of these 'opCtx()' overloads.
+    //
+    // Set the OperationContext and then initialize a VersionContext based on the OperationContext's
+    // VersionContext when it is initialized and the current global FeatureCompatibilityVersion
+    // otherwise.
     ExpressionContextBuilder& opCtx(OperationContext*);
+
+    // Set the OperationContext and initiailize the VersionContext without considering the
+    // OperationContext'x VersionContext or the global FeatureCompatibilityVersion. Intended for
+    // ExpressionContext cloning.
+    ExpressionContextBuilder& opCtx(OperationContext*, VersionContext vCtx);
+
+    ExpressionContextBuilder& ifrContext(const IncrementalFeatureRolloutContext& ifrContext);
     ExpressionContextBuilder& collator(std::unique_ptr<CollatorInterface>&&);
     ExpressionContextBuilder& mongoProcessInterface(std::shared_ptr<MongoProcessInterface>);
     ExpressionContextBuilder& ns(NamespaceString);
@@ -1287,6 +1343,7 @@ public:
     ExpressionContextBuilder& enabledCounters(bool);
     ExpressionContextBuilder& forcePlanCache(bool);
     ExpressionContextBuilder& allowGenericForeignDbLookup(bool);
+    ExpressionContextBuilder& requiresTimeseriesExtendedRangeSupport(bool);
     ExpressionContextBuilder& jsHeapLimitMB(boost::optional<int>);
     ExpressionContextBuilder& timeZoneDatabase(const TimeZoneDatabase*);
     ExpressionContextBuilder& changeStreamTokenVersion(int);
@@ -1297,13 +1354,12 @@ public:
     ExpressionContextBuilder& sbeWindowCompatibility(SbeCompatibility);
     ExpressionContextBuilder& sbePipelineCompatibility(SbeCompatibility);
     ExpressionContextBuilder& serverSideJsConfig(const ExpressionContext::ServerSideJsConfig&);
-    ExpressionContextBuilder& maxFeatureCompatibilityVersion(
-        boost::optional<multiversion::FeatureCompatibilityVersion>);
     ExpressionContextBuilder& subPipelineDepth(long long);
     ExpressionContextBuilder& initialPostBatchResumeToken(BSONObj);
     ExpressionContextBuilder& tailableMode(TailableModeEnum);
     ExpressionContextBuilder& view(
         boost::optional<std::pair<NamespaceString, std::vector<BSONObj>>>);
+    ExpressionContextBuilder& originalNs(NamespaceString);
 
     /**
      * Add kSessionTransactionsTableNamespace, and kRsOplogNamespace

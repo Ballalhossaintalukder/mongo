@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <memory>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/db/service_context.h"
 #include "mongo/executor/async_client_factory.h"
@@ -41,6 +39,8 @@
 #include "mongo/util/cancellation.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/future.h"
+
+#include <memory>
 
 namespace mongo::executor {
 
@@ -113,12 +113,12 @@ public:
         _pool->shutdown();
     }
 
-    void dropConnections() override {
-        _pool->dropConnections();
+    void dropConnections(const Status& status) override {
+        _pool->dropConnections(status);
     }
 
-    void dropConnections(const HostAndPort& hostAndPort) override {
-        _pool->dropConnections(hostAndPort);
+    void dropConnections(const HostAndPort& target, const Status& status) override {
+        _pool->dropConnections(target, status);
     }
 
     void setKeepOpen(const HostAndPort& hostAndPort, bool keepOpen) override {

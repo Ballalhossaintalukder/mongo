@@ -27,15 +27,16 @@
  *    it in the license file.
  */
 
-#include <bitset>
-#include <cstddef>
-#include <string>
+#include "mongo/db/auth/action_set.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
-#include "mongo/db/auth/action_set.h"
 #include "mongo/db/auth/action_type_gen.h"
+
+#include <bitset>
+#include <cstddef>
+#include <string>
 
 namespace mongo {
 
@@ -101,7 +102,7 @@ ActionSet ActionSet::parseFromStringVector(const std::vector<StringData>& action
         auto swActionType = parseActionFromString(action);
         if (!swActionType.isOK()) {
             if ((swActionType.getStatus() == ErrorCodes::FailedToParse) && unrecognizedActions) {
-                unrecognizedActions->push_back(action.toString());
+                unrecognizedActions->push_back(std::string{action});
             }
             continue;
         }
@@ -128,8 +129,8 @@ std::string ActionSet::toString() const {
         auto action = static_cast<ActionType>(i);
         if (contains(action)) {
             StringData name = toStringData(action);
-            str.append(sep.rawData(), sep.size());
-            str.append(name.rawData(), name.size());
+            str.append(sep.data(), sep.size());
+            str.append(name.data(), name.size());
             sep = ","_sd;
         }
     }

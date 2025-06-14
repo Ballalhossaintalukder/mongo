@@ -29,21 +29,6 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/static_assert.hpp>
-#include <cfloat>
-#include <cinttypes>
-#include <climits>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <sstream>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
@@ -57,11 +42,28 @@
 #include "mongo/stdx/type_traits.h"
 #include "mongo/util/allocator.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/ctype.h"
 #include "mongo/util/itoa.h"
 #include "mongo/util/shared_buffer.h"
 #include "mongo/util/shared_buffer_fragment.h"
 #include "mongo/util/str_basic.h"
 #include "mongo/util/tracking/allocator.h"
+
+#include <cfloat>
+#include <cinttypes>
+#include <climits>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/static_assert.hpp>
 
 namespace mongo {
 
@@ -818,12 +820,12 @@ public:
         const int prev = _buf.len();
         const int maxSize = 32;
         char* start = _buf.grow(maxSize);
-        int z = snprintf(start, maxSize, "%.16g", x);
+        int z = std::isnan(x) ? "nan\0"_sd.copy(start, maxSize) - 1
+                              : snprintf(start, maxSize, "%.16g", x);
         MONGO_verify(z >= 0);
         MONGO_verify(z < maxSize);
         _buf.setlen(prev + z);
-        if (strchr(start, '.') == nullptr && strchr(start, 'E') == nullptr &&
-            strchr(start, 'N') == nullptr) {
+        if (str::isAllDigits(*start == '-' ? start + 1 : start)) {
             write(".0", 2);
         }
     }

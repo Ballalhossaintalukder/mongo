@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <type_traits>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/catalog/type_shard.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -40,9 +36,14 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
-#include "mongo/s/catalog/type_shard.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <type_traits>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -91,14 +92,14 @@ StatusWith<ShardType> ShardType::fromBSON(const BSONObj& source) {
     if (source.hasField(tags.name())) {
         shard._tags = std::vector<std::string>();
         BSONElement tagsElement;
-        Status status = bsonExtractTypedField(source, tags.name(), Array, &tagsElement);
+        Status status = bsonExtractTypedField(source, tags.name(), BSONType::array, &tagsElement);
         if (!status.isOK())
             return status;
 
         BSONObjIterator it(tagsElement.Obj());
         while (it.more()) {
             BSONElement tagElement = it.next();
-            if (tagElement.type() != String) {
+            if (tagElement.type() != BSONType::string) {
                 return Status(ErrorCodes::TypeMismatch,
                               str::stream() << "Elements in \"" << tags.name()
                                             << "\" array must be strings but found "
