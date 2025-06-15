@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -48,6 +41,14 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/timer.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -174,7 +175,7 @@ public:
      * The database will be validated against the current database for this session.
      */
     void updateDatabase(StringData database, bool isMechX509) {
-        updateUserName(UserName("", database.toString()), isMechX509);
+        updateUserName(UserName("", std::string{database}), isMechX509);
     }
 
     /**

@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <sys/prctl.h>
-#include <sys/resource.h>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -45,6 +37,15 @@
 #include "mongo/util/functional.h"
 #include "mongo/util/processinfo.h"
 #include "mongo/util/procparser.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <sys/prctl.h>
+#include <sys/resource.h>
 
 namespace mongo {
 
@@ -233,7 +234,7 @@ class SimpleFunctionCollector final : public FTDCCollectorInterface {
 public:
     SimpleFunctionCollector(StringData name,
                             unique_function<void(OperationContext*, BSONObjBuilder&)> collectFn)
-        : _name(name.toString()), _collectFn(std::move(collectFn)) {}
+        : _name(std::string{name}), _collectFn(std::move(collectFn)) {}
 
     void collect(OperationContext* opCtx, BSONObjBuilder& builder) override {
         _collectFn(opCtx, builder);

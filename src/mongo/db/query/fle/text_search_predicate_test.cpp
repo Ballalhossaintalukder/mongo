@@ -27,7 +27,24 @@
  *    it in the license file.
  */
 
+#include "mongo/db/query/fle/text_search_predicate.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonelement.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/json.h"
+#include "mongo/crypto/fle_crypto.h"
 #include "mongo/crypto/fle_tokens.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/exec/document_value/value.h"
+#include "mongo/db/pipeline/expression.h"
+#include "mongo/db/pipeline/expression_context.h"
+#include "mongo/db/query/fle/encrypted_predicate_test_fixtures.h"
+#include "mongo/stdx/unordered_map.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/assert_util.h"
+
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -37,21 +54,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/json.h"
-#include "mongo/crypto/fle_crypto.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/pipeline/expression.h"
-#include "mongo/db/pipeline/expression_context.h"
-#include "mongo/db/query/fle/encrypted_predicate_test_fixtures.h"
-#include "mongo/db/query/fle/text_search_predicate.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/assert_util.h"
 
 namespace mongo::fle {
 namespace {
@@ -168,7 +170,7 @@ private:
     };
     // Key the tags for agg expressions based on values only, since we don't have access to the
     // field name. The Value in the map must contain BSONBinData type used for payloads.
-    std::unordered_map<Value, std::vector<PrfBlock>, KeyHash, KeyEqual> _exprTags;
+    stdx::unordered_map<Value, std::vector<PrfBlock>, KeyHash, KeyEqual> _exprTags;
 };
 
 class TextSearchPredicateRewriteTestWithFFP : public EncryptedPredicateRewriteTest {
@@ -304,7 +306,7 @@ std::unique_ptr<Expression> makeEncStrStartsWith(ExpressionContext* const expCtx
     static_assert(std::is_same_v<T, BSONObj> || std::is_same_v<T, Value>);
 
     auto fieldpath = ExpressionFieldPath::createPathFromString(
-        expCtx, path.toString(), expCtx->variablesParseState);
+        expCtx, std::string{path}, expCtx->variablesParseState);
 
     if constexpr (std::is_same_v<T, BSONObj>) {
         return std::make_unique<ExpressionEncStrStartsWith>(
@@ -325,7 +327,7 @@ std::unique_ptr<Expression> makeEncStrEndsWith(ExpressionContext* const expCtx,
     static_assert(std::is_same_v<T, BSONObj> || std::is_same_v<T, Value>);
 
     auto fieldpath = ExpressionFieldPath::createPathFromString(
-        expCtx, path.toString(), expCtx->variablesParseState);
+        expCtx, std::string{path}, expCtx->variablesParseState);
 
     if constexpr (std::is_same_v<T, BSONObj>) {
         return std::make_unique<ExpressionEncStrEndsWith>(
@@ -346,7 +348,7 @@ std::unique_ptr<Expression> makeEncStrContains(ExpressionContext* const expCtx,
     static_assert(std::is_same_v<T, BSONObj> || std::is_same_v<T, Value>);
 
     auto fieldpath = ExpressionFieldPath::createPathFromString(
-        expCtx, path.toString(), expCtx->variablesParseState);
+        expCtx, std::string{path}, expCtx->variablesParseState);
 
     if constexpr (std::is_same_v<T, BSONObj>) {
         return std::make_unique<ExpressionEncStrContains>(
@@ -367,7 +369,7 @@ std::unique_ptr<Expression> makeEncStrNormalizedEq(ExpressionContext* const expC
     static_assert(std::is_same_v<T, BSONObj> || std::is_same_v<T, Value>);
 
     auto fieldpath = ExpressionFieldPath::createPathFromString(
-        expCtx, path.toString(), expCtx->variablesParseState);
+        expCtx, std::string{path}, expCtx->variablesParseState);
 
     if constexpr (std::is_same_v<T, BSONObj>) {
         return std::make_unique<ExpressionEncStrNormalizedEq>(

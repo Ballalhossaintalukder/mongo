@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <climits>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -84,6 +74,17 @@
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/functional.h"
 #include "mongo/util/uuid.h"
+
+#include <climits>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 /**
@@ -726,15 +727,6 @@ private:
     StatusWith<std::vector<DatabaseName>> _getDBNamesListFromShard(
         OperationContext* opCtx, std::shared_ptr<RemoteCommandTargeter> targeter);
 
-
-    /**
-     * Runs the listCollections command for every database provided on the specified host and
-     * returns the namespaces of all collections.
-     */
-    StatusWith<std::vector<CollectionType>> _getCollListFromShard(
-        OperationContext* opCtx,
-        const std::vector<DatabaseName>& dbNames,
-        std::shared_ptr<RemoteCommandTargeter> targeter);
 
     /**
      * Runs a command against a "shard" that is not yet in the cluster and thus not present in the

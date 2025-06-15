@@ -30,18 +30,6 @@
 
 #include "mongo/db/session/session_catalog_mongod.h"
 
-#include <absl/container/node_hash_set.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -92,6 +80,18 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <utility>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTransaction
 
@@ -783,7 +783,20 @@ MongoDOperationContextSessionWithoutRefresh::MongoDOperationContextSessionWithou
 MongoDOperationContextSessionWithoutRefresh::~MongoDOperationContextSessionWithoutRefresh() {
     // A session on secondaries should never be checked back in with a TransactionParticipant that
     // isn't prepared, aborted, or committed.
-    invariant(!_ti->isTransactionInProgress(_opCtx));
+    if (_ti->isTransactionInProgress(_opCtx)) {
+        auto state = _ti->transactionStateDescriptor(_opCtx);
+        auto txnNum = _opCtx->getTxnNumber().get_value_or(TxnNumber(-1));
+        auto txnRetries = _opCtx->getTxnRetryCounter().get_value_or(-1);
+        auto opId = _opCtx->getOpID();
+        auto sessionId = _opCtx->getClient()->session()->id();
+        auto lsid = _opCtx->getLogicalSessionId();
+        auto clientAddress = _opCtx->getClient()->clientAddress(true);
+        invariant(!_ti->isTransactionInProgress(_opCtx),
+                  str::stream() << "state: " << state << " txnNum: " << txnNum
+                                << " txnRetries: " << txnRetries << " opId: " << opId
+                                << " lsid: " << lsid << " sessionId: " << sessionId
+                                << " clientAddress: " << clientAddress);
+    }
 }
 
 MongoDOperationContextSessionWithoutOplogRead::MongoDOperationContextSessionWithoutOplogRead(

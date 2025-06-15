@@ -29,16 +29,16 @@
 
 #pragma once
 
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/logv2/log_service.h"
+
 #include <array>
 #include <cstdint>
 #include <initializer_list>
 #include <ostream>
 #include <sstream>
 #include <string>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/logv2/log_service.h"
 
 namespace mongo {
 
@@ -157,7 +157,7 @@ inline logv2::LogService toLogService(ClusterRole role) {
         return logv2::LogService::router;
     if (role.hasExclusively(ClusterRole::None))
         return logv2::LogService::none;
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10555100);
 }
 
 }  // namespace mongo

@@ -28,10 +28,6 @@
  */
 
 
-#include <string>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -57,12 +53,14 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/str.h"
+
+#include <string>
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -107,7 +105,7 @@ public:
         BSONElement first = cmdObj.firstElement();
         uassert(ErrorCodes::BadValue,
                 str::stream() << "namespace has invalid type " << typeName(first.type()),
-                first.canonicalType() == canonicalizeBSONType(mongo::String));
+                first.canonicalType() == canonicalizeBSONType(BSONType::string));
         return NamespaceStringUtil::deserialize(
             dbName.tenantId(), first.valueStringData(), SerializationContext::stateDefault());
     }

@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cmath>
-#include <limits>
-#include <memory>
-#include <utility>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/accumulator.h"
@@ -43,6 +37,13 @@
 #include "mongo/platform/decimal128.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cmath>
+#include <limits>
+#include <memory>
+#include <utility>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -137,17 +138,17 @@ private:
         if (!value.numeric())
             return;
         switch (value.getType()) {
-            case NumberInt:
+            case BSONType::numberInt:
                 accountForIntegral(value.getInt(), quantity);
                 break;
-            case NumberLong:
+            case BSONType::numberLong:
                 accountForIntegral(value.getLong(), quantity);
                 break;
-            case NumberDouble:
+            case BSONType::numberDouble:
                 _doubleCount += quantity;
                 accountForDouble(value.getDouble(), quantity);
                 break;
-            case NumberDecimal:
+            case BSONType::numberDecimal:
                 _decimalCount += quantity;
                 accountForDecimal(value.getDecimal(), quantity);
                 break;

@@ -28,15 +28,6 @@
  */
 
 
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -80,6 +71,15 @@
 #include "mongo/util/timer.h"
 #include "mongo/util/uuid.h"
 
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
 
@@ -89,6 +89,9 @@ namespace {
 
 constexpr char SKIP_TEMP_COLLECTION[] = "skipTempCollections";
 constexpr char EXCLUDE_RECORDIDS[] = "excludeRecordIds";
+// TODO SERVER-106005: Remove this option once all versions tested in multiversion suites can scan
+// in natural order for capped collections.
+constexpr char USE_INDEX_SCAN_FOR_CAPPED_COLLECTIONS[] = "useIndexScanForCappedCollections";
 
 std::shared_ptr<const CollectionCatalog> getConsistentCatalogAndSnapshot(OperationContext* opCtx) {
     // Loop until we get a consistent catalog and snapshot. This is only used for the lock-free
@@ -196,13 +199,13 @@ public:
         OperationShardingState::get(opCtx).setShouldSkipDirectShardConnectionChecks();
 
         std::set<std::string> desiredCollections;
-        if (cmdObj["collections"].type() == Array) {
+        if (cmdObj["collections"].type() == BSONType::array) {
             BSONObjIterator i(cmdObj["collections"].Obj());
             while (i.more()) {
                 BSONElement e = i.next();
                 uassert(ErrorCodes::BadValue,
                         "collections entries have to be strings",
-                        e.type() == String);
+                        e.type() == BSONType::string);
                 desiredCollections.insert(e.String());
             }
         }
@@ -219,9 +222,18 @@ public:
             LOGV2(6859701, "Exclude recordIds in dbHash for recordIdsReplicated collections");
         }
 
+        const bool useIndexScanForCappedCollections =
+            cmdObj.hasField(USE_INDEX_SCAN_FOR_CAPPED_COLLECTIONS) &&
+            cmdObj[USE_INDEX_SCAN_FOR_CAPPED_COLLECTIONS].trueValue();
+        if (useIndexScanForCappedCollections) {
+            LOGV2(8218000,
+                  "Performing index scan on the _id index instead of using natural order for "
+                  "capped collections");
+        }
+
         uassert(ErrorCodes::InvalidNamespace,
                 "Cannot pass empty string for 'dbHash' field",
-                !(cmdObj.firstElement().type() == mongo::String &&
+                !(cmdObj.firstElement().type() == BSONType::string &&
                   cmdObj.firstElement().valueStringData().empty()));
 
         const bool isPointInTimeRead =
@@ -267,7 +279,7 @@ public:
                 return true;
             }
 
-            if (collNss.coll().startsWith("tmp.mr.")) {
+            if (collNss.coll().starts_with("tmp.mr.")) {
                 // We skip any incremental map reduce collections as they also aren't
                 // replicated.
                 return true;
@@ -278,22 +290,24 @@ public:
             }
 
             if (desiredCollections.size() > 0 &&
-                desiredCollections.count(collNss.coll().toString()) == 0)
+                desiredCollections.count(std::string{collNss.coll()}) == 0)
                 return true;
 
             if (collection->isCapped()) {
-                cappedCollectionSet.insert(collNss.coll().toString());
+                cappedCollectionSet.insert(std::string{collNss.coll()});
             }
 
-            collectionToUUIDMap.emplace(collNss.coll().toString(), collection->uuid());
+            collectionToUUIDMap.emplace(std::string{collNss.coll()}, collection->uuid());
 
             // Compute the hash for this collection.
             // TODO(SERVER-103401): Investigate usage validity of
             // CollectionPtr::CollectionPtr_UNSAFE
-            std::string hash = _hashCollection(
-                opCtx, CollectionPtr::CollectionPtr_UNSAFE(collection), excludeRecordIds);
+            std::string hash = _hashCollection(opCtx,
+                                               CollectionPtr::CollectionPtr_UNSAFE(collection),
+                                               excludeRecordIds,
+                                               useIndexScanForCappedCollections);
 
-            collectionToHashMap[collNss.coll().toString()] = hash;
+            collectionToHashMap[std::string{collNss.coll()}] = hash;
 
             return true;
         };
@@ -361,7 +375,8 @@ public:
 private:
     std::string _hashCollection(OperationContext* opCtx,
                                 const CollectionPtr& collection,
-                                bool excludeRecordIds) {
+                                bool excludeRecordIds,
+                                bool useIndexScanForCappedCollections) {
         auto desc = collection->getIndexCatalog()->findIdIndex(opCtx);
 
         std::unique_ptr<PlanExecutor, PlanExecutor::Deleter> exec;
@@ -372,7 +387,8 @@ private:
         // the one before upgrade.
         bool includeRids = collection->areRecordIdsReplicated() && !excludeRecordIds;
 
-        if (desc && !includeRids) {
+        if (desc && !includeRids &&
+            !(collection->isCapped() && !useIndexScanForCappedCollections)) {
             exec = InternalPlanner::indexScan(opCtx,
                                               &collection,
                                               desc,
@@ -382,7 +398,8 @@ private:
                                               PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY,
                                               InternalPlanner::FORWARD,
                                               InternalPlanner::IXSCAN_FETCH);
-        } else if (collection->isClustered() || includeRids) {
+        } else if (collection->isClustered() || includeRids ||
+                   (collection->isCapped() && !useIndexScanForCappedCollections)) {
             exec = InternalPlanner::collectionScan(
                 opCtx, &collection, PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY);
         } else {

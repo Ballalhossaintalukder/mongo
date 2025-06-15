@@ -37,9 +37,6 @@
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <mutex>
-
 #include "mongo/base/counter.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -81,6 +78,9 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <algorithm>
+#include <mutex>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -562,50 +562,6 @@ void OplogFetcher::_setMetadataWriterAndReader() {
             // connections in the replication coordinator thread pool.
             return _vectorClockMetadataHook->readReplyMetadata(opCtx, _metadataObj);
         });
-}
-
-
-AggregateCommandRequest OplogFetcher::_makeAggregateCommandRequest(long long maxTimeMs,
-                                                                   Timestamp startTs) const {
-    auto opCtx = cc().makeOperationContext();
-    ResolvedNamespaceMap resolvedNamespaces;
-    auto expCtx = ExpressionContextBuilder{}
-                      .opCtx(opCtx.get())
-                      .mongoProcessInterface(MongoProcessInterface::create(opCtx.get()))
-                      .ns(_nss)
-                      .resolvedNamespace(std::move(resolvedNamespaces))
-                      .allowDiskUse(true)
-                      .bypassDocumentValidation(true)
-                      .build();
-    Pipeline::SourceContainer stages;
-    // Match oplog entries greater than or equal to the last fetched timestamp.
-    BSONObjBuilder builder(BSON("$or" << BSON_ARRAY(_config.queryFilter << BSON("ts" << startTs))));
-    builder.append("ts", BSON("$gte" << startTs));
-    stages.emplace_back(DocumentSourceMatch::createFromBson(
-        Document{{"$match", Document{builder.obj()}}}.toBson().firstElement(), expCtx));
-    stages.emplace_back(DocumentSourceFindAndModifyImageLookup::create(expCtx));
-    // Do another filter on the timestamp as the 'FindAndModifyImageLookup' stage can forge
-    // synthetic no-op entries if the oplog corresponding to the 'startTs' is a retryable
-    // 'findAndModify' entry.
-    BSONObjBuilder secondMatchBuilder(BSON("ts" << BSON("$gte" << startTs)));
-    stages.emplace_back(DocumentSourceMatch::createFromBson(
-        Document{{"$match", Document{secondMatchBuilder.obj()}}}.toBson().firstElement(), expCtx));
-    auto serializedPipeline = Pipeline::create(std::move(stages), expCtx)->serializeToBson();
-
-    AggregateCommandRequest aggRequest(_nss, std::move(serializedPipeline));
-    aggRequest.setReadConcern(_config.queryReadConcern);
-    aggRequest.setMaxTimeMS(maxTimeMs);
-    if (_config.requestResumeToken) {
-        aggRequest.setHint(BSON("$natural" << 1));
-        aggRequest.setRequestReshardingResumeToken(true);
-    }
-    if (_config.batchSize) {
-        SimpleCursorOptions cursor;
-        cursor.setBatchSize(_config.batchSize);
-        aggRequest.setCursor(cursor);
-    }
-    aggRequest.setWriteConcern(WriteConcernOptions());
-    return aggRequest;
 }
 
 FindCommandRequest OplogFetcher::_makeFindCmdRequest(long long findTimeout) const {

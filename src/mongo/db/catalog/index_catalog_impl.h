@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -55,6 +48,14 @@
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/update/document_diff_calculator.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -135,16 +136,15 @@ public:
 
     const IndexDescriptor* findIdIndex(OperationContext* opCtx) const override;
 
-    const IndexDescriptor* findIndexByName(
-        OperationContext* opCtx,
-        StringData name,
-        InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) const override;
+    const IndexDescriptor* findIndexByName(OperationContext* opCtx,
+                                           StringData name,
+                                           InclusionPolicy inclusionPolicy) const override;
 
     const IndexDescriptor* findIndexByKeyPatternAndOptions(
         OperationContext* opCtx,
         const BSONObj& key,
         const BSONObj& indexSpec,
-        InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) const override;
+        InclusionPolicy inclusionPolicy) const override;
 
     void findIndexesByKeyPattern(OperationContext* opCtx,
                                  const BSONObj& key,
@@ -154,12 +154,11 @@ public:
     void findIndexByType(OperationContext* opCtx,
                          const std::string& type,
                          std::vector<const IndexDescriptor*>& matches,
-                         InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) const override;
+                         InclusionPolicy inclusionPolicy) const override;
 
-    const IndexDescriptor* findIndexByIdent(
-        OperationContext* opCtx,
-        StringData ident,
-        InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) const override;
+    const IndexDescriptor* findIndexByIdent(OperationContext* opCtx,
+                                            StringData ident,
+                                            InclusionPolicy inclusionPolicy) const override;
 
     const IndexDescriptor* refreshEntry(OperationContext* opCtx,
                                         Collection* collection,
@@ -168,24 +167,22 @@ public:
 
     const IndexCatalogEntry* getEntry(const IndexDescriptor* desc) const override;
 
-    IndexCatalogEntry* getWritableEntryByName(
-        OperationContext* opCtx,
-        StringData name,
-        InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) override;
+    IndexCatalogEntry* getWritableEntryByName(OperationContext* opCtx,
+                                              StringData name,
+                                              InclusionPolicy inclusionPolicy) override;
 
     IndexCatalogEntry* getWritableEntryByKeyPatternAndOptions(
         OperationContext* opCtx,
         const BSONObj& key,
         const BSONObj& indexSpec,
-        InclusionPolicy inclusionPolicy = InclusionPolicy::kReady) override;
+        InclusionPolicy inclusionPolicy) override;
 
     std::shared_ptr<const IndexCatalogEntry> getEntryShared(const IndexDescriptor*) const override;
 
     std::vector<std::shared_ptr<const IndexCatalogEntry>> getAllReadyEntriesShared() const override;
 
     using IndexIterator = IndexCatalog::IndexIterator;
-    std::unique_ptr<IndexIterator> getIndexIterator(OperationContext* opCtx,
-                                                    InclusionPolicy inclusionPolicy) const override;
+    std::unique_ptr<IndexIterator> getIndexIterator(InclusionPolicy inclusionPolicy) const override;
 
     IndexCatalogEntry* createIndexEntry(OperationContext* opCtx,
                                         Collection* collection,

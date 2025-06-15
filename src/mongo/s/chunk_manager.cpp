@@ -36,12 +36,6 @@
 #include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <compare>
-#include <cstdint>
-#include <iterator>
-#include <tuple>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -55,6 +49,12 @@
 #include "mongo/s/shard_targeting_helpers.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <compare>
+#include <cstdint>
+#include <iterator>
+#include <tuple>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -99,7 +99,7 @@ void checkChunksAreContiguous(const ChunkInfo& left, const ChunkInfo& right) {
                                 << right.getRange().toString());
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083535);
 }
 
 using ChunkVector = ChunkMap::ChunkVector;
@@ -256,7 +256,7 @@ void ChunkMap::_commitUpdatedChunkVector(std::shared_ptr<ChunkVector>&& chunkVec
 
     // Check lower bound is consistent
     if (nextMapIt == _chunkVectorMap.begin()) {
-        checkAllElementsAreOfType(MinKey, chunkVectorPtr->front()->getMin());
+        checkAllElementsAreOfType(BSONType::minKey, chunkVectorPtr->front()->getMin());
     } else {
         checkChunksAreContiguous(*(std::prev(nextMapIt)->second->back()),
                                  *(chunkVectorPtr->front()));
@@ -265,7 +265,7 @@ void ChunkMap::_commitUpdatedChunkVector(std::shared_ptr<ChunkVector>&& chunkVec
     if (checkMaxKeyConsistency) {
         // Check upper bound is consistent
         if (nextMapIt == _chunkVectorMap.end()) {
-            checkAllElementsAreOfType(MaxKey, chunkVectorPtr->back()->getMax());
+            checkAllElementsAreOfType(BSONType::maxKey, chunkVectorPtr->back()->getMax());
         } else {
             checkChunksAreContiguous(*(chunkVectorPtr->back()), *(nextMapIt->second->front()));
         }
@@ -817,8 +817,8 @@ void ChunkManager::getShardIdsForRange(const BSONObj& min,
     // _placementVersions contains shards with chunks and is built based on the last refresh.
     // Therefore, it is possible for _placementVersions to have fewer entries if a shard no longer
     // owns chunks when it used to at _clusterTime.
-    if (!_clusterTime && ChunkMap::allElementsAreOfType(MinKey, min) &&
-        ChunkMap::allElementsAreOfType(MaxKey, max)) {
+    if (!_clusterTime && ChunkMap::allElementsAreOfType(BSONType::minKey, min) &&
+        ChunkMap::allElementsAreOfType(BSONType::maxKey, max)) {
         getAllShardIds(shardIds);
         if (chunkRanges) {
             getAllChunkRanges(chunkRanges);
@@ -1106,6 +1106,11 @@ ShardEndpoint::ShardEndpoint(const ShardId& shardName,
         invariant(shardName == ShardId::kConfigServerId);
 }
 
+bool ShardEndpoint::operator==(const ShardEndpoint& other) const {
+    return shardName == other.shardName && databaseVersion == other.databaseVersion &&
+        shardVersion == other.shardVersion;
+}
+
 bool EndpointComp::operator()(const ShardEndpoint* endpointA,
                               const ShardEndpoint* endpointB) const {
     const int shardNameDiff = endpointA->shardName.compare(endpointB->shardName);
@@ -1143,7 +1148,7 @@ bool EndpointComp::operator()(const ShardEndpoint* endpointA,
         return !endpointA->databaseVersion && endpointB->databaseVersion;
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083536);
 }
 
 Chunk getChunkForMaxBound(const ChunkManager& cm, const BSONObj& max) {

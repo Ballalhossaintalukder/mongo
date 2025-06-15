@@ -29,9 +29,9 @@
 
 #include "mongo/db/timeseries/metadata.h"
 
-#include <boost/container/small_vector.hpp>
-
 #include "mongo/util/tracking/allocator.h"
+
+#include <boost/container/small_vector.hpp>
 
 namespace mongo::timeseries::metadata {
 namespace {
@@ -44,10 +44,10 @@ void normalizeObject(const BSONObj& obj, allocator_aware::BSONObjBuilder<Allocat
 template <class Allocator>
 void normalizeArray(const BSONObj& obj, allocator_aware::BSONArrayBuilder<Allocator>& builder) {
     for (auto& arrayElem : obj) {
-        if (arrayElem.type() == BSONType::Array) {
+        if (arrayElem.type() == BSONType::array) {
             allocator_aware::BSONArrayBuilder<Allocator> subArray{builder.subarrayStart()};
             normalizeArray(arrayElem.Obj(), subArray);
-        } else if (arrayElem.type() == BSONType::Object) {
+        } else if (arrayElem.type() == BSONType::object) {
             allocator_aware::BSONObjBuilder<Allocator> subObject{builder.subobjStart()};
             normalizeObject(arrayElem.Obj(), subObject);
         } else {
@@ -67,8 +67,8 @@ void normalizeObject(const BSONObj& obj, allocator_aware::BSONObjBuilder<Allocat
     // the same BSONElement from.
     struct Field {
         BSONElement element() const {
-            return BSONElement(fieldName.rawData() - 1,  // Include type byte before field name
-                               fieldName.size() + 1,     // Include null terminator after field name
+            return BSONElement(fieldName.data() - 1,  // Include type byte before field name
+                               fieldName.size() + 1,  // Include null terminator after field name
                                BSONElement::TrustedInitTag{});
         }
         bool operator<(const Field& rhs) const {
@@ -93,11 +93,11 @@ void normalizeObject(const BSONObj& obj, allocator_aware::BSONObjBuilder<Allocat
     std::sort(it, end);
     for (; it != end; ++it) {
         auto elem = it->element();
-        if (elem.type() == BSONType::Array) {
+        if (elem.type() == BSONType::array) {
             allocator_aware::BSONArrayBuilder<Allocator> subArray(
                 builder.subarrayStart(elem.fieldNameStringData()));
             normalizeArray(elem.Obj(), subArray);
-        } else if (elem.type() == BSONType::Object) {
+        } else if (elem.type() == BSONType::object) {
             allocator_aware::BSONObjBuilder<Allocator> subObject(
                 builder.subobjStart(elem.fieldNameStringData()));
             normalizeObject(elem.Obj(), subObject);
@@ -113,11 +113,11 @@ template <class Allocator>
 void normalize(const BSONElement& elem,
                allocator_aware::BSONObjBuilder<Allocator>& builder,
                boost::optional<StringData> as) {
-    if (elem.type() == BSONType::Array) {
+    if (elem.type() == BSONType::array) {
         allocator_aware::BSONArrayBuilder<Allocator> subArray(
             builder.subarrayStart(as.has_value() ? as.value() : elem.fieldNameStringData()));
         normalizeArray(elem.Obj(), subArray);
-    } else if (elem.type() == BSONType::Object) {
+    } else if (elem.type() == BSONType::object) {
         allocator_aware::BSONObjBuilder<Allocator> subObject(
             builder.subobjStart(as.has_value() ? as.value() : elem.fieldNameStringData()));
         normalizeObject(elem.Obj(), subObject);

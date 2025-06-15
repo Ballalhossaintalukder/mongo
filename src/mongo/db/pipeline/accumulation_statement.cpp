@@ -27,21 +27,23 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <string>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/db/pipeline/accumulation_statement.h"
+
+#include "mongo/db/feature_flag.h"
 #include "mongo/db/pipeline/accumulator.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -57,7 +59,7 @@ void AccumulationStatement::registerAccumulator(std::string name,
                                                 AccumulationStatement::Parser parser,
                                                 AllowedWithApiStrict allowedWithApiStrict,
                                                 AllowedWithClientType allowedWithClientType,
-                                                CheckableFeatureFlagRef featureFlag) {
+                                                FeatureFlag* featureFlag) {
     auto it = parserMap.find(name);
     massert(28722,
             str::stream() << "Duplicate accumulator (" << name << ") registered.",
@@ -82,7 +84,7 @@ AccumulationStatement AccumulationStatement::parseAccumulationStatement(
     auto fieldName = elem.fieldNameStringData();
     uassert(40234,
             str::stream() << "The field '" << fieldName << "' must be an accumulator object",
-            elem.type() == BSONType::Object &&
+            elem.type() == BSONType::object &&
                 elem.embeddedObject().firstElementFieldName()[0] == '$');
 
     uassert(40235,
@@ -102,25 +104,27 @@ AccumulationStatement AccumulationStatement::parseAccumulationStatement(
     auto accName = specElem.fieldNameStringData();
     uassert(40237,
             str::stream() << "The " << accName << " accumulator is a unary operator",
-            specElem.type() != BSONType::Array);
+            specElem.type() != BSONType::array);
 
     auto&& [parser, allowedWithApiStrict, allowedWithClientType, featureFlag] =
         AccumulationStatement::getParser(accName);
 
-    expCtx->throwIfFeatureFlagIsNotEnabledOnFCV(accName, featureFlag);
+    if (featureFlag) {
+        expCtx->ignoreFeatureInParserOrRejectAndThrow(accName, *featureFlag);
+    }
 
     tassert(5837900,
             "Accumulators should only appear in a user operation",
             expCtx->getOperationContext());
     assertLanguageFeatureIsAllowed(expCtx->getOperationContext(),
-                                   accName.toString(),
+                                   std::string{accName},
                                    allowedWithApiStrict,
                                    allowedWithClientType);
 
     expCtx->incrementGroupAccumulatorExprCounter(accName);
     auto accExpr = parser(expCtx, specElem, vps);
 
-    return AccumulationStatement(fieldName.toString(), std::move(accExpr));
+    return AccumulationStatement(std::string{fieldName}, std::move(accExpr));
 }
 
 MONGO_INITIALIZER_GROUP(BeginAccumulatorRegistration, ("default"), ("EndAccumulatorRegistration"))

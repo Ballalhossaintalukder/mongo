@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -52,14 +44,12 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/session/logical_session_id_helpers.h"
-#include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/write_concern_options.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/stdx/condition_variable.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cancellation.h"
-#include "mongo/util/concurrency/with_lock.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
@@ -69,6 +59,15 @@
 #include "mongo/util/modules_incompletely_marked_header.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <algorithm>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -152,47 +151,12 @@ public:
     // Do not add any new usages to these methods as they will go away and will be folded as an
     // implementation detail of the Shard Role API.
     //
-    // Interface for durability.  Caller DOES NOT own pointer.
-    RecoveryUnit* recoveryUnit_DO_NOT_USE() const {
-        return _recoveryUnit.get();
-    }
-
-    // TODO (SERVER-77213): The RecoveryUnit ownership is being moved to the TransactionResources.
-    // Do not add any new usages to these methods as they will go away and will be folded as an
-    // implementation detail of the Shard Role API.
-    //
-    // Returns the RecoveryUnit (same return value as recoveryUnit()) but the caller takes
-    // ownership of the returned RecoveryUnit, and the OperationContext instance relinquishes
-    // ownership. Sets the RecoveryUnit to NULL.
-    std::unique_ptr<RecoveryUnit> releaseRecoveryUnit_DO_NOT_USE(ClientLock&);
-
-    // TODO (SERVER-77213): The RecoveryUnit ownership is being moved to the TransactionResources.
-    // Do not add any new usages to these methods as they will go away and will be folded as an
-    // implementation detail of the Shard Role API.
-    //
-    // Sets up a new, inactive RecoveryUnit in the OperationContext. Destroys any previous recovery
-    // unit and executes its rollback handlers.
-    void replaceRecoveryUnit_DO_NOT_USE(ClientLock& clientLock);
-
-    // TODO (SERVER-77213): The RecoveryUnit ownership is being moved to the TransactionResources.
-    // Do not add any new usages to these methods as they will go away and will be folded as an
-    // implementation detail of the Shard Role API.
-    //
-    // Similar to replaceRecoveryUnit(), but returns the previous recovery unit like
-    // releaseRecoveryUnit().
-    std::unique_ptr<RecoveryUnit> releaseAndReplaceRecoveryUnit_DO_NOT_USE(ClientLock& clientLock);
-
-
-    // TODO (SERVER-77213): The RecoveryUnit ownership is being moved to the TransactionResources.
-    // Do not add any new usages to these methods as they will go away and will be folded as an
-    // implementation detail of the Shard Role API.
-    //
     // Associates the OperatingContext with a different RecoveryUnit for getMore or
     // subtransactions, see RecoveryUnitSwap. The new state is passed and the old state is
     // returned separately even though the state logically belongs to the RecoveryUnit,
     // as it is managed by the OperationContext.
-    WriteUnitOfWork::RecoveryUnitState setRecoveryUnit_DO_NOT_USE(
-        std::unique_ptr<RecoveryUnit> unit, WriteUnitOfWork::RecoveryUnitState state, ClientLock&);
+    WriteUnitOfWork::RecoveryUnitState setRecoveryUnitState_DO_NOT_USE(
+        WriteUnitOfWork::RecoveryUnitState state, ClientLock&);
 
     // TODO (SERVER-77213): The locker ownership is being moved to the TransactionResources. Do not
     // add any new usages to these methods as they will go away and will be folded as an
@@ -809,7 +773,7 @@ public:
                 _ignoreInterrupts = true;
             }
             return std::forward<Callback>(cb)();
-        } catch (const ExceptionForCat<ErrorCategory::ExceededTimeLimitError>&) {
+        } catch (const ExceptionFor<ErrorCategory::ExceededTimeLimitError>&) {
             // May throw replacement exception
             checkForInterrupt();
             throw;
@@ -918,8 +882,6 @@ private:
     boost::optional<TxnRetryCounter> _txnRetryCounter;
 
     std::unique_ptr<Locker> _locker;
-
-    std::unique_ptr<RecoveryUnit> _recoveryUnit;
 
     // This is used directly by WriteUnitOfWork
     MONGO_MOD_NEEDS_REPLACEMENT WriteUnitOfWork::RecoveryUnitState _ruState =

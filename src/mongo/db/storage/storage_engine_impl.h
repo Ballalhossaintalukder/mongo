@@ -29,8 +29,30 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/base/status.h"
+#include "mongo/base/status_with.h"
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/timestamp.h"
+#include "mongo/db/database_name.h"
+#include "mongo/db/namespace_string.h"
+#include "mongo/db/operation_context.h"
+#include "mongo/db/record_id.h"
+#include "mongo/db/service_context.h"
+#include "mongo/db/storage/ident.h"
+#include "mongo/db/storage/journal_listener.h"
+#include "mongo/db/storage/key_format.h"
+#include "mongo/db/storage/kv/kv_drop_pending_ident_reaper.h"
+#include "mongo/db/storage/kv/kv_engine.h"
+#include "mongo/db/storage/mdb_catalog.h"
+#include "mongo/db/storage/record_store.h"
+#include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/storage_engine.h"
+#include "mongo/db/storage/temporary_record_store.h"
+#include "mongo/db/tenant_id.h"
+#include "mongo/stdx/mutex.h"
+#include "mongo/util/uuid.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -42,33 +64,12 @@
 #include <utility>
 #include <vector>
 
-#include "mongo/base/status.h"
-#include "mongo/base/status_with.h"
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/timestamp.h"
-#include "mongo/db/database_name.h"
-#include "mongo/db/namespace_string.h"
-#include "mongo/db/operation_context.h"
-#include "mongo/db/record_id.h"
-#include "mongo/db/service_context.h"
-#include "mongo/db/storage/durable_catalog.h"
-#include "mongo/db/storage/ident.h"
-#include "mongo/db/storage/journal_listener.h"
-#include "mongo/db/storage/key_format.h"
-#include "mongo/db/storage/kv/kv_drop_pending_ident_reaper.h"
-#include "mongo/db/storage/kv/kv_engine.h"
-#include "mongo/db/storage/record_store.h"
-#include "mongo/db/storage/recovery_unit.h"
-#include "mongo/db/storage/storage_engine.h"
-#include "mongo/db/storage/temporary_record_store.h"
-#include "mongo/db/tenant_id.h"
-#include "mongo/stdx/mutex.h"
-#include "mongo/util/uuid.h"
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
-class DurableCatalog;
+class MDBCatalog;
 class KVEngine;
 
 struct StorageEngineOptions {
@@ -83,6 +84,7 @@ class StorageEngineImpl final : public StorageEngine {
 public:
     StorageEngineImpl(OperationContext* opCtx,
                       std::unique_ptr<KVEngine> engine,
+                      std::unique_ptr<KVEngine> spillKVEngine,
                       StorageEngineOptions options = StorageEngineOptions());
 
     ~StorageEngineImpl() override;
@@ -90,6 +92,8 @@ public:
     void notifyStorageStartupRecoveryComplete() override;
 
     void notifyReplStartupRecoveryComplete(RecoveryUnit&) override;
+
+    void setInStandaloneMode() override;
 
     std::unique_ptr<RecoveryUnit> newRecoveryUnit() override;
 
@@ -122,6 +126,10 @@ public:
                              RecordId catalogId,
                              const NamespaceString& nss) override;
 
+    std::unique_ptr<SpillTable> makeSpillTable(OperationContext* opCtx,
+                                               KeyFormat keyFormat,
+                                               int64_t thresholdBytes) override;
+
     std::unique_ptr<TemporaryRecordStore> makeTemporaryRecordStore(OperationContext* opCtx,
                                                                    KeyFormat keyFormat) override;
 
@@ -131,7 +139,7 @@ public:
     std::unique_ptr<TemporaryRecordStore> makeTemporaryRecordStoreFromExistingIdent(
         OperationContext* opCtx, StringData ident, KeyFormat keyFormat) override;
 
-    void cleanShutdown(ServiceContext* svcCtx) override;
+    void cleanShutdown(ServiceContext* svcCtx, bool memLeakAllowed) override;
 
     void setStableTimestamp(Timestamp stableTimestamp, bool force = false) override;
 
@@ -168,8 +176,6 @@ public:
 
     bool supportsReadConcernSnapshot() const final;
 
-    bool supportsOplogTruncateMarkers() const final;
-
     void clearDropPendingState(OperationContext* opCtx) final;
 
     SnapshotManager* getSnapshotManager() const final;
@@ -184,10 +190,22 @@ public:
         return _engine.get();
     }
 
+    KVEngine* getSpillEngine() override {
+        return _spillKVEngine.get();
+    }
+
+    const KVEngine* getSpillEngine() const override {
+        return _spillKVEngine.get();
+    }
+
     void addDropPendingIdent(
         const std::variant<Timestamp, StorageEngine::CheckpointIteration>& dropTime,
         std::shared_ptr<Ident> ident,
         DropIdentCallback&& onDrop) override;
+
+    std::set<std::string> getDropPendingIdents() override {
+        return _dropPendingIdentReaper.getAllIdentNames();
+    };
 
     std::shared_ptr<Ident> markIdentInUse(StringData ident) override;
 
@@ -201,21 +219,18 @@ public:
     bool hasDataBeenCheckpointed(
         StorageEngine::CheckpointIteration checkpointIteration) const override;
 
-    StatusWith<ReconcileResult> reconcileCatalogAndIdents(
-        OperationContext* opCtx, Timestamp stableTs, LastShutdownState lastShutdownState) override;
-
     std::string getFilesystemPathForDb(const DatabaseName& dbName) const override;
 
-    DurableCatalog* getDurableCatalog() override;
+    MDBCatalog* getMDBCatalog() override;
 
-    const DurableCatalog* getDurableCatalog() const override;
+    const MDBCatalog* getMDBCatalog() const override;
 
     /**
-     * When loading after an unclean shutdown, this performs cleanup on the DurableCatalog.
+     * When loading after an unclean shutdown, this performs cleanup on the MDBCatalog.
      */
-    void loadDurableCatalog(OperationContext* opCtx, LastShutdownState lastShutdownState) final;
+    void loadMDBCatalog(OperationContext* opCtx, LastShutdownState lastShutdownState) final;
 
-    void closeDurableCatalog(OperationContext* opCtx) final;
+    void closeMDBCatalog(OperationContext* opCtx) final;
 
     TimestampMonitor* getTimestampMonitor() const {
         return _timestampMonitor.get();
@@ -273,16 +288,18 @@ public:
 
     Status autoCompact(RecoveryUnit&, const AutoCompactOptions& options) override;
 
-    bool underCachePressure() override;
+    bool underCachePressure(int concurrentWriteOuts, int concurrentReadOuts) override;
 
     size_t getCacheSizeMB() override;
+
+    bool hasOngoingLiveRestore() override;
 
 private:
     using CollIter = std::list<std::string>::iterator;
 
     /**
      * When called in a repair context (_options.forRepair=true), attempts to recover a collection
-     * whose entry is present in the DurableCatalog, but missing from the KVEngine. Returns an
+     * whose entry is present in the MDBCatalog, but missing from the KVEngine. Returns an
      * error Status if called outside of a repair context or the implementation of
      * KVEngine::recoverOrphanedIdent returns an error other than DataModifiedByRepair.
      *
@@ -300,7 +317,7 @@ private:
      * the given catalog entry.
      */
     void _checkForIndexFiles(OperationContext* opCtx,
-                             const DurableCatalog::EntryIdentifier& entry,
+                             const MDBCatalog::EntryIdentifier& entry,
                              std::vector<std::string>& identsKnownToStorageEngine) const;
 
     void _dumpCatalog(OperationContext* opCtx);
@@ -312,21 +329,14 @@ private:
     void _onMinOfCheckpointAndOldestTimestampChanged(OperationContext* opCtx,
                                                      const Timestamp& timestamp);
 
-    /**
-     * Returns whether the given ident is an internal ident and if it should be dropped or used to
-     * resume an index build.
-     */
-    bool _handleInternalIdent(OperationContext* opCtx,
-                              const std::string& ident,
-                              LastShutdownState lastShutdownState,
-                              ReconcileResult* reconcileResult,
-                              std::set<std::string>* internalIdentsToKeep,
-                              std::set<std::string>* allInternalIdents);
-
     class RemoveDBChange;
 
+    // Main KVEngine instance used for all user tables.
     // This must be the first member so it is destroyed last.
     std::unique_ptr<KVEngine> _engine;
+
+    // KVEngine instance that is used for creating SpillTables.
+    std::unique_ptr<KVEngine> _spillKVEngine;
 
     const StorageEngineOptions _options;
 
@@ -339,7 +349,7 @@ private:
     const bool _supportsCappedCollections;
 
     std::unique_ptr<RecordStore> _catalogRecordStore;
-    std::unique_ptr<DurableCatalog> _catalog;
+    std::unique_ptr<MDBCatalog> _catalog;
 
     // Flag variable that states if the storage engine is in backup mode.
     bool _inBackupMode = false;
@@ -348,5 +358,7 @@ private:
 
     // Stores a copy of the TimestampMonitor's listeners when temporarily stopping the monitor.
     std::vector<TimestampMonitor::TimestampListener*> _listeners;
+
+    friend class StorageEngineTest;
 };
 }  // namespace mongo

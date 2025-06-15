@@ -29,9 +29,11 @@
 
 #include "mongo/db/pipeline/search/document_source_list_search_indexes.h"
 
+#include "mongo/db/pipeline/search/document_source_list_search_indexes_gen.h"
 #include "mongo/db/query/search/search_index_common.h"
 #include "mongo/db/query/search/search_index_process_interface.h"
 #include "mongo/db/version_context.h"
+
 #include <boost/optional/optional.hpp>
 
 namespace mongo {
@@ -67,7 +69,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceListSearchIndexes::createFrom
     uassert(ErrorCodes::FailedToParse,
             str::stream() << "The $listSearchIndexes stage specification must be an object. Found: "
                           << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     auto spec = DocumentSourceListSearchIndexesSpec::parse(IDLParserContext(kStageName),
                                                            elem.embeddedObject());
 
@@ -149,13 +151,13 @@ DocumentSource::GetNextResult DocumentSourceListSearchIndexes::doGetNext() {
         tassert(
             7486302,
             "The internal command manageSearchIndex should return a 'cursor' field with an object.",
-            !cursor.eoo() && cursor.type() == BSONType::Object);
+            !cursor.eoo() && cursor.type() == BSONType::object);
 
         cursor = cursor.Obj().getField(kFirstBatchFieldName);
         tassert(7486303,
                 "The internal command manageSearchIndex should return an array in the 'firstBatch' "
                 "field",
-                !cursor.eoo() && cursor.type() == BSONType::Array);
+                !cursor.eoo() && cursor.type() == BSONType::array);
         auto searchIndexes = cursor.Array();
 
         // If the manageSearchIndex command didn't return any documents, we should return EOF.
@@ -171,7 +173,7 @@ DocumentSource::GetNextResult DocumentSourceListSearchIndexes::doGetNext() {
                 str::stream() << "The internal command manageSearchIndex should return documents "
                                  "inside the 'firstBatch' field but found a bad entry: "
                               << (e.eoo() ? "EOO" : e.toString()),
-                e.type() == BSONType::Object);
+                e.type() == BSONType::object);
             _searchIndexes.push(e.Obj().getOwned());
         }
     }

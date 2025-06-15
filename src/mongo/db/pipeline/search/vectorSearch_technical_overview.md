@@ -16,7 +16,7 @@ Vector search is implemented as an aggregation stage that behaves similarly to [
 
 #### Parameters
 
-[`$vectorSearch`](https://github.com/mongodb/mongo/blob/master/src/mongo/db/pipeline/search/document_source_vector_search.h) takes several [parameters](https://github.com/mongodb/mongo/blob/master/src/mongo/db/pipeline/search/document_source_vector_search.idl) that are passed on to `mongot`. These include:
+[`$vectorSearch`](https://github.com/mongodb/mongo/blob/master/src/mongo/db/pipeline/search/document_source_vector_search.h) takes several parameters that are passed on to `mongot`. These include:
 
 | Parameter     | Description                                                 |
 | ------------- | ----------------------------------------------------------- |
@@ -57,7 +57,7 @@ Vector indexes are managed through the existing [search index management command
 
 ### Explain
 
-'$vectorSearch' explains follow how $search/$searchMeta explains work. Check out [search_technical_overview.md](https://github.com/10gen/mongo/blob/master/src/mongo/db/query/search/search_technical_overview.md) for more information.
+'$vectorSearch' explains follow how $search/$searchMeta explains work. Check out [search_technical_overview.md](https://github.com/mongodb/mongo/blob/master/src/mongo/db/query/search/search_technical_overview.md) for more information.
 
 ### Testing
 
@@ -65,4 +65,4 @@ The `vectorSearch` command is supported by [`mongotmock`](https://github.com/mon
 
 ### Didn't Find What You're Looking For?
 
-Visit [the landing page](https://github.com/10gen/mongo/blob/master/src/mongo/db/query/search/README.md) for all $search/$vectorSearch/$searchMeta related documentation for server contributors.
+Visit [the landing page](https://github.com/mongodb/mongo/blob/master/src/mongo/db/query/search/README.md) for all $search/$vectorSearch/$searchMeta related documentation for server contributors.

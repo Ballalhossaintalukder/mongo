@@ -27,12 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <ostream>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/record_id.h"
@@ -43,6 +37,12 @@
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace {
 
@@ -51,7 +51,7 @@ using std::stringstream;
 using std::unique_ptr;
 
 // Verify that calling truncate() on an already empty collection returns an OK status.
-TEST(RecordStoreTestHarness, TruncateEmpty) {
+TEST(RecordStoreTest, TruncateEmpty) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -72,7 +72,7 @@ TEST(RecordStoreTestHarness, TruncateEmpty) {
 
 // Insert multiple records, and verify that calling truncate() on a nonempty collection
 // removes all of them and returns an OK status.
-TEST(RecordStoreTestHarness, TruncateNonEmpty) {
+TEST(RecordStoreTest, TruncateNonEmpty) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -110,7 +110,7 @@ TEST(RecordStoreTestHarness, TruncateNonEmpty) {
     ASSERT_EQUALS(0, rs->numRecords());
 }
 
-DEATH_TEST(RecordStoreTestHarness,
+DEATH_TEST(RecordStoreTest,
            RangeTruncateMustHaveBoundsTest,
            "Ranged truncate must have one bound defined") {
     const auto harnessHelper(newRecordStoreHarnessHelper());

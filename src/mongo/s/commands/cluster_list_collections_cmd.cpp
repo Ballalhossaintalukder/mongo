@@ -28,15 +28,6 @@
  */
 
 
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -79,6 +70,15 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/string_map.h"
+
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -173,12 +173,13 @@ BSONObj rewriteCommandForListingOwnCollections(OperationContext* opCtx,
         for (const auto& [resource, privilege] : authUser.value()->getPrivileges()) {
             if (resource.isCollectionPattern() ||
                 (resource.isExactNamespacePattern() && resource.dbNameToMatch() == dbName)) {
-                collectionNames.emplace(resource.collectionToMatch().toString());
+                collectionNames.emplace(std::string{resource.collectionToMatch()});
             }
 
             if (resource.isAnySystemBucketsCollectionInAnyDB() ||
                 (resource.isExactSystemBucketsCollection() && resource.dbNameToMatch() == dbName)) {
-                collectionNames.emplace(systemBucketsDot + resource.collectionToMatch().toString());
+                collectionNames.emplace(systemBucketsDot +
+                                        std::string{resource.collectionToMatch()});
             }
         }
     }
@@ -246,6 +247,10 @@ public:
 
     bool supportsWriteConcern(const BSONObj& cmd) const final {
         return false;
+    }
+
+    bool supportsRawData() const final {
+        return true;
     }
 
     Status checkAuthForOperation(OperationContext* opCtx,

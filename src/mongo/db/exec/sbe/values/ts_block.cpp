@@ -29,11 +29,6 @@
 
 #include "mongo/db/exec/sbe/values/ts_block.h"
 
-#include <cstddef>
-#include <memory>
-#include <tuple>
-#include <utility>
-
 #include "mongo/bson/column/bsoncolumn.h"
 #include "mongo/bson/util/bsonobj_traversal.h"
 #include "mongo/db/exec/sbe/values/block_interface.h"
@@ -48,6 +43,11 @@
 #include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/util/itoa.h"
+
+#include <cstddef>
+#include <memory>
+#include <tuple>
+#include <utility>
 
 namespace mongo::sbe::value {
 
@@ -70,7 +70,7 @@ public:
         _positions.reserve(expectedCount);
     }
 
-    void push_back(const Element& e) {
+    MONGO_COMPILER_ALWAYS_INLINE_GCC14 void push_back(const Element& e) {
         auto [tag, val] = e;
         _allValuesShallow = _allValuesShallow && value::isShallowType(tag);
         _tags.push_back(tag);
@@ -131,7 +131,7 @@ struct ElementAnalysis {
  * arrays and pointers to scalar values.
  */
 void analyzeElement(ElementAnalysis& analysis, BSONElement elem) {
-    if (elem.type() == BSONType::Array) {
+    if (elem.type() == BSONType::array) {
         analysis._containsArrays = true;
         // Do not recurse into children; elements within arrays are not candidates for path-based
         // decompression due to challenges with arrays in BSONColumns with legacy interleaved mode.
@@ -237,7 +237,7 @@ TsBucketPathExtractor::ExtractResult TsBucketPathExtractor::extractCellBlocks(
     const BSONObj& bucketObj) {
 
     BSONElement bucketControl = bucketObj[timeseries::kBucketControlFieldName];
-    invariant(bucketControl.type() == BSONType::Object);
+    invariant(bucketControl.type() == BSONType::object);
     BSONObj bucketControlObj = bucketControl.Obj();
 
     const size_t noOfMeasurements = [&]() {
@@ -251,7 +251,7 @@ TsBucketPathExtractor::ExtractResult TsBucketPathExtractor::extractCellBlocks(
     const int bucketVersion = bucketObj.getIntField(timeseries::kBucketControlVersionFieldName);
 
     const BSONElement bucketDataElem = bucketObj[timeseries::kBucketDataFieldName];
-    invariant(bucketDataElem.type() == BSONType::Object);
+    invariant(bucketDataElem.type() == BSONType::object);
 
     // Build a mapping from the top level field name to the bucket's corresponding bson element and
     // min/max values.
@@ -280,7 +280,7 @@ TsBucketPathExtractor::ExtractResult TsBucketPathExtractor::extractCellBlocks(
     // Populate min and max for each 'FieldInfo'.
     {
         auto setMinMax = [&topLevelFieldNameToInfo](BSONElement minMaxElt, auto setFn) {
-            if (minMaxElt.type() != BSONType::Object) {
+            if (minMaxElt.type() != BSONType::object) {
                 return;
             }
 
@@ -429,7 +429,7 @@ bool TsBucketPathExtractor::tryPathBasedDecompression(
         return false;
     }
 
-    if (fieldMin.type() != BSONType::Object || fieldMax.type() != BSONType::Object) {
+    if (fieldMin.type() != BSONType::object || fieldMax.type() != BSONType::object) {
         return false;
     }
 

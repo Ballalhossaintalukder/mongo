@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/shim.h"
 #include "mongo/db/client.h"
 #include "mongo/db/operation_context.h"
@@ -39,10 +35,14 @@
 #include "mongo/db/pipeline/process_interface/replica_set_node_process_interface.h"
 #include "mongo/db/pipeline/process_interface/shardsvr_process_interface.h"
 #include "mongo/db/pipeline/process_interface/standalone_process_interface.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/executor/task_executor_pool.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/transport/session.h"
+
+#include <memory>
+#include <string>
+#include <utility>
 
 namespace mongo {
 namespace {

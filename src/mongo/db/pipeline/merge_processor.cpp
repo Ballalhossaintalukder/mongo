@@ -81,6 +81,7 @@ BatchedCommandGenerator makeUpdateCommandGenerator() {
 std::vector<write_ops::UpdateOpEntry> constructUpdateEntries(
     MongoProcessInterface::BatchedObjects&& batch, UpsertType upsert, bool multi) {
     std::vector<write_ops::UpdateOpEntry> updateEntries;
+    updateEntries.reserve(batch.size());
     for (auto&& obj : batch) {
         write_ops::UpdateOpEntry entry;
         auto&& [q, u, c] = obj;
@@ -309,7 +310,7 @@ MergeProcessor::MergeProcessor(const boost::intrusive_ptr<ExpressionContext>& ex
         variableValidation::validateNameForUserWrite(varName);
 
         _letVariables.emplace_back(
-            varName.toString(),
+            std::string{varName},
             Expression::parseOperand(expCtx.get(), varElem, expCtx->variablesParseState),
             // Variable::Id is set to INT64_MIN as it is not needed for processing $merge stage.
             // The '_letVariables' are evaluated in resolveLetVariablesIfNeeded(), serialized into

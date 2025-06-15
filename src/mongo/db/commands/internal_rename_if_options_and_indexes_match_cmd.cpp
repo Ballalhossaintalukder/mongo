@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <list>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,6 +50,11 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <list>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -141,24 +141,12 @@ public:
         }
 
         void doCheckAuthorization(OperationContext* opCtx) const override {
-            auto thisRequest = request();
-            auto from = thisRequest.getFrom();
-            auto to = thisRequest.getTo();
             uassert(ErrorCodes::Unauthorized,
-                    str::stream() << "Unauthorized to rename " << from.toStringForErrorMsg(),
+                    "Unauthorized",
                     AuthorizationSession::get(opCtx->getClient())
-                        ->isAuthorizedForActionsOnResource(ResourcePattern::forExactNamespace(from),
-                                                           ActionType::renameCollection));
-            uassert(ErrorCodes::Unauthorized,
-                    str::stream() << "Unauthorized to drop " << to.toStringForErrorMsg(),
-                    AuthorizationSession::get(opCtx->getClient())
-                        ->isAuthorizedForActionsOnResource(ResourcePattern::forExactNamespace(to),
-                                                           ActionType::dropCollection));
-            uassert(ErrorCodes::Unauthorized,
-                    str::stream() << "Unauthorized to insert into " << to.toStringForErrorMsg(),
-                    AuthorizationSession::get(opCtx->getClient())
-                        ->isAuthorizedForActionsOnResource(ResourcePattern::forExactNamespace(to),
-                                                           ActionType::insert));
+                        ->isAuthorizedForActionsOnResource(
+                            ResourcePattern::forClusterResource(request().getDbName().tenantId()),
+                            ActionType::internal));
         }
     };
 

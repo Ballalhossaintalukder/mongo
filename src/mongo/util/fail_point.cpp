@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <chrono>
-#include <fmt/format.h>
-#include <limits>
-#include <new>
-#include <random>
-#include <thread>
-
+#include "mongo/util/fail_point.h"
 
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/initializer.h"
@@ -52,8 +43,18 @@
 #include "mongo/platform/random.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/fail_point.h"
 #include "mongo/util/fail_point_server_parameter_gen.h"
+
+#include <chrono>
+#include <limits>
+#include <new>
+#include <random>
+#include <thread>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -172,7 +173,7 @@ StatusWith<FailPoint::ModeOptions> FailPoint::parseBSON(const BSONObj& obj) {
     const BSONElement modeElem(obj["mode"]);
     if (modeElem.eoo()) {
         return {ErrorCodes::IllegalOperation, "When setting a failpoint, you must supply a 'mode'"};
-    } else if (modeElem.type() == String) {
+    } else if (modeElem.type() == BSONType::string) {
         const std::string modeStr(modeElem.str());
         if (modeStr == "off") {
             mode = FailPoint::off;
@@ -181,7 +182,7 @@ StatusWith<FailPoint::ModeOptions> FailPoint::parseBSON(const BSONObj& obj) {
         } else {
             return {ErrorCodes::BadValue, fmt::format("unknown mode: {}", modeStr)};
         }
-    } else if (modeElem.type() == Object) {
+    } else if (modeElem.type() == BSONType::object) {
         const BSONObj modeObj(modeElem.Obj());
 
         if (modeObj.hasField("times")) {
@@ -356,7 +357,7 @@ static constexpr auto kFailPointServerParameterPrefix = "failpoint."_sd;
 
 FailPointServerParameter::FailPointServerParameter(StringData name, ServerParameterType spt)
     : ServerParameter(fmt::format("{}{}", kFailPointServerParameterPrefix, name), spt),
-      _data(globalFailPointRegistry().find(name.toString())) {
+      _data(globalFailPointRegistry().find(std::string{name})) {
     invariant(name != "failpoint.*", "Failpoint prototype was auto-registered from IDL");
     invariant(_data != nullptr, fmt::format("Unknown failpoint: {}", name));
 }

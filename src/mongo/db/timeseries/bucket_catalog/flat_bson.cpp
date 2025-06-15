@@ -29,14 +29,6 @@
 
 #include "mongo/db/timeseries/bucket_catalog/flat_bson.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <cstring>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -44,6 +36,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decimal_counter.h"
 #include "mongo/util/str.h"
+
+#include <cstring>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries::bucket_catalog {
 namespace {
@@ -255,7 +255,7 @@ typename FlatBSONStore<Element, Value>::Iterator FlatBSONStore<Element, Value>::
 
         // Found entry that is used for an Array, we can claim this field.
         if (first->isArrayFieldName()) {
-            first->claimArrayFieldNameForObject(fieldName.toString());
+            first->claimArrayFieldNameForObject(std::string{fieldName});
             return first;
         }
     }
@@ -407,7 +407,7 @@ FlatBSON<Derived, Element, Value>::_update(typename FlatBSONStore<Element, Value
                                            const StringDataComparator* stringComparator) {
     UpdateStatus status{UpdateStatus::Updated};
 
-    if (elem.type() == Object) {
+    if (elem.type() == BSONType::object) {
         std::tie(status, updateValues) = Derived::_shouldUpdateObj(obj, elem, updateValues);
         // Compare objects element-wise if the stored data may need to be updated.
         if (status == UpdateStatus::Updated) {
@@ -416,7 +416,7 @@ FlatBSON<Derived, Element, Value>::_update(typename FlatBSONStore<Element, Value
                     return false;
                 });
         }
-    } else if (elem.type() == Array) {
+    } else if (elem.type() == BSONType::array) {
         std::tie(status, updateValues) = Derived::_shouldUpdateArr(obj, elem, updateValues);
         // Compare objects element-wise if the stored data may need to be updated.
         if (status == UpdateStatus::Updated) {
@@ -431,7 +431,7 @@ FlatBSON<Derived, Element, Value>::_update(typename FlatBSONStore<Element, Value
                 UpdateStatus subStatus{UpdateStatus::NoChange};
 
                 if (it == end) {
-                    std::tie(it, end) = obj.insert(it, kArrayFieldName.toString());
+                    std::tie(it, end) = obj.insert(it, std::string{kArrayFieldName});
                 }
 
                 std::tie(subStatus, it, end) =
@@ -483,10 +483,10 @@ FlatBSON<Derived, Element, Value>::_updateObj(typename FlatBSONStore<Element, Va
 
         if (it == end) {
             // Field missing, we need to insert it at the end so we preserve the input field order.
-            std::tie(it, end) = obj.insert(it, fieldName.toString());
+            std::tie(it, end) = obj.insert(it, std::string{fieldName});
         } else if (it->isArrayFieldName()) {
             // Entry is only used for Arrays, we can claim the field name.
-            it->claimArrayFieldNameForObject(fieldName.toString());
+            it->claimArrayFieldNameForObject(std::string{fieldName});
         } else if (it->fieldName() != fieldName) {
             // Traversing the FlatBSONStore structure in lock-step with the input document resulted
             // in a miss. This means one of two things. (1) The input document does not contain all
@@ -506,14 +506,14 @@ FlatBSON<Derived, Element, Value>::_updateObj(typename FlatBSONStore<Element, Va
                         // Still not found, insert the new field. Location doesn't matter much
                         // as we are operating on incoming documents of different field orders.
                         // Select the point we know furthest back.
-                        std::tie(it, end) = obj.insert(it, fieldName.toString());
+                        std::tie(it, end) = obj.insert(it, std::string{fieldName});
                     } else {
                         it = found;
                     }
                 } else {
                     // All previous elements have been found as we have never skipped, proceed
                     // with inserting this new field.
-                    std::tie(it, end) = obj.insert(it, fieldName.toString());
+                    std::tie(it, end) = obj.insert(it, std::string{fieldName});
                 }
             } else {
                 it = found;
@@ -731,7 +731,7 @@ void BSONElementValueBuffer::set(const BSONElement& elem) {
     }
     auto buffer = _buffer.data();
     // Store element as BSONElement buffer but strip out the field name.
-    buffer[0] = elem.type();
+    buffer[0] = stdx::to_underlying(elem.type());
     buffer[1] = '\0';
     memcpy(buffer + 2, elem.value(), elem.valuesize());
 }
@@ -813,7 +813,8 @@ std::pair<MinMax::UpdateStatus, MinMaxElement::UpdateContext> MinMax::_shouldUpd
     auto shouldUpdateObject = [&](MinMaxStore::Data& data, auto comp) {
         return data.type() == MinMaxStore::Type::kObject ||
             data.type() == MinMaxStore::Type::kUnset ||
-            (data.type() == MinMaxStore::Type::kArray && comp(typeComp(elem, Array), 0)) ||
+            (data.type() == MinMaxStore::Type::kArray &&
+             comp(typeComp(elem, BSONType::array), 0)) ||
             (data.type() == MinMaxStore::Type::kValue &&
              comp(typeComp(elem, data.value().type()), 0));
     };
@@ -838,7 +839,8 @@ std::pair<MinMax::UpdateStatus, MinMaxElement::UpdateContext> MinMax::_shouldUpd
     auto shouldUpdateArray = [&](MinMaxStore::Data& data, auto comp) {
         return data.type() == MinMaxStore::Type::kArray ||
             data.type() == MinMaxStore::Type::kUnset ||
-            (data.type() == MinMaxStore::Type::kObject && comp(typeComp(elem, Object), 0)) ||
+            (data.type() == MinMaxStore::Type::kObject &&
+             comp(typeComp(elem, BSONType::object), 0)) ||
             (data.type() == MinMaxStore::Type::kValue &&
              comp(typeComp(elem, data.value().type()), 0));
     };
@@ -864,8 +866,10 @@ MinMax::UpdateStatus MinMax::_maybeUpdateValue(MinMaxStore::Obj& obj,
                                                const StringDataComparator* stringComparator) {
     auto maybeUpdateValue = [&](MinMaxStore::Data& data, auto comp) {
         if (data.type() == MinMaxStore::Type::kUnset ||
-            (data.type() == MinMaxStore::Type::kObject && comp(typeComp(elem, Object), 0)) ||
-            (data.type() == MinMaxStore::Type::kArray && comp(typeComp(elem, Array), 0)) ||
+            (data.type() == MinMaxStore::Type::kObject &&
+             comp(typeComp(elem, BSONType::object), 0)) ||
+            (data.type() == MinMaxStore::Type::kArray &&
+             comp(typeComp(elem, BSONType::array), 0)) ||
             (data.type() == MinMaxStore::Type::kValue &&
              comp(elem.woCompare(data.value().get(), false, stringComparator), 0))) {
             data.setValue(elem);

@@ -28,17 +28,6 @@
  */
 
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <functional>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -48,6 +37,8 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/client/dbclient_cursor.h"
+#include "mongo/crypto/encryption_fields_util.h"
+#include "mongo/crypto/fle_crypto.h"
 #include "mongo/db/audit.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -96,6 +87,7 @@
 #include "mongo/db/s/resharding/resharding_coordinator_service.h"
 #include "mongo/db/s/sharding_ddl_coordinator_gen.h"
 #include "mongo/db/s/sharding_ddl_coordinator_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/server_parameter.h"
@@ -103,6 +95,7 @@
 #include "mongo/db/shard_id.h"
 #include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/vector_clock.h"
+#include "mongo/db/write_block_bypass.h"
 #include "mongo/db/write_concern.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/logv2/log.h"
@@ -114,13 +107,24 @@
 #include "mongo/s/request_types/shardsvr_join_ddl_coordinators_request_gen.h"
 #include "mongo/s/routing_information_cache.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -145,7 +149,6 @@ MONGO_FAIL_POINT_DEFINE(hangDowngradingBeforeIsCleaningServerMetadata);
 MONGO_FAIL_POINT_DEFINE(failAfterReachingTransitioningState);
 MONGO_FAIL_POINT_DEFINE(hangAtSetFCVStart);
 MONGO_FAIL_POINT_DEFINE(failAfterSendingShardsToDowngradingOrUpgrading);
-MONGO_FAIL_POINT_DEFINE(hangAfterBlockingIndexBuildsForFcvDowngrade);
 MONGO_FAIL_POINT_DEFINE(automaticallyCollmodToRecordIdsReplicatedFalse);
 MONGO_FAIL_POINT_DEFINE(setFCVPauseAfterReadingConfigDropPedingDBs);
 
@@ -278,11 +281,11 @@ void handleDropPendingDBsGarbage(OperationContext* parentOpCtx) {
                 const auto bsonVersion = batch[0][DatabaseType::kVersionFieldName];
                 tassert(10291400,
                         "The version field is expected to exist and be an object",
-                        bsonVersion.type() == BSONType::Object);
+                        bsonVersion.type() == BSONType::object);
                 const BSONElement bsonTimestamp = bsonVersion[DatabaseVersion::kTimestampFieldName];
                 tassert(10291401,
                         "The timestamp field is expected to exist and be a timestamp",
-                        bsonTimestamp.type() == BSONType::bsonTimestamp);
+                        bsonTimestamp.type() == BSONType::timestamp);
                 timestamp = bsonTimestamp.timestamp();
                 return true;
             }));
@@ -424,6 +427,22 @@ public:
         return Status::OK();
     }
 
+    void checkBlockFCVChanges(OperationContext* opCtx,
+                              const SetFeatureCompatibilityVersion& request) {
+        DBDirectClient dbClient(opCtx);
+        FindCommandRequest findRequest{NamespaceString::kBlockFCVChangesNamespace};
+        const auto response = dbClient.findOne(std::move(findRequest));
+        if (!response.isEmpty()) {
+            // The block is skipped if the request is from a config server
+            const auto fromConfigServer = request.getFromConfigServer().value_or(false);
+            uassert(ErrorCodes::ConflictingOperationInProgress,
+                    "setFeatureCompatibilityVersion command is blocked. It might be that the "
+                    "replica set is being added to a sharded cluster. If this is the case, the "
+                    "command cannot be run via direct replica set connection.",
+                    fromConfigServer);
+        }
+    }
+
     bool run(OperationContext* opCtx,
              const DatabaseName&,
              const BSONObj& cmdObj,
@@ -440,6 +459,9 @@ public:
 
         // Only allow one instance of setFeatureCompatibilityVersion to run at a time.
         Lock::ExclusiveLock setFCVCommandLock(opCtx, commandMutex);
+
+        // Check there is no block on setFeatureCompatibilityVersion.
+        checkBlockFCVChanges(opCtx, request);
 
         const auto requestedVersion = request.getCommandParameter();
         const auto actualVersion =
@@ -569,6 +591,19 @@ public:
                         "Failing setFeatureCompatibilityVersion before reaching the FCV "
                         "transitional stage due to 'failBeforeTransitioning' failpoint set",
                         !failBeforeTransitioning.shouldFail());
+
+                // TODO (SERVER-103458): Remove once 9.0 becomes last lts.
+                if (role && role->has(ClusterRole::ConfigServer) &&
+                    feature_flags::gCheckInvalidDatabaseInGlobalCatalog
+                        .isEnabledOnTargetFCVButDisabledOnOriginalFCV(requestedVersion,
+                                                                      actualVersion)) {
+                    // Remove reference to the admin database from the config, it is leftover from
+                    // an old version.
+                    DBDirectClient client(opCtx);
+                    write_ops::checkWriteErrors(client.remove(write_ops::DeleteCommandRequest(
+                        NamespaceString::kConfigDatabasesNamespace,
+                        {{BSON(DatabaseType::kDbNameFieldName << "admin"), false /* multi */}})));
+                }
 
                 if (role && role->has(ClusterRole::ConfigServer)) {
                     uassert(
@@ -853,30 +888,36 @@ private:
         }
 
         if (isUpgrading) {
-            // TODO SERVER-102084: drain all coordinators that started under the original FCV
-
-            // TODO (SERVER-98118): remove once 9.0 becomes last LTS.
-            if (feature_flags::gShardAuthoritativeDbMetadataDDL
-                    .isEnabledOnTargetFCVButDisabledOnOriginalFCV(requestedVersion,
-                                                                  originalVersion)) {
-                // This is is needed for SPM-3729. Since we're going to have a feature flag changing
-                // value in kUpgrading, we need to drain coordinators that started in FCV 8.0.
-                // waitForOngoingCoordinatorsToFinish() could also wait for coordinators that
-                // started AFTER the transition to kUpgrading. That's OK, it's a performance
-                // penalty, but there is no correctness issue.
-                // TODO (SERVER-102084): update draining mechanism.
+            if (feature_flags::gSnapshotFCVInDDLCoordinators.isEnabledOnVersion(requestedVersion)) {
+                // Wait until all DDL coordinators that run are on the kUpgrading* FCV
                 ShardingDDLCoordinatorService::getService(opCtx)
-                    ->waitForOngoingCoordinatorsToFinish(
-                        opCtx, [](const ShardingDDLCoordinator& coordinatorInstance) -> bool {
-                            static constexpr std::array drainCoordinatorTypes{
-                                DDLCoordinatorTypeEnum::kMovePrimary,
-                                DDLCoordinatorTypeEnum::kDropDatabase,
-                                DDLCoordinatorTypeEnum::kCreateDatabase,
-                            };
-                            const auto opType = coordinatorInstance.operationType();
-                            return std::ranges::any_of(drainCoordinatorTypes,
-                                                       [&](auto&& type) { return opType == type; });
+                    ->waitForCoordinatorsOfGivenOfcvToComplete(
+                        opCtx, [fcvSnapshot](boost::optional<FCV> ofcv) -> bool {
+                            return ofcv != fcvSnapshot.getVersion();
                         });
+            } else {
+                // TODO (SERVER-98118): remove once 9.0 becomes last LTS.
+                if (feature_flags::gShardAuthoritativeDbMetadataDDL
+                        .isEnabledOnTargetFCVButDisabledOnOriginalFCV(requestedVersion,
+                                                                      originalVersion)) {
+                    // Since we have a feature flag changing value in kUpgrading, we need to drain
+                    // coordinators that started in FCV 8.0. waitForOngoingCoordinatorsToFinish may
+                    // also wait for coordinators that started AFTER the transition to kUpgrading.
+                    // That's OK, it's a performance penalty, but there is no correctness issue.
+                    ShardingDDLCoordinatorService::getService(opCtx)
+                        ->waitForOngoingCoordinatorsToFinish(
+                            opCtx, [](const ShardingDDLCoordinator& coordinatorInstance) -> bool {
+                                static constexpr std::array drainCoordinatorTypes{
+                                    DDLCoordinatorTypeEnum::kMovePrimary,
+                                    DDLCoordinatorTypeEnum::kDropDatabase,
+                                    DDLCoordinatorTypeEnum::kCreateDatabase,
+                                };
+                                const auto opType = coordinatorInstance.operationType();
+                                return std::ranges::any_of(drainCoordinatorTypes, [&](auto&& type) {
+                                    return opType == type;
+                                });
+                            });
+                }
             }
         }
     }
@@ -1189,19 +1230,44 @@ private:
                     });
             }
         }
+
+        if (gFeatureFlagQETextSearchPreview.isDisabledOnTargetFCVButEnabledOnOriginalFCV(
+                requestedVersion, originalVersion)) {
+            auto checkForStringSearchQueryType = [](const Collection* collection) {
+                const auto& encryptedFields =
+                    collection->getCollectionOptions().encryptedFieldConfig;
+                if (encryptedFields &&
+                    hasQueryTypeMatching(encryptedFields.get(), isFLE2TextQueryType)) {
+                    uasserted(ErrorCodes::CannotDowngrade,
+                              fmt::format(
+                                  "Collection {} (UUID: {}) has an encrypted field with query type "
+                                  "substringPreview, suffixPreview, or prefixPreview, which "
+                                  "are not compatible with the target FCV. Please drop this "
+                                  "collection before trying to downgrade FCV.",
+                                  collection->ns().toStringForErrorMsg(),
+                                  collection->uuid().toString()));
+                }
+                return true;
+            };
+            for (const auto& dbName : DatabaseHolder::get(opCtx)->getNames()) {
+                Lock::DBLock dbLock(opCtx, dbName, MODE_IS);
+                catalog::forEachCollectionFromDb(
+                    opCtx, dbName, MODE_IS, checkForStringSearchQueryType);
+            }
+        }
     }
 
     // Remove cluster parameters from the clusterParameters collections which are not enabled on
     // requestedVersion.
-    void _cleanUpClusterParameters(OperationContext* opCtx, const FCV requestedVersion) {
-        const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
-        invariant(fcvSnapshot.isUpgradingOrDowngrading());
-        const auto fromVersion = getTransitionFCVInfo(fcvSnapshot.getVersion()).from;
-
+    void _cleanUpClusterParameters(OperationContext* opCtx,
+                                   const FCV originalVersion,
+                                   const FCV requestedVersion) {
         auto* clusterParameters = ServerParameterSet::getClusterParameterSet();
         std::vector<write_ops::DeleteOpEntry> deletes;
         for (const auto& [name, sp] : clusterParameters->getMap()) {
-            if (sp->isEnabledOnVersion(fromVersion) && !sp->isEnabledOnVersion(requestedVersion)) {
+            auto parameterState = sp->getState();
+            if (sp->isEnabledOnVersion(parameterState, originalVersion) &&
+                !sp->isEnabledOnVersion(parameterState, requestedVersion)) {
                 deletes.emplace_back(
                     write_ops::DeleteOpEntry(BSON("_id" << name), false /*multi*/));
             }
@@ -1275,12 +1341,10 @@ private:
     // (indicating a server bug and that the data is corrupted). ManualInterventionRequired
     // and fasserts are errors that are not expected to occur in practice, but if they did,
     // they would turn into a Support case.
-    void _internalServerCleanupForDowngrade(OperationContext* opCtx, const FCV requestedVersion) {
+    void _internalServerCleanupForDowngrade(OperationContext* opCtx,
+                                            const FCV originalVersion,
+                                            const FCV requestedVersion) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
-        const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
-        invariant(fcvSnapshot.isUpgradingOrDowngrading());
-        const auto originalVersion = getTransitionFCVInfo(fcvSnapshot.getVersion()).from;
-
         if (!role || role->has(ClusterRole::None) || role->has(ClusterRole::ShardServer)) {
             if (feature_flags::gTSBucketingParametersUnchanged
                     .isDisabledOnTargetFCVButEnabledOnOriginalFCV(requestedVersion,
@@ -1318,7 +1382,7 @@ private:
             maybeModifyDataOnDowngradeForTest(opCtx, requestedVersion, originalVersion);
         }
 
-        _cleanUpClusterParameters(opCtx, requestedVersion);
+        _cleanUpClusterParameters(opCtx, originalVersion, requestedVersion);
         _createAuthzSchemaVersionDocIfNeeded(opCtx);
         // Note the config server is also considered a shard, so the ConfigServer and ShardServer
         // roles aren't mutually exclusive.
@@ -1407,9 +1471,10 @@ private:
                        const SetFeatureCompatibilityVersion& request,
                        boost::optional<Timestamp> changeTimestamp) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
+        const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
+        invariant(fcvSnapshot.isUpgradingOrDowngrading());
+
         const auto requestedVersion = request.getCommandParameter();
-        const auto actualVersion =
-            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().getVersion();
         auto isFromConfigServer = request.getFromConfigServer().value_or(false);
 
         hangDowngradingBeforeIsCleaningServerMetadata.pauseWhileSet(opCtx);
@@ -1420,7 +1485,7 @@ private:
             const auto fcvChangeRegion(FeatureCompatibilityVersion::enterFCVChangeRegion(opCtx));
             FeatureCompatibilityVersion::updateFeatureCompatibilityVersionDocument(
                 opCtx,
-                actualVersion,
+                fcvSnapshot.getVersion(),
                 requestedVersion,
                 isFromConfigServer,
                 changeTimestamp,
@@ -1451,7 +1516,8 @@ private:
         // (indicating a server bug and that the data is corrupted). ManualInterventionRequired
         // and fasserts are errors that are not expected to occur in practice, but if they did,
         // they would turn into a Support case.
-        _internalServerCleanupForDowngrade(opCtx, requestedVersion);
+        _internalServerCleanupForDowngrade(
+            opCtx, getTransitionFCVInfo(fcvSnapshot.getVersion()).from, requestedVersion);
 
         if (role && role->has(ClusterRole::ConfigServer)) {
             // Tell the shards to complete setFCV (transition to fully downgraded).
@@ -1656,48 +1722,16 @@ private:
     void _finalizeUpgrade(OperationContext* opCtx, const FCV requestedVersion) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
 
+        // Drain outstanding DDL operations that are incompatible with the target FCV.
         if (role && role->has(ClusterRole::ShardServer)) {
-            // TODO SERVER-99655: update once gSnapshotFCVInDDLCoordinators is enabled
-            // on the lastLTS
-            if (feature_flags::gSnapshotFCVInDDLCoordinators.isEnabledOnVersion(requestedVersion)) {
-                ShardingDDLCoordinatorService::getService(opCtx)
-                    ->waitForCoordinatorsOfGivenOfcvToComplete(
-                        opCtx, [requestedVersion](boost::optional<FCV> ofcv) -> bool {
-                            return ofcv != requestedVersion;
-                        });
-            } else {
-                // TODO SERVER-77915: Remove once v8.0 branches out.
-                if (feature_flags::gTrackUnshardedCollectionsUponMoveCollection.isEnabledOnVersion(
-                        requestedVersion)) {
-                    ShardingDDLCoordinatorService::getService(opCtx)
-                        ->waitForCoordinatorsOfGivenTypeToComplete(
-                            opCtx, DDLCoordinatorTypeEnum::kRenameCollection);
-                }
-
-                // TODO SERVER-77915: Remove once v8.0 branches out.
-                if (feature_flags::gTrackUnshardedCollectionsUponMoveCollection.isEnabledOnVersion(
-                        requestedVersion)) {
-                    ShardingDDLCoordinatorService::getService(opCtx)
-                        ->waitForCoordinatorsOfGivenTypeToComplete(
-                            opCtx, DDLCoordinatorTypeEnum::kCollMod);
-                }
-
-                // TODO SERVER-94362: Remove once create database coordinator becomes last lts.
-                if (feature_flags::gCreateDatabaseDDLCoordinator.isEnabledOnVersion(
-                        requestedVersion)) {
-                    ShardingDDLCoordinatorService::getService(opCtx)
-                        ->waitForCoordinatorsOfGivenTypeToComplete(
-                            opCtx, DDLCoordinatorTypeEnum::kDropDatabase);
-                }
-
-                // TODO (SERVER-100309): Remove once 9.0 becomes last lts.
-                if (feature_flags::gSessionsCollectionCoordinatorOnConfigServer.isEnabledOnVersion(
-                        requestedVersion)) {
-                    ShardingDDLCoordinatorService::getService(opCtx)
-                        ->waitForCoordinatorsOfGivenTypeToComplete(
-                            opCtx, DDLCoordinatorTypeEnum::kCreateCollection);
-                }
-            }
+            // TODO SERVER-99655: remove the comment below.
+            // The draining logic relies on the OFCV infrastructure, which has been introduced in
+            // FCV 8.2 and may behave sub-optimally when requestedVersion is lower than 8.2.
+            ShardingDDLCoordinatorService::getService(opCtx)
+                ->waitForCoordinatorsOfGivenOfcvToComplete(
+                    opCtx, [requestedVersion](boost::optional<FCV> ofcv) -> bool {
+                        return ofcv != requestedVersion;
+                    });
         }
 
         // TODO (SERVER-100309): Remove once 9.0 becomes last lts.
@@ -1726,39 +1760,23 @@ private:
                             const multiversion::FeatureCompatibilityVersion requestedVersion) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
 
-        // TODO SERVER-102084: drain all coordinators that started during kDowngrading
-
-        // TODO (SERVER-94362) Remove once create database coordinator becomes last lts.
-        if (role && role->has(ClusterRole::ConfigServer) &&
-            !feature_flags::gCreateDatabaseDDLCoordinator.isEnabledOnVersion(requestedVersion)) {
+        if (role && role->has(ClusterRole::ShardServer)) {
+            // TODO SERVER-99655: always use requestedVersion as expectedOfcv - and remove the note
+            // above about sub-optimal behavior.
+            auto expectedOfcv =
+                feature_flags::gSnapshotFCVInDDLCoordinators.isEnabledOnVersion(requestedVersion)
+                ? boost::make_optional(requestedVersion)
+                : boost::none;
             ShardingDDLCoordinatorService::getService(opCtx)
-                ->waitForCoordinatorsOfGivenTypeToComplete(opCtx,
-                                                           DDLCoordinatorTypeEnum::kCreateDatabase);
-        }
-
-        // TODO (SERVER-94362) Remove once create database coordinator becomes last lts.
-        if (role && role->has(ClusterRole::ShardServer) &&
-            !feature_flags::gCreateDatabaseDDLCoordinator.isEnabledOnVersion(requestedVersion)) {
-            ShardingDDLCoordinatorService::getService(opCtx)
-                ->waitForCoordinatorsOfGivenTypeToComplete(opCtx,
-                                                           DDLCoordinatorTypeEnum::kDropDatabase);
+                ->waitForCoordinatorsOfGivenOfcvToComplete(
+                    opCtx, [expectedOfcv](boost::optional<FCV> ofcv) -> bool {
+                        return ofcv != expectedOfcv;
+                    });
         }
 
         // TODO (SERVER-98118): remove once 9.0 becomes last LTS.
         if (role && role->has(ClusterRole::ShardServer) &&
             !feature_flags::gShardAuthoritativeDbMetadataDDL.isEnabledOnVersion(requestedVersion)) {
-            ShardingDDLCoordinatorService::getService(opCtx)->waitForOngoingCoordinatorsToFinish(
-                opCtx, [](const ShardingDDLCoordinator& coordinatorInstance) -> bool {
-                    static constexpr std::array drainCoordinatorTypes{
-                        DDLCoordinatorTypeEnum::kMovePrimary,
-                        DDLCoordinatorTypeEnum::kDropDatabase,
-                        DDLCoordinatorTypeEnum::kCreateDatabase,
-                    };
-                    const auto opType = coordinatorInstance.operationType();
-                    return std::ranges::any_of(drainCoordinatorTypes,
-                                               [&](auto&& type) { return opType == type; });
-                });
-
             // Dropping the authoritative collections (config.shard.catalog.X) as the final step of
             // the downgrade ensures that no leftover data remains. This guarantees a clean
             // downgrade and makes it safe to upgrade again.

@@ -28,13 +28,6 @@
  */
 
 
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -63,8 +56,16 @@
 #include "mongo/s/cluster_ddl.h"
 #include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/collection_uuid_mismatch.h"
+#include "mongo/s/router_role.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/string_map.h"
+
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -91,6 +92,10 @@ public:
 
     bool adminOnly() const final {
         return false;
+    }
+
+    bool supportsRawData() const final {
+        return true;
     }
 
     Status checkAuthForOperation(OperationContext* opCtx,
@@ -132,7 +137,7 @@ public:
             const auto& request = requestParser.request();
             if (auto uuid = request.getCollectionUUID()) {
                 auto status = Status(CollectionUUIDMismatchInfo(
-                                         nss.dbName(), *uuid, nss.coll().toString(), boost::none),
+                                         nss.dbName(), *uuid, std::string{nss.coll()}, boost::none),
                                      "'collectionUUID' is specified for a time-series view "
                                      "namespace; views do not have UUIDs");
                 uassertStatusOK(populateCollectionUUIDMismatch(opCtx, status));
@@ -143,38 +148,42 @@ public:
                 cmdToBeSent, nss, getName(), CreateIndexesCommand::kIsTimeseriesNamespaceFieldName);
         }
 
-        auto shardResponses = scatterGatherVersionedTargetByRoutingTable(
-            opCtx,
-            targeter.getNS(),
-            routingInfo,
-            CommandHelpers::filterCommandRequestForPassthrough(
-                applyReadWriteConcern(opCtx, this, cmdToBeSent)),
-            ReadPreferenceSetting(ReadPreference::PrimaryOnly),
-            Shard::RetryPolicy::kNoRetry,
-            BSONObj() /*query*/,
-            BSONObj() /*collation*/,
-            boost::none /*letParameters*/,
-            boost::none /*runtimeConstants*/);
+        return routing_context_utils::runAndValidate(
+            targeter.getRoutingCtx(), [&](RoutingContext& routingCtx) {
+                auto shardResponses = scatterGatherVersionedTargetByRoutingTable(
+                    opCtx,
+                    targeter.getNS(),
+                    routingCtx,
+                    CommandHelpers::filterCommandRequestForPassthrough(
+                        applyReadWriteConcern(opCtx, this, cmdToBeSent)),
+                    ReadPreferenceSetting(ReadPreference::PrimaryOnly),
+                    Shard::RetryPolicy::kNoRetry,
+                    BSONObj() /*query*/,
+                    BSONObj() /*collation*/,
+                    boost::none /*letParameters*/,
+                    boost::none /*runtimeConstants*/);
 
-        std::string errmsg;
-        bool allShardsSucceeded =
-            appendRawResponses(opCtx, &errmsg, &output, shardResponses, shardResponses.size() > 1)
-                .responseOK;
+                std::string errmsg;
+                bool allShardsSucceeded =
+                    appendRawResponses(
+                        opCtx, &errmsg, &output, shardResponses, shardResponses.size() > 1)
+                        .responseOK;
 
-        // Append the single shard command result to the top-level output to ensure parity between
-        // replica-set and a single sharded cluster.
-        if (shardResponses.size() == 1 && allShardsSucceeded) {
-            CommandHelpers::filterCommandReplyForPassthrough(
-                shardResponses[0].swResponse.getValue().data, &output);
-        }
+                // Append the single shard command result to the top-level output to ensure parity
+                // between replica-set and a single sharded cluster.
+                if (shardResponses.size() == 1 && allShardsSucceeded) {
+                    CommandHelpers::filterCommandReplyForPassthrough(
+                        shardResponses[0].swResponse.getValue().data, &output);
+                }
 
-        CommandHelpers::appendSimpleCommandStatus(output, allShardsSucceeded, errmsg);
+                CommandHelpers::appendSimpleCommandStatus(output, allShardsSucceeded, errmsg);
 
-        if (allShardsSucceeded) {
-            LOGV2(5706400, "Indexes created", logAttrs(nss));
-        }
+                if (allShardsSucceeded) {
+                    LOGV2(5706400, "Indexes created", logAttrs(nss));
+                }
 
-        return allShardsSucceeded;
+                return allShardsSucceeded;
+            });
     }
 
     /**
@@ -199,13 +208,13 @@ public:
         }
 
         const auto& rawData = result[kRawFieldName];
-        if (!ctx.checkAndAssertType(rawData, Object)) {
+        if (!ctx.checkAndAssertType(rawData, BSONType::object)) {
             return;
         }
 
         auto rawCtx = IDLParserContext(kRawFieldName, &ctx);
         for (const auto& element : rawData.Obj()) {
-            if (!rawCtx.checkAndAssertType(element, Object)) {
+            if (!rawCtx.checkAndAssertType(element, BSONType::object)) {
                 return;
             }
 

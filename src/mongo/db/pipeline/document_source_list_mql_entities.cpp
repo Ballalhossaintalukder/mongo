@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/pipeline/document_source_list_mql_entities.h"
+
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_list_mql_entities_gen.h"
 
@@ -49,7 +50,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceListMqlEntities::createFromBs
     uassert(9590101,
             str::stream() << "expected an object as specification for " << kStageName
                           << " stage, got " << typeName(elem.type()),
-            elem.type() == Object);
+            elem.type() == BSONType::object);
     const auto& nss = expCtx->getNamespaceString();
     uassert(ErrorCodes::InvalidNamespace,
             "$listMqlEntities must be run against the 'admin' database with {aggregate: 1}",
@@ -62,7 +63,7 @@ DocumentSourceListMqlEntities::DocumentSourceListMqlEntities(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     MqlEntityTypeEnum type,
     const StringMap<ParserRegistration>& docSourceParserMap)
-    : DocumentSource(kStageName, expCtx), _type(type) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx), _type(type) {
     if (_type != MqlEntityTypeEnum::aggregationStages) {
         MONGO_UNIMPLEMENTED;
     }
@@ -89,7 +90,7 @@ StageConstraints DocumentSourceListMqlEntities::constraints(Pipeline::SplitState
 }
 
 const char* DocumentSourceListMqlEntities::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Pipeline::SourceContainer::iterator DocumentSourceListMqlEntities::doOptimizeAt(

@@ -5,7 +5,6 @@
  *   # $listCatalog does not include the tenant prefix in its results.
  *   command_not_supported_in_serverless,
  *   requires_timeseries,
- *   known_query_shape_computation_problem,  # TODO (SERVER-103069): Remove this tag.
  * ]
  */
 import {
@@ -74,10 +73,6 @@ assert.eq(TimeseriesTest.bucketsMayHaveMixedSchemaData(getTimeseriesCollForRawOp
 assert.commandWorked(update());
 assert.commandWorked(
     getTimeseriesCollForRawOps(coll).deleteOne({_id: bucket._id}, kRawOperationSpec));
-
-// The following collMod is not timestamped, so background validations
-// could potentially see it before the previous deletion unless we fsync
-assert.commandWorked(testDB.adminCommand({fsync: 1}));
 
 assert.commandWorked(
     testDB.runCommand({collMod: collName, timeseriesBucketsMayHaveMixedSchemaData: false}));

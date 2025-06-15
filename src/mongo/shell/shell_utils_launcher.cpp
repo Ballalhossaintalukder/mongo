@@ -34,7 +34,6 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
-#include <fmt/format.h>
 #include <fstream>  // IWYU pragma: keep
 #include <iostream>
 #include <iterator>
@@ -45,6 +44,8 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <fmt/format.h>
 
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
 #include <boost/filesystem/directory.hpp>
@@ -357,26 +358,26 @@ void copyDir(const boost::filesystem::path& from, const boost::filesystem::path&
     boost::filesystem::directory_iterator i(from);
     while (i != end) {
         boost::filesystem::path p = *i;
-        if (p.leaf() == "metrics.interim" || p.leaf() == "metrics.interim.temp") {
+        if (p.filename() == "metrics.interim" || p.filename() == "metrics.interim.temp") {
             // Ignore any errors for metrics.interim* files as these may disappear during copy
             boost::system::error_code ec;
-            boost::filesystem::copy_file(p, to / p.leaf(), ec);
+            boost::filesystem::copy_file(p, to / p.filename(), ec);
             if (ec) {
                 LOGV2_INFO(22814,
                            "Skipping copying of file from '{from}' to "
                            "'{to}' due to: {error}",
                            "Skipping copying of file due to error"
                            "from"_attr = p.generic_string(),
-                           "to"_attr = (to / p.leaf()).generic_string(),
+                           "to"_attr = (to / p.filename()).generic_string(),
                            "error"_attr = ec.message());
             }
-        } else if (p.leaf() != "mongod.lock" && p.leaf() != "WiredTiger.lock") {
+        } else if (p.filename() != "mongod.lock" && p.filename() != "WiredTiger.lock") {
             if (boost::filesystem::is_directory(p)) {
-                boost::filesystem::path newDir = to / p.leaf();
+                boost::filesystem::path newDir = to / p.filename();
                 boost::filesystem::create_directory(newDir);
                 copyDir(p, newDir);
             } else {
-                boost::filesystem::copy_file(p, to / p.leaf());
+                boost::filesystem::copy_file(p, to / p.filename());
             }
         }
         ++i;
@@ -629,14 +630,14 @@ BSONObj ReadTestPipes(const BSONObj& args, void* unused) {
 
     do {
         pipePathElem = BSONElement(args.getField(std::to_string(fieldNum)));
-        if (pipePathElem.type() == BSONType::String) {
+        if (pipePathElem.type() == BSONType::string) {
             pipeRelativePaths.emplace_back(pipePathElem.str());
-        } else if (pipePathElem.type() != BSONType::EOO) {
+        } else if (pipePathElem.type() != BSONType::eoo) {
             uasserted(ErrorCodes::FailedToParse,
                       fmt::format("Argument {} (pipe path) must be a string", fieldNum));
         }
         ++fieldNum;
-    } while (pipePathElem.type() != BSONType::EOO);
+    } while (pipePathElem.type() != BSONType::eoo);
 
     if (pipeRelativePaths.size() > 0) {
         return NamedPipeHelper::readFromPipes(pipeRelativePaths);
@@ -670,7 +671,7 @@ BSONObj WriteTestPipe(const BSONObj& args, void* unused) {
 
     uassert(ErrorCodes::FailedToParse,
             "First argument (pipe path) must be a string",
-            pipePathElem.type() == BSONType::String);
+            pipePathElem.type() == BSONType::string);
     uassert(ErrorCodes::FailedToParse,
             "Second argument (number of objects) must be a number",
             objectsElem.isNumber());
@@ -701,10 +702,10 @@ BSONObj WriteTestPipe(const BSONObj& args, void* unused) {
             BSONElement pipeDirElem(args.getField("4"));
             uassert(ErrorCodes::FailedToParse,
                     "Fifth argument (pipe dir) must be a string",
-                    pipeDirElem.type() == BSONType::String);
+                    pipeDirElem.type() == BSONType::string);
             return pipeDirElem.str();
         } else {
-            return kDefaultPipePath.toString();
+            return std::string{kDefaultPipePath};
         }
     }();
 
@@ -756,23 +757,23 @@ BSONObj writeTestPipeBsonFileHelper(const BSONObj& args, bool async) {
 
     uassert(ErrorCodes::FailedToParse,
             "First argument (pipe path) must be a string",
-            pipePathElem.type() == BSONType::String);
+            pipePathElem.type() == BSONType::string);
     uassert(ErrorCodes::FailedToParse,
             "Second argument (number of objects) must be a number",
             objectsElem.isNumber());
     uassert(ErrorCodes::FailedToParse,
             "Third argument (BSON file path) must be a string",
-            bsonFilePathElem.type() == BSONType::String);
+            bsonFilePathElem.type() == BSONType::string);
 
     std::string pipeDir = [&] {
         if (nFields == 4) {
             BSONElement pipeDirElem(args.getField("3"));
             uassert(ErrorCodes::FailedToParse,
                     "Fourth argument (pipe dir) must be a string",
-                    pipeDirElem.type() == BSONType::String);
+                    pipeDirElem.type() == BSONType::string);
             return pipeDirElem.str();
         } else {
-            return kDefaultPipePath.toString();
+            return std::string{kDefaultPipePath};
         }
     }();
 
@@ -867,23 +868,23 @@ BSONObj WriteTestPipeObjects(const BSONObj& args, void* unused) {
 
     uassert(ErrorCodes::FailedToParse,
             "First argument (pipe path) must be a string",
-            pipePathElem.type() == BSONType::String);
+            pipePathElem.type() == BSONType::string);
     uassert(ErrorCodes::FailedToParse,
             "Second argument (number of objects) must be a number",
             objectsElem.isNumber());
     uassert(ErrorCodes::FailedToParse,
             "Third argument must be an array of objects to round-robin over",
-            bsonElems.type() == mongo::Array);
+            bsonElems.type() == BSONType::array);
 
     std::string pipeDir = [&] {
         if (nFields >= 4) {
             BSONElement pipeDirElem(args.getField("3"));
             uassert(ErrorCodes::FailedToParse,
                     "Fourth argument (pipe dir) must be a string",
-                    pipeDirElem.type() == BSONType::String);
+                    pipeDirElem.type() == BSONType::string);
             return pipeDirElem.str();
         } else {
-            return kDefaultPipePath.toString();
+            return std::string{kDefaultPipePath};
         }
     }();
 
@@ -892,7 +893,7 @@ BSONObj WriteTestPipeObjects(const BSONObj& args, void* unused) {
             BSONElement persistPipeElem(args.getField("4"));
             uassert(ErrorCodes::FailedToParse,
                     "Fifth argument (persistPipe) must be a bool",
-                    persistPipeElem.type() == BSONType::Bool);
+                    persistPipeElem.type() == BSONType::boolean);
             return persistPipeElem.boolean();
         } else {
             return false;

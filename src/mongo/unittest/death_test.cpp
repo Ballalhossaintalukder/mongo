@@ -27,24 +27,25 @@
  *    it in the license file.
  */
 
+#include "mongo/unittest/death_test.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/unittest/test_info.h"
+#include "mongo/util/errno_util.h"
+#include "mongo/util/scopeguard.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
-#include <fmt/format.h>
 #include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonobj.h"
-#include "mongo/unittest/death_test.h"
-#include "mongo/unittest/test_info.h"
-#include "mongo/util/errno_util.h"
-#include "mongo/util/scopeguard.h"
+#include <fmt/format.h>
 
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -223,7 +224,7 @@ void stripOption(std::vector<std::string>& av, StringData opt) {
         if (sd == fmt::format("--{}", opt)) {
             if (i + 1 < av.size())
                 av.erase(av.begin() + i, av.begin() + i + 2);
-        } else if (sd.startsWith(fmt::format("--{}=", opt))) {
+        } else if (sd.starts_with(fmt::format("--{}=", opt))) {
             av.erase(av.begin() + i);
         } else {
             ++i;

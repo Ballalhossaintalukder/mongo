@@ -26,22 +26,23 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <limits>
-#include <ostream>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/storage/index_entry_comparison.h"
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/db/namespace_string.h"
-#include "mongo/db/storage/index_entry_comparison.h"
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/util/hex.h"
 #include "mongo/util/str.h"
 #include "mongo/util/text.h"  // IWYU pragma: keep
+
+#include <cstddef>
+#include <limits>
+#include <ostream>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -221,7 +222,7 @@ Status buildDupKeyErrorStatus(const BSONObj& key,
         //
         // If the string in the key is invalid UTF-8, then we hex encode it before adding it to the
         // error message so that the driver can assume valid UTF-8 when reading the reply.
-        const bool shouldHexEncode = keyValueElem.type() == BSONType::String &&
+        const bool shouldHexEncode = keyValueElem.type() == BSONType::string &&
             (hasCollation || !isValidUTF8(keyValueElem.valueStringData()));
 
         if (shouldHexEncode) {

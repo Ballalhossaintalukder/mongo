@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <list>
-#include <string>
-#include <wiredtiger.h>
-
 #include "mongo/db/storage/wiredtiger/wiredtiger_compiled_configuration.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/scopeguard.h"
@@ -41,6 +36,12 @@
 #include "mongo/util/tick_source.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <cstdint>
+#include <list>
+#include <string>
+
+#include <wiredtiger.h>
 
 namespace mongo {
 
@@ -96,6 +97,18 @@ public:
      * @param permit Token showing that you asked the engine for permission to open this session.
      */
     WiredTigerSession(WiredTigerConnection* connection, StatsCollectionPermit& permit);
+
+    /**
+     * Creates a new WT session for collecting statistics possibly during shutdown (but before
+     * wiredtiger itself shuts down).
+     *
+     * @param handler Callback handler that will be invoked by wiredtiger.
+     * @param connection WT connection
+     * @param permit Token showing that you asked the engine for permission to open this session.
+     */
+    WiredTigerSession(WiredTigerConnection* connection,
+                      WT_EVENT_HANDLER* handler,
+                      StatsCollectionPermit& permit);
 
     ~WiredTigerSession();
 

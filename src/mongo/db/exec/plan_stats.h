@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <cstdlib>
-#include <string>
-#include <vector>
-
 #include "mongo/db/exec/plan_stats_visitor.h"
 #include "mongo/db/index/multikey_paths.h"
 #include "mongo/db/pipeline/spilling/spilling_stats.h"
@@ -45,6 +40,11 @@
 #include "mongo/db/record_id.h"
 #include "mongo/util/container_size_helper.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <cstdlib>
+#include <string>
+#include <vector>
 
 namespace mongo {
 
@@ -1089,6 +1089,8 @@ struct GroupStats : public SpecificStats {
     size_t totalOutputDataSizeBytes = 0;
 
     SpillingStats spillingStats;
+
+    int64_t maxUsedMemoryBytes = 0;
 };
 
 struct DocumentSourceCursorStats : public SpecificStats {
@@ -1397,6 +1399,28 @@ struct DocumentSourceBucketAutoStats : public SpecificStats {
     }
 
     SpillingStats spillingStats;
+};
+
+struct DocumentSourceSetWindowFieldsStats : public SpecificStats {
+    std::unique_ptr<SpecificStats> clone() const override {
+        return std::make_unique<DocumentSourceSetWindowFieldsStats>(*this);
+    }
+
+    uint64_t estimateObjectSizeInBytes() const override {
+        return sizeof(*this);
+    }
+
+    void acceptVisitor(PlanStatsConstVisitor* visitor) const final {
+        visitor->visit(this);
+    }
+
+    void acceptVisitor(PlanStatsMutableVisitor* visitor) final {
+        visitor->visit(this);
+    }
+
+    SpillingStats spillingStats;
+
+    int64_t maxUsedMemoryBytes = 0;
 };
 
 }  // namespace mongo

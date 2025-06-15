@@ -29,18 +29,19 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/platform/process_id.h"
+#include "mongo/util/static_immortal.h"
+
 #include <cstdint>
 #include <new>
 #include <string>
 #include <vector>
 
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/platform/process_id.h"
-#include "mongo/util/static_immortal.h"
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -89,6 +90,13 @@ public:
      */
     static unsigned getAddrSize() {
         return sysInfo().addrSize;
+    }
+
+    /**
+     * Get the size of total memory available to the process in bytes
+     */
+    static unsigned long long getMemSizeBytes() {
+        return sysInfo().memLimit;
     }
 
     /**
@@ -211,6 +219,10 @@ public:
         return appInfo().getProcessName();
     }
 
+    static int getDefaultListenBacklog() {
+        return sysInfo().defaultListenBacklog;
+    }
+
 private:
     /**
      * Host and operating system info.  Does not change over time.
@@ -239,6 +251,8 @@ private:
         //  18658199 Speed up msync() on ZFS by 90000x with this one weird trick
         bool preferMsyncOverFSync;
 
+        int defaultListenBacklog;
+
         SystemInfo()
             : addrSize(0),
               memSize(0),
@@ -249,7 +263,8 @@ private:
               pageSize(0),
               hasNuma(false),
               numNumaNodes(0),
-              preferMsyncOverFSync(true) {
+              preferMsyncOverFSync(true),
+              defaultListenBacklog(0) {
             // populate SystemInfo during construction
             collectSystemInfo();
         }

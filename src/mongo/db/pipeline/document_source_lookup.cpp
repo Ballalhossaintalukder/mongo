@@ -35,12 +35,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <iterator>
-#include <list>
-#include <tuple>
-#include <type_traits>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonmisc.h"
@@ -49,6 +43,7 @@
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/resource_pattern.h"
 #include "mongo/db/database_name.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/feature_flag.h"
@@ -78,6 +73,7 @@
 #include "mongo/db/query/explain_options.h"
 #include "mongo/db/query/plan_summary_stats.h"
 #include "mongo/db/query/query_knobs_gen.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/views/resolved_view.h"
 #include "mongo/idl/idl_parser.h"
@@ -86,12 +82,17 @@
 #include "mongo/platform/overflow_arithmetic.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/shard_version.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <iterator>
+#include <list>
+#include <tuple>
+#include <type_traits>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -119,13 +120,12 @@ BSONObj buildEqualityOrQuery(const std::string& fieldName, const BSONArray& valu
 }
 
 void lookupPipeValidator(const Pipeline& pipeline) {
-    const auto& sources = pipeline.getSources();
-    std::for_each(sources.begin(), sources.end(), [](auto& src) {
+    for (const auto& src : pipeline.getSources()) {
         uassert(51047,
                 str::stream() << src->getSourceName()
                               << " is not allowed within a $lookup's sub-pipeline",
                 src->constraints().isAllowedInLookupPipeline());
-    });
+    }
 }
 
 // Parses $lookup 'from' field. The 'from' field must be a string or one of the following
@@ -141,9 +141,9 @@ NamespaceString parseLookupFromAndResolveNamespace(const BSONElement& elem,
     uassert(ErrorCodes::FailedToParse,
             str::stream() << "$lookup 'from' field must be a string, but found "
                           << typeName(elem.type()),
-            elem.type() == BSONType::String || elem.type() == BSONType::Object);
+            elem.type() == BSONType::string || elem.type() == BSONType::object);
 
-    if (elem.type() == BSONType::String) {
+    if (elem.type() == BSONType::string) {
         return NamespaceStringUtil::deserialize(defaultDb, elem.valueStringData());
     }
 
@@ -183,7 +183,7 @@ static BSONObj createMatchStageJoinObj(const Document& input,
     bool containsRegex = false;
     document_path_support::visitAllValuesAtPath(input, localFieldPath, [&](const Value& nextValue) {
         arrBuilder << nextValue;
-        if (!containsRegex && nextValue.getType() == BSONType::RegEx) {
+        if (!containsRegex && nextValue.getType() == BSONType::regEx) {
             containsRegex = true;
         }
     });
@@ -241,6 +241,7 @@ DocumentSourceLookUp::DocumentSourceLookUp(NamespaceString fromNs,
                                            std::string as,
                                            const boost::intrusive_ptr<ExpressionContext>& expCtx)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _fromNs(std::move(fromNs)),
       _as(std::move(as)),
       _variables(expCtx->variables),
@@ -384,7 +385,7 @@ DocumentSourceLookUp::DocumentSourceLookUp(
         variableValidation::validateNameForUserWrite(varName);
 
         _letVariables.emplace_back(
-            varName.toString(),
+            std::string{varName},
             Expression::parseOperand(expCtx.get(), varElem, expCtx->variablesParseState),
             _variablesParseState.defineVariable(varName));
     }
@@ -408,6 +409,7 @@ DocumentSourceLookUp::DocumentSourceLookUp(
 DocumentSourceLookUp::DocumentSourceLookUp(const DocumentSourceLookUp& original,
                                            const boost::intrusive_ptr<ExpressionContext>& newExpCtx)
     : DocumentSource(kStageName, newExpCtx),
+      exec::agg::Stage(kStageName, newExpCtx),
       _fromNs(original._fromNs),
       _resolvedNs(original._resolvedNs),
       _as(original._as),
@@ -417,7 +419,10 @@ DocumentSourceLookUp::DocumentSourceLookUp(const DocumentSourceLookUp& original,
       _fieldMatchPipelineIdx(original._fieldMatchPipelineIdx),
       _variables(original._variables),
       _variablesParseState(original._variablesParseState.copyWith(_variables.useIdGenerator())),
-      _fromExpCtx(original._fromExpCtx->copyWith(_resolvedNs, original._fromExpCtx->getUUID())),
+      _fromExpCtx(original._fromExpCtx->copyWith(_resolvedNs,
+                                                 original._fromExpCtx->getUUID(),
+                                                 boost::none,
+                                                 original._fromExpCtx->getView())),
       _resolvedPipeline(original._resolvedPipeline),
       _userPipeline(original._userPipeline),
       _resolvedIntrospectionPipeline(original._resolvedIntrospectionPipeline->clone(_fromExpCtx)),
@@ -457,7 +462,7 @@ std::unique_ptr<DocumentSourceLookUp::LiteParsed> DocumentSourceLookUp::LitePars
     uassert(ErrorCodes::FailedToParse,
             str::stream() << "the $lookup stage specification must be an object, but found "
                           << typeName(spec.type()),
-            spec.type() == BSONType::Object);
+            spec.type() == BSONType::object);
 
     auto specObj = spec.Obj();
     auto fromElement = specObj["from"];
@@ -516,7 +521,7 @@ REGISTER_DOCUMENT_SOURCE(lookup,
 ALLOCATE_DOCUMENT_SOURCE_ID(lookup, DocumentSourceLookUp::id)
 
 const char* DocumentSourceLookUp::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 bool DocumentSourceLookUp::foreignShardedLookupAllowed() const {
@@ -638,11 +643,13 @@ DocumentSource::GetNextResult DocumentSourceLookUp::doGetNext() {
     invariant(!_matchSrc);
 
     std::unique_ptr<Pipeline, PipelineDeleter> pipeline;
+    std::unique_ptr<exec::agg::Pipeline> execPipeline;
     try {
         pipeline = buildPipeline(_fromExpCtx, inputDoc);
+        execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
         LOGV2_DEBUG(
             9497000, 5, "Built pipeline", "pipeline"_attr = pipeline->serializeForLogging());
-    } catch (const ExceptionForCat<ErrorCategory::StaleShardVersionError>& ex) {
+    } catch (const ExceptionFor<ErrorCategory::StaleShardVersionError>& ex) {
         // If lookup on a sharded collection is disallowed and the foreign collection is sharded,
         // throw a custom exception.
         if (auto staleInfo = ex.extraInfo<StaleConfigInfo>(); staleInfo &&
@@ -660,7 +667,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::doGetNext() {
     const auto maxBytes = internalLookupStageIntermediateDocumentMaxSizeBytes.load();
 
     LOGV2_DEBUG(9497001, 5, "Beginning to iterate sub-pipeline");
-    while (auto result = pipeline->getNext()) {
+    while (auto result = execPipeline->getNext()) {
         long long safeSum = 0;
         bool hasOverflowed = overflow::add(objsize, result->getApproximateSize(), &safeSum);
         uassert(4568,
@@ -672,7 +679,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::doGetNext() {
         objsize = safeSum;
         results.emplace_back(std::move(*result));
     }
-    pipeline->accumulatePipelinePlanSummaryStats(_stats.planSummaryStats);
+    execPipeline->accumulatePlanSummaryStats(_stats.planSummaryStats);
 
     // Check if pipeline uses disk.
     _stats.planSummaryStats.usedDisk = _stats.planSummaryStats.usedDisk || pipeline->usedDisk();
@@ -708,7 +715,10 @@ std::unique_ptr<Pipeline, PipelineDeleter> DocumentSourceLookUp::buildPipelineFr
 
     // Update the expression context with any new namespaces the resolved pipeline has introduced.
     LiteParsedPipeline liteParsedPipeline(resolvedNamespace.ns, resolvedNamespace.pipeline);
-    _fromExpCtx = _fromExpCtx->copyWith(resolvedNamespace.ns, resolvedNamespace.uuid);
+    _fromExpCtx = _fromExpCtx->copyWith(resolvedNamespace.ns,
+                                        resolvedNamespace.uuid,
+                                        boost::none,
+                                        std::make_pair(_fromNs, resolvedNamespace.pipeline));
     _fromExpCtx->addResolvedNamespaces(liteParsedPipeline.getInvolvedNamespaces());
 
     return pipeline;
@@ -1093,9 +1103,10 @@ bool DocumentSourceLookUp::usedDisk() {
 
 void DocumentSourceLookUp::doDispose() {
     if (_pipeline) {
-        _pipeline->accumulatePipelinePlanSummaryStats(_stats.planSummaryStats);
+        _execPipeline->accumulatePlanSummaryStats(_stats.planSummaryStats);
         _pipeline->dispose(pExpCtx->getOperationContext());
         _pipeline.reset();
+        _execPipeline.reset();
     }
 }
 
@@ -1136,7 +1147,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::unwindResult() {
         // avoid missing the accumulation of stats on an early exit (below) if the input (i.e., left
         // side of the lookup) is done.
         if (_pipeline) {
-            _pipeline->accumulatePipelinePlanSummaryStats(_stats.planSummaryStats);
+            _execPipeline->accumulatePlanSummaryStats(_stats.planSummaryStats);
             _pipeline->dispose(pExpCtx->getOperationContext());
         }
 
@@ -1148,6 +1159,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::unwindResult() {
         _input = nextInput.releaseDocument();
 
         _pipeline = buildPipeline(_fromExpCtx, *_input);
+        _execPipeline = exec::agg::buildPipeline(_pipeline->getSources(), _pipeline->getContext());
 
         // The $lookup stage takes responsibility for disposing of its Pipeline, since it will
         // potentially be used by multiple OperationContexts, and the $lookup stage is part of an
@@ -1155,7 +1167,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::unwindResult() {
         _pipeline.get_deleter().dismissDisposal();
 
         _cursorIndex = 0;
-        _nextValue = _pipeline->getNext();
+        _nextValue = _execPipeline->getNext();
 
         if (_unwindSrc->preserveNullAndEmptyArrays() && !_nextValue) {
             // There were no results for this cursor, but the $unwind was asked to preserve empty
@@ -1173,7 +1185,7 @@ DocumentSource::GetNextResult DocumentSourceLookUp::unwindResult() {
 
     invariant(bool(_input) && bool(_nextValue));
     auto currentValue = *_nextValue;
-    _nextValue = _pipeline->getNext();
+    _nextValue = _execPipeline->getNext();
 
     // Move input document into output if this is the last or only result, otherwise perform a copy.
     MutableDocument output(_nextValue ? *_input : std::move(*_input));
@@ -1365,7 +1377,7 @@ DepsTracker::State DocumentSourceLookUp::getDependencies(DepsTracker* deps) cons
                 break;
             }
         }
-        deps->fields.insert(ref.dottedSubstring(0, firstNumericIx).toString());
+        deps->fields.insert(std::string{ref.dottedSubstring(0, firstNumericIx)});
     }
 
     // Purposely ignore '_matchSrc' and '_unwindSrc', since those should only be absorbed if we know
@@ -1433,7 +1445,7 @@ void DocumentSourceLookUp::detachFromOperationContext() {
         // We have a pipeline we're going to be executing across multiple calls to getNext(), so we
         // use Pipeline::detachFromOperationContext() to take care of updating
         // '_fromExpCtx->getOperationContext()'.
-        _pipeline->detachFromOperationContext();
+        _execPipeline->detachFromOperationContext();
         invariant(_fromExpCtx->getOperationContext() == nullptr);
     } else if (_fromExpCtx) {
         _fromExpCtx->setOperationContext(nullptr);
@@ -1445,7 +1457,7 @@ void DocumentSourceLookUp::reattachToOperationContext(OperationContext* opCtx) {
         // We have a pipeline we're going to be executing across multiple calls to getNext(), so we
         // use Pipeline::reattachToOperationContext() to take care of updating
         // '_fromExpCtx->getOperationContext()'.
-        _pipeline->reattachToOperationContext(opCtx);
+        _execPipeline->reattachToOperationContext(opCtx);
         invariant(_fromExpCtx->getOperationContext() == opCtx);
     } else if (_fromExpCtx) {
         _fromExpCtx->setOperationContext(opCtx);
@@ -1458,11 +1470,8 @@ bool DocumentSourceLookUp::validateOperationContext(const OperationContext* opCt
         return false;
     }
 
-    if (_pipeline) {
-        const auto& sources = _pipeline->getSources();
-        return std::all_of(sources.begin(), sources.end(), [opCtx](const auto& s) {
-            return s->validateOperationContext(opCtx);
-        });
+    if (_execPipeline) {
+        return _execPipeline->validateOperationContext(opCtx);
     }
 
     return true;
@@ -1472,7 +1481,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceLookUp::createFromBson(
     BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& pExpCtx) {
     uassert(ErrorCodes::FailedToParse,
             "the $lookup specification must be an Object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     NamespaceString fromNs;
     std::string as;
@@ -1486,55 +1495,29 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceLookUp::createFromBson(
     bool hasPipeline = false;
     bool hasLet = false;
 
-    for (auto&& argument : elem.Obj()) {
-        const auto argName = argument.fieldNameStringData();
+    auto lookupSpec = DocumentSourceLookupSpec::parse(IDLParserContext(kStageName), elem.Obj());
 
-        if (argName == kPipelineField) {
-            pipeline = parsePipelineFromBSON(argument);
-            hasPipeline = true;
-            continue;
-        }
 
-        if (argName == "let"_sd) {
-            uassert(ErrorCodes::FailedToParse,
-                    str::stream() << "$lookup argument '" << argument
-                                  << "' must be an object, is type " << argument.type(),
-                    argument.type() == BSONType::Object);
-            letVariables = argument.Obj();
-            hasLet = true;
-            continue;
-        }
+    if (lookupSpec.getFrom().has_value()) {
+        fromNs = parseLookupFromAndResolveNamespace(lookupSpec.getFrom().value().getElement(),
+                                                    pExpCtx->getNamespaceString().dbName(),
+                                                    pExpCtx->getAllowGenericForeignDbLookup());
+    }
 
-        if (argName == kFromField) {
-            fromNs = parseLookupFromAndResolveNamespace(argument,
-                                                        pExpCtx->getNamespaceString().dbName(),
-                                                        pExpCtx->getAllowGenericForeignDbLookup());
-            continue;
-        }
+    as = std::string{lookupSpec.getAs()};
 
-        if (argName == "$_internalUnwind"_sd) {
-            tassert(8725002,
-                    "Invalid BSON type for $_internalUnwind.",
-                    argument.type() == BSONType::Object);
-            unwindSpec = argument.Obj();
-            continue;
-        }
-
-        uassert(ErrorCodes::FailedToParse,
-                str::stream() << "$lookup argument '" << argName << "' must be a string, found "
-                              << argument << ": " << argument.type(),
-                argument.type() == BSONType::String);
-
-        if (argName == kAsField) {
-            as = argument.String();
-        } else if (argName == kLocalField) {
-            localField = argument.String();
-        } else if (argName == kForeignField) {
-            foreignField = argument.String();
-        } else {
-            uasserted(ErrorCodes::FailedToParse,
-                      str::stream() << "unknown argument to $lookup: " << argument.fieldName());
-        }
+    if (lookupSpec.getPipeline().has_value()) {
+        hasPipeline = true;
+        pipeline = lookupSpec.getPipeline().value();
+    }
+    if (lookupSpec.getLetVars().has_value()) {
+        hasLet = true;
+        letVariables = lookupSpec.getLetVars().value();
+    }
+    localField = std::string{lookupSpec.getLocalField().value_or("")};
+    foreignField = std::string{lookupSpec.getForeignField().value_or("")};
+    if (lookupSpec.getUnwindSpec().has_value()) {
+        unwindSpec = lookupSpec.getUnwindSpec().value();
     }
 
     if (fromNs.isEmpty()) {
@@ -1542,8 +1525,6 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceLookUp::createFromBson(
         fromNs =
             NamespaceString::makeCollectionlessAggregateNSS(pExpCtx->getNamespaceString().dbName());
     }
-    uassert(ErrorCodes::FailedToParse, "must specify 'as' field for a $lookup", !as.empty());
-
     boost::intrusive_ptr<DocumentSourceLookUp> lookupStage = nullptr;
     if (hasPipeline) {
         if (localField.empty() && foreignField.empty()) {
@@ -1572,7 +1553,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceLookUp::createFromBson(
     } else {
         // $lookup specified with only local/foreignField syntax.
         uassert(ErrorCodes::FailedToParse,
-                "$lookup requires either 'pipeline' or both 'localField' and 'foreignField' to be "
+                "$lookup requires both or neither of 'localField' and 'foreignField' to be "
                 "specified",
                 !localField.empty() && !foreignField.empty());
         uassert(ErrorCodes::FailedToParse,

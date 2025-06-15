@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <utility>
-
-#include "mongo/db/exec/sbe/values/row.h"
-#include "mongo/db/exec/sbe/values/value.h"
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -42,8 +36,12 @@
 #include "mongo/db/exec/sbe/expressions/compile_ctx.h"
 #include "mongo/db/exec/sbe/stages/stages.h"
 #include "mongo/db/exec/sbe/util/spilling.h"
+#include "mongo/db/exec/sbe/values/row.h"
 #include "mongo/db/exec/sbe/values/value.h"
 #include "mongo/db/query/query_knobs_gen.h"
+
+#include <memory>
+#include <utility>
 
 namespace mongo {
 namespace sbe {
@@ -142,11 +140,14 @@ protected:
      * Note that the 'typeBits' are needed to reconstruct the spilled 'key' to a 'MaterializedRow',
      * but are not necessary for comparison purposes. Therefore, we carry the type bits separately
      * from the record id, instead appending them to the end of the serialized 'val' buffer.
+     *
+     * Returns the size in bytes of the record that is spilled to disk.
      */
     int64_t spillRowToDisk(const value::MaterializedRow& key, const value::MaterializedRow& val);
     void spill(MemoryCheckData& mcd);
-    void spill();
     void checkMemoryUsageAndSpillIfNecessary(MemoryCheckData& mcd);
+
+    void doForceSpill() final;
 
     // Memory tracking and spilling to disk.
     const long long _approxMemoryUseInBytesBeforeSpill =
@@ -166,7 +167,7 @@ protected:
 
     // A record store which is instantiated and written to in the case of spilling.
     std::unique_ptr<SpillingStore> _recordStore;
-    std::unique_ptr<SeekableRecordCursor> _rsCursor;
+    std::unique_ptr<SpillTable::Cursor> _rsCursor;
 
     // A monotonically increasing counter used to ensure uniqueness of 'RecordId' values. When
     // spilling, the key is encoding into the 'RecordId' of the '_recordStore'. Record ids must be
@@ -174,6 +175,13 @@ protected:
     // key. We ensure uniqueness by appending a unique integer to the end of this key, which is
     // simply ignored during deserialization.
     int64_t _ridSuffixCounter = 0;
+
+private:
+    void spill();
+
+    Derived& derived() {
+        return static_cast<Derived&>(*this);
+    }
 };
 
 }  // namespace sbe

@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -52,6 +41,18 @@
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries {
 // A table that is useful for interpolations between the number of measurements in a bucket and
@@ -112,7 +113,7 @@ public:
         auto&& controlField = bucket[kBucketControlFieldName];
         uassert(5857904,
                 "The $_internalUnpackBucket stage requires 'control' object to be present",
-                controlField && controlField.type() == BSONType::Object);
+                controlField && controlField.type() == BSONType::object);
 
         auto&& controlFieldObj = controlField.Obj();
         auto&& versionField = controlFieldObj[kBucketControlVersionFieldName];
@@ -121,7 +122,7 @@ public:
                 versionField && isNumericBSONType(versionField.type()));
 
         auto&& dataField = bucket[kBucketDataFieldName];
-        if (!dataField || dataField.type() != BSONType::Object)
+        if (!dataField || dataField.type() != BSONType::object)
             return 0;
 
         auto&& dataFieldObj = dataField.Obj();

@@ -28,12 +28,6 @@
  */
 
 
-#include <iterator>
-#include <list>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/db/pipeline/document_source_internal_shard_filter.h"
 
 #include "mongo/db/exec/document_value/document.h"
@@ -42,6 +36,12 @@
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
+
+#include <iterator>
+#include <list>
+#include <utility>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -76,7 +76,9 @@ DocumentSourceInternalShardFilter::buildIfNecessary(
 DocumentSourceInternalShardFilter::DocumentSourceInternalShardFilter(
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
     std::unique_ptr<ShardFilterer> shardFilterer)
-    : DocumentSource(kStageName, pExpCtx), _shardFilterer(std::move(shardFilterer)) {}
+    : DocumentSource(kStageName, pExpCtx),
+      exec::agg::Stage(kStageName, pExpCtx),
+      _shardFilterer(std::move(shardFilterer)) {}
 
 DocumentSource::GetNextResult DocumentSourceInternalShardFilter::doGetNext() {
     auto next = pSource->getNext();

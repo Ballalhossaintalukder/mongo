@@ -29,10 +29,6 @@
 
 #include "mongo/rpc/metadata/oplog_query_metadata.h"
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -40,6 +36,10 @@
 #include "mongo/db/repl/bson_extract_optime.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace rpc {
@@ -83,7 +83,7 @@ StatusWith<OplogQueryMetadata> OplogQueryMetadata::readFromMetadata(const BSONOb
     BSONElement oqMetadataElement;
 
     Status status = bsonExtractTypedField(
-        metadataObj, rpc::kOplogQueryMetadataFieldName, Object, &oqMetadataElement);
+        metadataObj, rpc::kOplogQueryMetadataFieldName, BSONType::object, &oqMetadataElement);
     if (!status.isOK())
         return status;
     BSONObj oqMetadataObj = oqMetadataElement.Obj();
@@ -116,7 +116,7 @@ StatusWith<OplogQueryMetadata> OplogQueryMetadata::readFromMetadata(const BSONOb
 
     BSONElement wallClockTimeElement;
     status = bsonExtractTypedField(
-        oqMetadataObj, kLastCommittedWallFieldName, BSONType::Date, &wallClockTimeElement);
+        oqMetadataObj, kLastCommittedWallFieldName, BSONType::date, &wallClockTimeElement);
     if (!status.isOK()) {
         return status;
     }

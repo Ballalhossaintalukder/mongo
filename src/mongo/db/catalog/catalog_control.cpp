@@ -30,20 +30,12 @@
 #define LOGV2_FOR_RECOVERY(ID, DLEVEL, MESSAGE, ...) \
     LOGV2_DEBUG_OPTIONS(ID, DLEVEL, {logv2::LogComponent::kStorageRecovery}, MESSAGE, ##__VA_ARGS__)
 
-#include <algorithm>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/catalog/catalog_control.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
-#include "mongo/db/catalog/catalog_control.h"
+#include "mongo/db/catalog/catalog_repair.h"
 #include "mongo/db/catalog/catalog_stats.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
@@ -65,6 +57,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -201,13 +203,17 @@ PreviousCatalogState closeCatalog(OperationContext* opCtx) {
     LOGV2(20271, "closeCatalog: closing all databases");
     databaseHolder->closeAll(opCtx);
 
+    if (auto truncateMarkers = LocalOplogInfo::get(opCtx)->getTruncateMarkers()) {
+        truncateMarkers->kill();
+    }
+
     CollectionCatalog::write(opCtx, [opCtx](CollectionCatalog& catalog) {
         catalog.deregisterAllCollectionsAndViews(opCtx->getServiceContext());
     });
 
     // Close the storage engine's catalog.
     LOGV2(20272, "closeCatalog: closing storage engine catalog");
-    opCtx->getServiceContext()->getStorageEngine()->closeDurableCatalog(opCtx);
+    opCtx->getServiceContext()->getStorageEngine()->closeMDBCatalog(opCtx);
 
     // Reset the stats counter for extended range time-series collections. This is maintained
     // outside the catalog itself.
@@ -233,14 +239,17 @@ void openCatalog(OperationContext* opCtx,
 
     // Ignore orphaned idents because this function is used during rollback and not at
     // startup recovery, when we may try to recover orphaned idents.
-    storageEngine->loadDurableCatalog(opCtx, StorageEngine::LastShutdownState::kClean);
+    storageEngine->loadMDBCatalog(opCtx, StorageEngine::LastShutdownState::kClean);
     catalog::initializeCollectionCatalog(opCtx, storageEngine, stableTimestamp);
 
     LOGV2(20274, "openCatalog: reconciling catalog and idents");
     auto reconcileResult =
         fassert(40688,
-                storageEngine->reconcileCatalogAndIdents(
-                    opCtx, stableTimestamp, StorageEngine::LastShutdownState::kClean));
+                catalog_repair::reconcileCatalogAndIdents(opCtx,
+                                                          storageEngine,
+                                                          stableTimestamp,
+                                                          StorageEngine::LastShutdownState::kClean,
+                                                          false /* forRepair */));
 
     // Once all unfinished index builds have been dropped and the catalog has been reloaded, resume
     // or restart any unfinished index builds. This will not resume/restart any index builds to
@@ -252,7 +261,6 @@ void openCatalog(OperationContext* opCtx,
     CatalogControlUtils::reopenAllDatabasesAndReloadCollectionCatalog(
         opCtx, storageEngine, previousCatalogState, stableTimestamp);
 }
-
 
 void openCatalogAfterStorageChange(OperationContext* opCtx) {
     invariant(shard_role_details::getLocker(opCtx)->isW());

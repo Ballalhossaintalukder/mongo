@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <bitset>
-#include <deque>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_facet.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -42,11 +36,11 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/database_name.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
-#include "mongo/db/pipeline/document_source_facet.h"
 #include "mongo/db/pipeline/document_source_limit.h"
 #include "mongo/db/pipeline/document_source_mock.h"
 #include "mongo/db/pipeline/document_source_skip.h"
@@ -56,6 +50,14 @@
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <bitset>
+#include <deque>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 using std::deque;
@@ -330,7 +332,8 @@ TEST_F(DocumentSourceFacetTest, SingleFacetShouldReceiveAllDocuments) {
 
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("results", std::move(pipeline));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
     facetStage->setSource(mock.get());
 
     auto output = facetStage->getNext();
@@ -360,7 +363,8 @@ TEST_F(DocumentSourceFacetTest, MultipleFacetsShouldSeeTheSameDocuments) {
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("first", std::move(firstPipeline));
     facets.emplace_back("second", std::move(secondPipeline));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
 
     facetStage->setSource(mock.get());
 
@@ -390,7 +394,8 @@ TEST_F(DocumentSourceFacetTest, ShouldAcceptEmptyPipelines) {
         Document{{"_id", 0}}, Document{{"_id", 1}}, Document{{"_id", 2}}};
     auto mock = DocumentSourceMock::createForTest(inputs, ctx);
 
-    auto facetStage = DocumentSourceFacet::createFromBson(spec.firstElement(), ctx);
+    auto facetSource = DocumentSourceFacet::createFromBson(spec.firstElement(), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
     facetStage->setSource(mock.get());
 
     auto output = facetStage->getNext();
@@ -427,7 +432,8 @@ TEST_F(DocumentSourceFacetTest,
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("all", std::move(passthroughPipe));
     facets.emplace_back("first", std::move(limitedPipe));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
 
     facetStage->setSource(mock.get());
 
@@ -462,7 +468,8 @@ TEST_F(DocumentSourceFacetTest, ShouldBeAbleToEvaluateMultipleStagesWithinOneSub
 
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("subPipe", std::move(pipeline));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
 
     facetStage->setSource(mock.get());
 
@@ -484,7 +491,8 @@ TEST_F(DocumentSourceFacetTest, ShouldPropagateDisposeThroughToSource) {
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("firstPipe", std::move(firstPipe));
     facets.emplace_back("secondPipe", std::move(secondPipe));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
 
     facetStage->setSource(mockSource.get());
 
@@ -505,7 +513,8 @@ DEATH_TEST_REGEX_F(DocumentSourceFacetTest,
 
     std::vector<DocumentSourceFacet::FacetPipeline> facets;
     facets.emplace_back("subPipe", std::move(pipeline));
-    auto facetStage = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetSource = DocumentSourceFacet::create(std::move(facets), ctx);
+    auto facetStage = exec::agg::buildStage(facetSource);
 
     facetStage->setSource(mock.get());
 
@@ -539,11 +548,11 @@ TEST_F(DocumentSourceFacetTest, ShouldBeAbleToReParseSerializedStage) {
     vector<Value> serialization;
     facetStage->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     // The fields are in no guaranteed order, so we can't make a simple Document comparison.
     ASSERT_EQ(serialization[0].getDocument().computeSize(), 1ULL);
-    ASSERT_EQ(serialization[0].getDocument()["$facet"].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getDocument()["$facet"].getType(), BSONType::object);
 
     // Should have two fields: "skippedOne" and "skippedTwo".
     auto serializedStage = serialization[0].getDocument()["$facet"].getDocument();

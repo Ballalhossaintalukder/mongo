@@ -29,9 +29,16 @@
 
 #pragma once
 
+#include "mongo/platform/compiler.h"
+#include "mongo/stdx/type_traits.h"
+#include "mongo/util/assert_util_core.h"
+#include "mongo/util/ctype.h"
+#include "mongo/util/debug_util.h"
+
 #include <algorithm>
+#include <concepts>
 #include <cstring>
-#include <fmt/format.h>
+#include <functional>
 #include <iosfwd>
 #include <limits>
 #include <stdexcept>
@@ -39,16 +46,10 @@
 #include <string_view>  // NOLINT
 #include <type_traits>
 
-#include "mongo/platform/compiler.h"
-#include "mongo/stdx/type_traits.h"
-#include "mongo/util/assert_util_core.h"
-#include "mongo/util/ctype.h"
-#include "mongo/util/debug_util.h"
+#include <absl/hash/hash.h>
+#include <fmt/format.h>
 
 namespace mongo {
-
-// Set to 1 if XCode supports `std::string_view` c++20 features.
-#define MONGO_STRING_DATA_CXX20 0
 
 /**
  * A StringData object refers to an array of `char` without owning it.
@@ -62,9 +63,6 @@ namespace mongo {
  *
  * The iterator is not always a raw pointer. On Windows, it is a class,
  * which enables useful integrity checks in debug builds.
- *
- * XCode is basically implementing at the C++17 level. There's no `operator<=>`,
- * no range constructors, and no `contains` member.
  *
  * The string data to which StringData refers must outlive it.
  *
@@ -112,24 +110,19 @@ public:
      */
     constexpr StringData(const char* c, size_type len) : StringData(_checkedView(c, len)) {}
 
-#if MONGO_STRING_DATA_CXX20
     /**
      * Constructs a StringData with iterator range [first, last). `first` points to the beginning of
      * the string. `last` points to the position past the end of the string.
      *
-     * We template the second parameter to ensure if StringData is called with literal 0 in the
-     * second parameter, the (const char*, size_t) constructor is chosen instead.
+     * The constraint on `End` avoids competing with the `(ptr, len)` constructor.
      *
-     * `std::string_view` already does advanced concepts checks on these arguments, so we
-     * use `std::is_constructible` to just accept whatever `std::string_view` accepts.
+     * We accept whatever `std::string_view` accepts, as `std::string_view` already does advanced
+     * concepts checks on these arguments.
      */
-    template <typename It,
-              typename End,
-              std::enable_if_t<std::is_constructible_v<std::string_view, It, End> &&
-                                   !std::is_convertible_v<End, size_type>,
-                               int> = 0>
+    template <typename It, typename End>
+    requires(std::constructible_from<std::string_view, It, End> &&
+             !std::convertible_to<End, size_type>)
     constexpr StringData(It first, End last) : _sv{first, last} {}
-#endif  // MONGO_STRING_DATA_CXX20
 
     explicit operator std::string() const {
         return std::string{_sv};
@@ -284,7 +277,6 @@ public:
         return _sv.ends_with(s);
     }
 
-#if MONGO_STRING_DATA_CXX20
     constexpr bool contains(StringData v) const noexcept {
         return _sv.find(v._sv) != npos;
     }
@@ -294,7 +286,6 @@ public:
     constexpr bool contains(const char* s) const {
         return _sv.find(s) != npos;
     }
-#endif  // MONGO_STRING_DATA_CXX20
 
 /** The "find" family of functions have identical overload sets. */
 #define STRING_DATA_DEFINE_FIND_OVERLOADS_(func, posDefault)                            \
@@ -318,32 +309,13 @@ public:
     STRING_DATA_DEFINE_FIND_OVERLOADS_(find_last_not_of, npos)
 #undef STRING_DATA_FIND_OVERLOADS_
 
-    //
-    // MongoDB extras
-    //
+    friend constexpr auto operator<=>(StringData a, StringData b) = default;
+    friend constexpr bool operator==(StringData a, StringData b) = default;
 
-    constexpr bool startsWith(StringData prefix) const noexcept {
-        return starts_with(prefix);
-    }
-
-    constexpr bool endsWith(StringData suffix) const noexcept {
-        return ends_with(suffix);
-    }
-
-    std::string toString() const {
-        return std::string{_sv};
-    }
-
-    constexpr const char* rawData() const noexcept {
-        return data();
-    }
-
-    /** Uses tolower, and therefore does not handle some languages correctly. */
-    bool equalCaseInsensitive(StringData other) const {
-        return size() == other.size() &&
-            std::equal(begin(), end(), other.begin(), other.end(), [](char a, char b) {
-                   return ctype::toLower(a) == ctype::toLower(b);
-               });
+    /** absl::Hash ADL hook (behave exactly as std::string_view). */
+    template <typename H>
+    friend H AbslHashValue(H h, StringData sd) {
+        return H::combine(std::move(h), std::string_view{sd});
     }
 
 private:
@@ -362,31 +334,6 @@ private:
 
 // Adds support for boost::Hash.
 size_t hash_value(StringData sd);
-
-#if MONGO_STRING_DATA_CXX20
-inline constexpr auto operator<=>(StringData a, StringData b) noexcept {
-    return std::string_view{a} <=> std::string_view{b};
-}
-#else   // !MONGO_STRING_DATA_CXX20
-inline constexpr bool operator==(StringData a, StringData b) noexcept {
-    return std::string_view{a} == std::string_view{b};
-}
-inline constexpr bool operator!=(StringData a, StringData b) noexcept {
-    return std::string_view{a} != std::string_view{b};
-}
-inline constexpr bool operator<(StringData a, StringData b) noexcept {
-    return std::string_view{a} < std::string_view{b};
-}
-inline constexpr bool operator>(StringData a, StringData b) noexcept {
-    return std::string_view{a} > std::string_view{b};
-}
-inline constexpr bool operator<=(StringData a, StringData b) noexcept {
-    return std::string_view{a} <= std::string_view{b};
-}
-inline constexpr bool operator>=(StringData a, StringData b) noexcept {
-    return std::string_view{a} >= std::string_view{b};
-}
-#endif  // !MONGO_STRING_DATA_CXX20
 
 std::ostream& operator<<(std::ostream& os, StringData v);
 
@@ -427,12 +374,21 @@ inline namespace literals {
  * Makes a constexpr StringData from a user defined literal (e.g. "hello"_sd).
  * This allows for constexpr creation of `StringData` that are known at compile time.
  */
-constexpr StringData operator"" _sd(const char* c, std::size_t len) {
+constexpr StringData operator""_sd(const char* c, std::size_t len) {
     return {c, len};
 }
 }  // namespace literals
 
 }  // namespace mongo
+
+namespace std {
+template <>
+struct hash<mongo::StringData> {
+    size_t operator()(mongo::StringData s) const noexcept {
+        return hash<std::string_view>{}(toStdStringViewForInterop(s));
+    }
+};
+}  // namespace std
 
 namespace fmt {
 template <>

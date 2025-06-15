@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <limits>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
+#include "mongo/db/catalog/collection_options.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -45,7 +35,6 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/basic_types_gen.h"
 #include "mongo/db/catalog/clustered_collection_util.h"
-#include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_options_validation.h"
 #include "mongo/db/commands/create_gen.h"
 #include "mongo/db/namespace_string.h"
@@ -57,6 +46,19 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
+
+#include <limits>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -185,7 +187,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
         } else if (fieldName == "temp") {
             collectionOptions.temp = e.trueValue();
         } else if (fieldName == "changeStreamPreAndPostImages") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return {ErrorCodes::InvalidOptions,
                         "'changeStreamPreAndPostImages' option must be a document"};
             }
@@ -198,7 +200,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return ex.toStatus();
             }
         } else if (fieldName == "storageEngine") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch, "'storageEngine' must be a document"};
             }
 
@@ -209,7 +211,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
 
             collectionOptions.storageEngine = e.Obj().getOwned();
         } else if (fieldName == "indexOptionDefaults") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch, "'indexOptionDefaults' has to be a document."};
             }
 
@@ -220,13 +222,13 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return ex.toStatus();
             }
         } else if (fieldName == "validator") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return Status(ErrorCodes::BadValue, "'validator' has to be a document.");
             }
 
             collectionOptions.validator = e.Obj().getOwned();
         } else if (fieldName == "validationAction") {
-            if (e.type() != mongo::String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::BadValue, "'validationAction' has to be a string.");
             }
 
@@ -237,7 +239,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return exc.toStatus();
             }
         } else if (fieldName == "validationLevel") {
-            if (e.type() != mongo::String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::BadValue, "'validationLevel' has to be a string.");
             }
 
@@ -248,7 +250,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return exc.toStatus();
             }
         } else if (fieldName == "collation") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return Status(ErrorCodes::BadValue, "'collation' has to be a document.");
             }
 
@@ -264,13 +266,13 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return ex.toStatus();
             }
         } else if (fieldName == "expireAfterSeconds") {
-            if (e.type() != mongo::NumberLong) {
+            if (e.type() != BSONType::numberLong) {
                 return {ErrorCodes::BadValue, "'expireAfterSeconds' must be a number."};
             }
 
             collectionOptions.expireAfterSeconds = e.Long();
         } else if (fieldName == "viewOn") {
-            if (e.type() != mongo::String) {
+            if (e.type() != BSONType::string) {
                 return Status(ErrorCodes::BadValue, "'viewOn' has to be a string.");
             }
 
@@ -279,13 +281,13 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return Status(ErrorCodes::BadValue, "'viewOn' cannot be empty.'");
             }
         } else if (fieldName == "pipeline") {
-            if (e.type() != mongo::Array) {
+            if (e.type() != BSONType::array) {
                 return Status(ErrorCodes::BadValue, "'pipeline' has to be an array.");
             }
 
             collectionOptions.pipeline = e.Obj().getOwned();
         } else if (fieldName == "idIndex" && kind == parseForCommand) {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return Status(ErrorCodes::TypeMismatch, "'idIndex' has to be an object.");
             }
 
@@ -296,7 +298,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
 
             collectionOptions.idIndex = std::move(tempIdIndex);
         } else if (fieldName == "timeseries") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch, "'timeseries' must be a document"};
             }
 
@@ -307,7 +309,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return ex.toStatus();
             }
         } else if (fieldName == "encryptedFields") {
-            if (e.type() != mongo::Object) {
+            if (e.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch, "'encryptedFields' must be a document"};
             }
 
@@ -318,7 +320,7 @@ StatusWith<CollectionOptions> CollectionOptions::parse(const BSONObj& options, P
                 return ex.toStatus();
             }
         } else if (fieldName == "recordIdsReplicated") {
-            if (e.type() != mongo::Bool) {
+            if (e.type() != BSONType::boolean) {
                 return {ErrorCodes::TypeMismatch, "'recordIdsReplicated' must be a boolean."};
             }
             collectionOptions.recordIdsReplicated = e.Bool();
@@ -362,7 +364,7 @@ CollectionOptions CollectionOptions::fromCreateCommand(const CreateCommand& cmd)
         options.indexOptionDefaults = std::move(*indexOptionDefaults);
     }
     if (auto viewOn = cmd.getViewOn()) {
-        options.viewOn = viewOn->toString();
+        options.viewOn = std::string{*viewOn};
     }
     if (auto pipeline = cmd.getPipeline()) {
         BSONArrayBuilder builder;

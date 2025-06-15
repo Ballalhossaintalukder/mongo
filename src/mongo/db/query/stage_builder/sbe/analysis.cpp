@@ -29,15 +29,16 @@
 
 #include "mongo/db/query/stage_builder/sbe/analysis.h"
 
-#include <absl/container/inlined_vector.h>
-#include <algorithm>
-#include <sstream>
-#include <tuple>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/query/query_solution.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
+
+#include <algorithm>
+#include <sstream>
+#include <tuple>
+
+#include <absl/container/inlined_vector.h>
 
 namespace mongo::stage_builder {
 FieldEffect FieldEffects::getComposedEffect(FieldEffect child, FieldEffect parent) {
@@ -70,7 +71,7 @@ FieldEffects::FieldEffects(bool isInclusion,
         const auto& path = paths[i];
 
         bool isDottedPath = path.find('.') != std::string::npos;
-        std::string field = getTopLevelField(path).toString();
+        std::string field = std::string{getTopLevelField(path)};
 
         // Add 'field' to '_fields' if needed.
         const bool presentInEffectsMap = _effects.count(field);
@@ -675,7 +676,7 @@ void QsnAnalysis::analyzeQsNode(const QuerySolutionNode* qsNode, QsnInfo& qsnInf
             while (it.more()) {
                 auto f = getTopLevelField(it.next().fieldNameStringData());
                 if (!ixscanSet.count(f)) {
-                    auto str = f.toString();
+                    auto str = std::string{f};
                     ixscanFields.emplace_back(str);
                     ixscanSet.emplace(std::move(str));
                 }

@@ -29,14 +29,6 @@
 
 #include "mongo/db/s/move_primary_coordinator.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <fmt/format.h>
-#include <iterator>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bson_field.h"
@@ -55,12 +47,13 @@
 #include "mongo/db/generic_argument_util.h"
 #include "mongo/db/repl/change_stream_oplog_notification.h"
 #include "mongo/db/repl/read_concern_level.h"
-#include "mongo/db/s/database_sharding_state.h"
+#include "mongo/db/s/database_sharding_runtime.h"
 #include "mongo/db/s/forwardable_operation_metadata.h"
 #include "mongo/db/s/participant_block_gen.h"
 #include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_logging.h"
 #include "mongo/db/s/sharding_recovery_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/shardsvr_commit_create_database_metadata_command.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/session/logical_session_id_gen.h"
@@ -80,12 +73,20 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/request_types/move_primary_gen.h"
 #include "mongo/s/resharding/resharding_feature_flag_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <algorithm>
+#include <iterator>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -609,7 +610,7 @@ std::vector<NamespaceString> MovePrimaryCoordinator::cloneDataToRecipient(Operat
 
         std::vector<NamespaceString> colls;
         for (const auto& bsonElem : cloneResponse.getValue().response["clonedColls"].Obj()) {
-            if (bsonElem.type() == String) {
+            if (bsonElem.type() == BSONType::string) {
                 colls.push_back(NamespaceStringUtil::deserialize(
                     boost::none, bsonElem.String(), SerializationContext::stateDefault()));
             }
@@ -784,14 +785,14 @@ void MovePrimaryCoordinator::cloneAuthoritativeDatabaseMetadata(OperationContext
 
 void MovePrimaryCoordinator::blockWritesLegacy(OperationContext* opCtx) const {
     AutoGetDb autoDb(opCtx, _dbName, MODE_X);
-    auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(opCtx, _dbName);
-    scopedDss->setMovePrimaryInProgress(opCtx);
+    auto scopedDsr = DatabaseShardingRuntime::assertDbLockedAndAcquireExclusive(opCtx, _dbName);
+    scopedDsr->setMovePrimaryInProgress(opCtx);
 }
 
 void MovePrimaryCoordinator::unblockWritesLegacy(OperationContext* opCtx) const {
     AutoGetDb autoDb(opCtx, _dbName, MODE_IX);
-    auto scopedDss = DatabaseShardingState::assertDbLockedAndAcquireExclusive(opCtx, _dbName);
-    scopedDss->unsetMovePrimaryInProgress(opCtx);
+    auto scopedDsr = DatabaseShardingRuntime::assertDbLockedAndAcquireExclusive(opCtx, _dbName);
+    scopedDsr->unsetMovePrimaryInProgress(opCtx);
 }
 
 void MovePrimaryCoordinator::blockWrites(OperationContext* opCtx) const {

@@ -28,8 +28,6 @@
  */
 
 
-#include <memory>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -46,6 +44,8 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/util/assert_util.h"
 
+#include <memory>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
 
@@ -54,7 +54,7 @@ namespace {
 
 class StartRecordingCommand final : public TypedCommand<StartRecordingCommand> {
 public:
-    using Request = StartRecordingTraffic;
+    using Request = StartTrafficRecording;
 
     class Invocation final : public InvocationBase {
     public:
@@ -95,7 +95,7 @@ MONGO_REGISTER_COMMAND(StartRecordingCommand).forRouter().forShard();
 
 class StopRecordingCommand final : public TypedCommand<StopRecordingCommand> {
 public:
-    using Request = StopRecordingTraffic;
+    using Request = StopTrafficRecording;
 
     class Invocation final : public InvocationBase {
     public:
@@ -129,6 +129,44 @@ public:
     }
 };
 MONGO_REGISTER_COMMAND(StopRecordingCommand).forRouter().forShard();
+
+
+class GetRecordingStatusCommand final : public TypedCommand<GetRecordingStatusCommand> {
+public:
+    using Request = GetTrafficRecordingStatus;
+
+    class Invocation final : public InvocationBase {
+    public:
+        using InvocationBase::InvocationBase;
+
+        void typedRun(OperationContext* opCtx) {
+            // Not yet implemented
+        }
+
+    private:
+        bool supportsWriteConcern() const override {
+            return false;
+        }
+
+        void doCheckAuthorization(OperationContext* opCtx) const override {
+            uassert(ErrorCodes::Unauthorized,
+                    "Unauthorized",
+                    AuthorizationSession::get(opCtx->getClient())
+                        ->isAuthorizedForPrivilege(Privilege{
+                            ResourcePattern::forClusterResource(request().getDbName().tenantId()),
+                            ActionType::trafficRecord}));
+        }
+
+        NamespaceString ns() const override {
+            return NamespaceString(request().getDbName());
+        }
+    };
+
+    AllowedOnSecondary secondaryAllowed(ServiceContext*) const override {
+        return AllowedOnSecondary::kAlways;
+    }
+};
+MONGO_REGISTER_COMMAND(GetRecordingStatusCommand).forRouter().forShard();
 
 }  // namespace
 }  // namespace mongo

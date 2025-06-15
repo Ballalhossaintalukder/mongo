@@ -27,8 +27,9 @@
  *    it in the license file.
  */
 
-#include "mongo/db/timeseries/bucket_catalog/bucket_catalog.h"
 #include "mongo/db/timeseries/bucket_catalog/bucket_catalog_internal.h"
+
+#include "mongo/db/timeseries/bucket_catalog/bucket_catalog.h"
 #include "mongo/db/timeseries/bucket_catalog/rollover.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/timeseries/timeseries_test_fixture.h"
@@ -57,16 +58,15 @@ protected:
 
 void BucketCatalogInternalTest::_rolloverWithRolloverReason(RolloverReason reason) {
     auto timeseriesOptions = _getTimeseriesOptions(_ns1);
-    std::vector<write_ops::internal::WriteStageErrorAndIndex> errorsAndIndices;
-    auto batchedInsertContexts =
-        write_ops::internal::buildBatchedInsertContexts(*_bucketCatalog,
-                                                        _uuid1,
-                                                        timeseriesOptions,
-                                                        {_measurement},
-                                                        /*startIndex=*/0,
-                                                        /*numDocsToStage=*/1,
-                                                        /*docsToRetry=*/{},
-                                                        errorsAndIndices);
+    std::vector<bucket_catalog::WriteStageErrorAndIndex> errorsAndIndices;
+    auto batchedInsertContexts = bucket_catalog::buildBatchedInsertContexts(*_bucketCatalog,
+                                                                            _uuid1,
+                                                                            timeseriesOptions,
+                                                                            {_measurement},
+                                                                            /*startIndex=*/0,
+                                                                            /*numDocsToStage=*/1,
+                                                                            /*docsToRetry=*/{},
+                                                                            errorsAndIndices);
     ASSERT(errorsAndIndices.empty());
 
     auto batchedInsertCtx = batchedInsertContexts[0];

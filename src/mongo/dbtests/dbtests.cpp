@@ -31,13 +31,7 @@
  * Runs db unit tests.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -50,9 +44,9 @@
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/commands/test_commands_enabled.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/index_builds/multi_index_block.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/query/client_cursor/cursor_manager.h"
 #include "mongo/db/query/query_settings/query_settings_service.h"
 #include "mongo/db/repl/member_state.h"
@@ -68,7 +62,6 @@
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/db/wire_version.h"
-#include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/dbtests/framework.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/transport/service_entry_point.h"
@@ -85,6 +78,14 @@
 #include "mongo/util/text.h"  // IWYU pragma: keep
 #include "mongo/util/tick_source_mock.h"
 #include "mongo/util/version/releases.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace dbtests {
@@ -213,12 +214,15 @@ WriteContextForTests::WriteContextForTests(OperationContext* opCtx, StringData n
     _autoDb.emplace(opCtx, _nss.dbName(), MODE_IX);
     _collLock.emplace(opCtx, _nss, MODE_X);
 
-    const bool doShardVersionCheck = false;
+    _tracker.emplace(opCtx,
+                     _nss,
+                     Top::LockType::WriteLocked,
+                     AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                     DatabaseProfileSettings::get(opCtx->getServiceContext())
+                         .getDatabaseProfileLevel(_nss.dbName()));
 
-    _clientContext.emplace(opCtx, _nss, doShardVersionCheck);
     auto db = _autoDb->ensureDbExists(opCtx);
     invariant(db, _nss.toStringForErrorMsg());
-    invariant(db == _clientContext->db());
 }
 
 CollectionAcquisition WriteContextForTests::getCollection() const {

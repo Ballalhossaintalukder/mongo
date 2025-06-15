@@ -9,7 +9,7 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"x" : [
-						"(3.0, inf.0]"
+						"(3.0, inf]"
 					],
 					"y" : [
 						"[5.0, 5.0]"
@@ -56,7 +56,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "A97189E6"
+		"planCacheKey" : "B303875C"
 	}
 ]
 ```
@@ -71,7 +71,7 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"x" : [
-						"(3.0, inf.0]"
+						"(3.0, inf]"
 					],
 					"y" : [
 						"[5.0, 5.0]"
@@ -118,7 +118,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "A97189E6"
+		"planCacheKey" : "B303875C"
 	}
 ]
 ```
@@ -133,10 +133,10 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"x" : [
-						"(12.0, inf.0]"
+						"(12.0, inf]"
 					],
 					"y" : [
-						"[-inf.0, 200.0)"
+						"[-inf, 200.0)"
 					]
 				},
 				"indexName" : "x_1_y_1",
@@ -182,7 +182,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "BDB1997F"
+		"planCacheKey" : "49BCC9BF"
 	}
 ]
 ```
@@ -196,10 +196,10 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"x" : [
-						"(12.0, inf.0]"
+						"(12.0, inf]"
 					],
 					"y" : [
-						"[-inf.0, 250.0)"
+						"[-inf, 250.0)"
 					]
 				},
 				"indexName" : "x_1_y_1",
@@ -245,7 +245,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "BDB1997F"
+		"planCacheKey" : "49BCC9BF"
 	}
 ]
 ```
@@ -266,7 +266,7 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"y" : [
-						"[-inf.0, 105.0)"
+						"[-inf, 105.0)"
 					],
 					"z" : [
 						"[MinKey, MaxKey]"
@@ -310,7 +310,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "166B1DDF"
+		"planCacheKey" : "07AE4E3B"
 	}
 ]
 ```
@@ -330,7 +330,7 @@
 				"direction" : "forward",
 				"indexBounds" : {
 					"y" : [
-						"[-inf.0, 105.0)"
+						"[-inf, 105.0)"
 					],
 					"z" : [
 						"[MinKey, MaxKey]"
@@ -374,7 +374,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "166B1DDF"
+		"planCacheKey" : "07AE4E3B"
 	}
 ]
 ```
@@ -455,7 +455,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "97571CB5"
+		"planCacheKey" : "7E928582"
 	}
 ]
 ```
@@ -535,7 +535,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "97571CB5"
+		"planCacheKey" : "7E928582"
 	}
 ]
 ```
@@ -620,7 +620,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "D3A281DD"
+		"planCacheKey" : "E09222EA"
 	}
 ]
 ```
@@ -705,7 +705,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "D3A281DD"
+		"planCacheKey" : "E09222EA"
 	}
 ]
 ```
@@ -791,7 +791,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "91797E92"
+		"planCacheKey" : "8F32F724"
 	}
 ]
 ```
@@ -876,7 +876,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "91797E92"
+		"planCacheKey" : "8F32F724"
 	}
 ]
 ```
@@ -961,7 +961,7 @@
 			}
 		},
 		"isActive" : false,
-		"planCacheKey" : "D3A281DD"
+		"planCacheKey" : "E09222EA"
 	}
 ]
 ```
@@ -1046,7 +1046,7 @@
 			}
 		},
 		"isActive" : true,
-		"planCacheKey" : "D3A281DD"
+		"planCacheKey" : "E09222EA"
 	}
 ]
 ```

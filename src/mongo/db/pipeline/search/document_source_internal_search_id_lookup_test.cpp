@@ -27,11 +27,10 @@
  *    it in the license file.
  */
 
-#include <boost/intrusive_ptr.hpp>
-#include <deque>
-#include <vector>
+#include "mongo/db/pipeline/search/document_source_internal_search_id_lookup.h"
 
 #include "mongo/bson/json.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
@@ -40,10 +39,14 @@
 #include "mongo/db/pipeline/document_source_project.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/process_interface/stub_lookup_single_document_process_interface.h"
-#include "mongo/db/pipeline/search/document_source_internal_search_id_lookup.h"
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/temp_dir.h"
+
+#include <deque>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -87,7 +90,8 @@ TEST_F(InternalSearchIdLookupTest, ShouldSkipResultsWhenIdNotFound) {
     auto spec = specObj.firstElement();
 
     // Set up the idLookup stage.
-    auto idLookupStage = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookup = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookupStage = exec::agg::buildStage(idLookup);
 
     // Mock its input.
     auto mockLocalSource =
@@ -123,7 +127,8 @@ TEST_F(InternalSearchIdLookupTest, ShouldNotRemoveMetadata) {
     auto specObj = BSON("$_internalSearchIdLookup" << BSONObj());
     auto spec = specObj.firstElement();
 
-    auto idLookupStage = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookup = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookupStage = exec::agg::buildStage(idLookup);
     idLookupStage->setSource(&mockLocalSource);
 
     // Set up a project stage that asks for metadata.
@@ -131,7 +136,8 @@ TEST_F(InternalSearchIdLookupTest, ShouldNotRemoveMetadata) {
         "{$project: {score: {$meta: \"searchScore\"}, "
         "scoreInfo: {$meta: \"searchScoreDetails\"},"
         " _id: 1, color: 1}}");
-    auto projectStage = DocumentSourceProject::createFromBson(projectSpec.firstElement(), expCtx);
+    auto project = DocumentSourceProject::createFromBson(projectSpec.firstElement(), expCtx);
+    auto projectStage = exec::agg::buildStage(project);
     projectStage->setSource(idLookupStage.get());
 
     // Mock documents for this namespace.
@@ -161,7 +167,7 @@ TEST_F(InternalSearchIdLookupTest, ShouldParseFromSerialized) {
     vector<Value> serialization;
     idLookupStage.serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     BSONObj spec = BSON("$_internalSearchIdLookup" << BSONObj());
     ASSERT_BSONOBJ_EQ(serialization[0].getDocument().toBson(), spec);
@@ -201,7 +207,8 @@ TEST_F(InternalSearchIdLookupTest, ShouldAllowStringOrObjectIdValues) {
     auto spec = specObj.firstElement();
 
     // Set up the idLookup stage.
-    auto idLookupStage = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookup = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookupStage = exec::agg::buildStage(idLookup);
 
     // Mock its input.
     auto mockLocalSource = DocumentSourceMock::createForTest(
@@ -239,7 +246,8 @@ TEST_F(InternalSearchIdLookupTest, ShouldNotErrorOnEmptyResult) {
     auto spec = specObj.firstElement();
 
     // Set up the idLookup stage.
-    auto idLookupStage = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookup = DocumentSourceInternalSearchIdLookUp::createFromBson(spec, expCtx);
+    auto idLookupStage = exec::agg::buildStage(idLookup);
 
     // Mock its input.
     auto mockLocalSource = DocumentSourceMock::createForTest({}, expCtx);

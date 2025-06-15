@@ -27,16 +27,17 @@
  *    it in the license file.
  */
 
-#include <functional>
-#include <utility>
+#include "mongo/db/repl/initial_sync/cloner_test_fixture.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/client.h"
 #include "mongo/db/query/client_cursor/cursor_id.h"
-#include "mongo/db/repl/initial_sync/cloner_test_fixture.h"
 #include "mongo/dbtests/mock/mock_dbclient_connection.h"
 #include "mongo/util/concurrency/thread_pool.h"
+
+#include <functional>
+#include <utility>
 
 namespace mongo {
 namespace repl {
@@ -48,9 +49,8 @@ BSONObj ClonerTestFixture::createCountResponse(int documentCount) {
 
 /* static */
 BSONObj ClonerTestFixture::createCursorResponse(StringData nss, const BSONArray& docs) {
-    return BSON(
-        "cursor" << BSON("id" << CursorId(0) << "ns" << nss.toString() << "firstBatch" << docs)
-                 << "ok" << 1);
+    return BSON("cursor" << BSON("id" << CursorId(0) << "ns" << nss << "firstBatch" << docs) << "ok"
+                         << 1);
 }
 
 void ClonerTestFixture::setUp() {

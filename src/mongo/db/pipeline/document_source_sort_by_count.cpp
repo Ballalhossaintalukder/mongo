@@ -29,8 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_sort_by_count.h"
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -44,6 +42,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 using boost::intrusive_ptr;
@@ -56,14 +56,14 @@ REGISTER_DOCUMENT_SOURCE(sortByCount,
 
 list<intrusive_ptr<DocumentSource>> DocumentSourceSortByCount::createFromBson(
     BSONElement elem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
-    if (elem.type() == Object) {
+    if (elem.type() == BSONType::object) {
         // Make sure that the sortByCount field is an expression inside an object
         BSONObj innerObj = elem.embeddedObject();
         uassert(40147,
                 str::stream() << "the sortByCount field must be defined as a $-prefixed path or an "
                                  "expression inside an object",
                 innerObj.firstElementFieldName()[0] == '$');
-    } else if (elem.type() == String) {
+    } else if (elem.type() == BSONType::string) {
         // Make sure that the sortByCount field is a $-prefixed path.
         uassert(40148,
                 str::stream() << "the sortByCount field must be defined as a $-prefixed path or an "

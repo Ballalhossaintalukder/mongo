@@ -30,25 +30,13 @@
 #include "mongo/s/write_ops/bulk_write_exec.h"
 
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include "mongo/db/basic_types_gen.h"
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <numeric>
-#include <string>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/client/read_preference.h"
+#include "mongo/db/basic_types_gen.h"
 #include "mongo/db/commands/query_cmd/bulk_write_common.h"
 #include "mongo/db/commands/query_cmd/bulk_write_crud_op.h"
 #include "mongo/db/commands/query_cmd/bulk_write_gen.h"
@@ -74,7 +62,6 @@
 #include "mongo/s/client/shard.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/multi_statement_transaction_requests_sender.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
@@ -89,6 +76,19 @@
 #include "mongo/util/exit.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <numeric>
+#include <string>
+#include <utility>
+#include <variant>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -973,7 +973,7 @@ StatusWith<WriteType> BulkWriteOp::target(const std::vector<std::unique_ptr<NSTa
                 // Account for optional fields that can be set per namespace to have a conservative
                 // estimate.
                 static const ShardVersion mockShardVersion =
-                    ShardVersionFactory::make(ChunkVersion::IGNORED(), CollectionIndexes());
+                    ShardVersionFactory::make(ChunkVersion::IGNORED());
                 static const DatabaseVersion mockDBVersion =
                     DatabaseVersion(UUID::gen(), Timestamp());
 
@@ -1053,12 +1053,11 @@ BulkWriteCommandRequest BulkWriteOp::buildBulkCommandRequest(
         }
 
         // Set the new nsInfoIdx on the op for the childBatch.
-        visit(OverloadedVisitor{
-                  [&](mongo::BulkWriteInsertOp& op) { op.setInsert(iter->second); },
-                  [&](mongo::BulkWriteUpdateOp& op) { op.setUpdate(iter->second); },
-                  [&](mongo::BulkWriteDeleteOp& op) { op.setDeleteCommand(iter->second); },
-              },
-              ops.back());
+        visit(
+            OverloadedVisitor{
+                [&](auto& op) { op.setNsInfoIdx(iter->second); },
+            },
+            ops.back());
 
         auto& nsInfoEntry = batchNsInfo.at(iter->second);
         auto& targeter = targeters.at(nsIdx);
@@ -1990,7 +1989,7 @@ void addIdsForInserts(BulkWriteCommandRequest& origCmdRequest) {
             idInsertB.append("_id", OID::gen());
             idInsertB.appendElements(doc);
             auto newDoc = idInsertB.obj();
-            auto newOp = BulkWriteInsertOp(insert->getInsert(), std::move(newDoc));
+            auto newOp = BulkWriteInsertOp(insert->getNsInfoIdx(), std::move(newDoc));
             newOps.push_back(std::move(newOp));
         } else {
             newOps.push_back(std::move(op));

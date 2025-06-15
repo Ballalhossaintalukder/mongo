@@ -27,17 +27,17 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
-#include <grpcpp/grpcpp.h>
-
 #include "mongo/logv2/log.h"
 #include "mongo/stdx/thread.h"
+#include "mongo/transport/grpc/core_test.grpc.pb.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/future.h"
 
-#include "mongo/transport/grpc/core_test.grpc.pb.h"
+#include <memory>
+#include <string>
+
+#include "cool/import/replacement/core_test_strip_prefix.grpc.pb.h"
+#include <grpcpp/grpcpp.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -107,6 +107,12 @@ TEST(GRPCCore, HelloWorld) {
     server->Shutdown();
     clientThread.join();
     serverThread.join();
+}
+
+TEST(GRPCCore, HelloWorld2) {
+    TestPerson person;
+    person.set_name("Joe");
+    ASSERT_EQ("Joe", person.name());
 }
 
 }  // namespace test

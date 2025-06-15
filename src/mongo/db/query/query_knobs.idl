@@ -119,22 +119,6 @@ server_parameters:
             gt: 0
         redact: false
 
-    internalQueryPlanEvaluationWorksSbe:
-        description: >-
-            The maximum number of individual storage cursor reads performed by any candidate
-            plan during the runtime plan selection trial period. Applies only to queries using the SBE
-            execution engine. This is the analog of the 'internalQueryPlanEvaluationWorks' knob above but
-            for SBE. When 'internalQueryPlanEvaluationCollFractionSbe' has its default value of 0, this
-            parameter acts as a hard limit on trial period length regardless of collection size.
-        set_at: [startup, runtime]
-        cpp_varname: "internalQueryPlanEvaluationWorksSbe"
-        cpp_vartype: AtomicWord<int>
-        default: 10000
-        validator:
-            gt: 0
-        on_update: plan_cache_util::clearSbeCacheOnParameterChange
-        redact: false
-
     internalQueryPlanEvaluationCollFraction:
         description: >-
             For large collections, the ceiling for the number times we work() candidate plans
@@ -148,20 +132,16 @@ server_parameters:
             lte: 1.0
         redact: false
 
-    internalQueryPlanEvaluationCollFractionSbe:
+    internalQueryPlanTotalEvaluationCollFraction:
         description: >-
-            For large collections, the ceiling for the number of individual storage cursor
-            reads allowed during the multi-planning trial period is calculated based on this constant.
-            Applies only for for queries using the SBE execution engine. This is the analog of the
-            'internalQueryPlanEvaluationCollFraction' knob above but for SBE.
+            Similar to 'internalQueryPlanEvaluationCollFraction', but defines a ceiling for
+            the number of times we work() all candidate plans in total. Applies only to the classic execution engine.
         set_at: [startup, runtime]
-        cpp_varname: "internalQueryPlanEvaluationCollFractionSbe"
+        cpp_varname: "internalQueryPlanTotalEvaluationCollFraction"
         cpp_vartype: AtomicDouble
-        default: 0.0
+        default: 2.0
         validator:
             gte: 0.0
-            lte: 1.0
-        on_update: plan_cache_util::clearSbeCacheOnParameterChange
         redact: false
 
     internalQueryPlanEvaluationMaxResults:
@@ -615,7 +595,7 @@ server_parameters:
     internalDocumentSourceGraphLookupMaxMemoryBytes:
         description: >-
             Maximum size of the data that the $graphLookup aggregation stage will cache
-            in-memory before failing.
+            in-memory before spilling.
         set_at: [startup, runtime]
         cpp_varname: "internalDocumentSourceGraphLookupMaxMemoryBytes"
         cpp_vartype: AtomicWord<long long>
@@ -1043,17 +1023,6 @@ server_parameters:
             required on 4.4 to access SEARCH_META variables. Does not do anything.
         set_at: [startup, runtime]
         cpp_varname: "enableSearchMeta"
-        cpp_vartype: AtomicWord<bool>
-        default: true
-        redact: false
-
-    enableUnionWithVectorSearch:
-        description: >-
-            Enables $vectorSearch inside a $unionWith and changes where the
-            internalSearchIdLookup is added: it's moved from createFromBSON to a new desugar function,
-            which is called in prepareSearchPipelineLegacyExecutor.
-        set_at: [startup, runtime]
-        cpp_varname: "enableUnionWithVectorSearch"
         cpp_vartype: AtomicWord<bool>
         default: true
         redact: false
@@ -1647,16 +1616,6 @@ server_parameters:
         default: false
         redact: false
 
-    internalQueryPlannerDisableDottedPathIsSubsetOfExistsTrue:
-        description: >-
-            Prevent $ne and $nin predicates on dotted field paths with null operand from being considered as
-            a subset of {$exists: true} on the same dotted path during query planning.
-        set_at: [startup, runtime]
-        cpp_varname: "internalQueryPlannerDisableDottedPathIsSubsetOfExistsTrue"
-        cpp_vartype: AtomicWord<bool>
-        default: true
-        redact: false
-
     internalQueryUnifiedWriteExecutor:
         description: "Boolean flag to use the unified write executor."
         set_at: [startup, runtime]
@@ -1664,6 +1623,18 @@ server_parameters:
         cpp_vartype: AtomicWord<bool>
         default: false
         redact: false
+
+    internalQueryGetMoreMaxCursorPinRetryAttempts:
+        description: >-
+            Max number of attempts to pin cursor by getMore command before failing in cases where
+            cursor is already pinned by releaseMemory command.
+        set_at: [startup, runtime]
+        cpp_varname: "internalQueryGetMoreMaxCursorPinRetryAttempts"
+        cpp_vartype: AtomicWord<long long>
+        default: 10
+        redact: false
+        validator:
+            gte: 1
 # Note for adding additional query knobs:
 #
 # When adding a new query knob, you should consider whether or not you need to add an 'on_update'

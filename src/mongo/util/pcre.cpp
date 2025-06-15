@@ -32,16 +32,16 @@
 #include <fmt/format.h>
 
 #define PCRE2_CODE_UNIT_WIDTH 8  // Select 8-bit PCRE2 library.
-#include <algorithm>
-#include <array>
-#include <new>
-#include <pcre2.h>
-
-
 #include "mongo/base/error_codes.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/errno_util.h"
 #include "mongo/util/static_immortal.h"
+
+#include <algorithm>
+#include <array>
+#include <new>
+
+#include <pcre2.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -249,7 +249,7 @@ public:
                                     static_cast<uint32_t>(trialOptions),
                                     (pcre2_match_data*)nullptr,
                                     (pcre2_match_context*)nullptr,
-                                    (PCRE2_SPTR)replacement.rawData(),
+                                    (PCRE2_SPTR)replacement.data(),
                                     replacement.size(),
                                     (PCRE2_UCHAR*)buf.data(),
                                     &bufSize);
@@ -397,7 +397,7 @@ public:
         _startPos = startPos;
         _data.reset(pcre2_match_data_create_from_pattern(_regex->code(), nullptr));
         int matched = pcre2_match(_regex->code(),
-                                  (PCRE2_SPTR)_input.rawData(),
+                                  (PCRE2_SPTR)_input.data(),
                                   _input.size(),
                                   startPos,
                                   static_cast<uint32_t>(options),

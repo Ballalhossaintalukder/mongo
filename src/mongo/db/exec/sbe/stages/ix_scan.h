@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/ordering.h"
@@ -64,6 +55,16 @@
 #include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::sbe {
 
@@ -125,7 +126,7 @@ protected:
     };
 
     // Seeks and returns the first/next index KeyStringEntry or boost::none if no such key exists.
-    virtual SortedDataKeyValueView seek() = 0;
+    virtual SortedDataKeyValueView seek(RecoveryUnit& ru) = 0;
     // Returns true if the 'key' is within the bounds and false otherwise. Implementations may set
     // state internally to reflect whether the scan is done, or whether a new seek point should be
     // used.
@@ -247,7 +248,7 @@ public:
 
 protected:
     void doSaveState() override;
-    SortedDataKeyValueView seek() override;
+    SortedDataKeyValueView seek(RecoveryUnit& ru) override;
     bool validateKey(const SortedDataKeyValueView& key) override;
 
 private:
@@ -314,7 +315,7 @@ public:
     size_t estimateCompileTimeSize() const override;
 
 protected:
-    SortedDataKeyValueView seek() override;
+    SortedDataKeyValueView seek(RecoveryUnit& ru) override;
     bool validateKey(const SortedDataKeyValueView& key) override;
 
     const GenericIndexScanStageParams _params;

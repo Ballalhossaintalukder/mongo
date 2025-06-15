@@ -29,11 +29,11 @@
 
 #include "mongo/db/pipeline/document_source_tee_consumer.h"
 
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/expression_context.h"
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -46,9 +46,10 @@ DocumentSourceTeeConsumer::DocumentSourceTeeConsumer(const intrusive_ptr<Express
                                                      const intrusive_ptr<TeeBuffer>& bufferSource,
                                                      StringData stageName)
     : DocumentSource(stageName, expCtx),
+      exec::agg::Stage(stageName, expCtx),
       _facetId(facetId),
       _bufferSource(bufferSource),
-      _stageName(stageName.toString()) {}
+      _stageName(std::string{stageName}) {}
 
 boost::intrusive_ptr<DocumentSourceTeeConsumer> DocumentSourceTeeConsumer::create(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,

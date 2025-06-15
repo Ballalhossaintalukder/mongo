@@ -15,6 +15,7 @@ def compiler_type_impl(ctx):
     compiler_type_value = ctx.build_setting_value
     if compiler_type_value not in compiler_type_values:
         fail(str(ctx.label) + " compiler_type allowed to take values {" + ", ".join(compiler_type_values) + "} but was set to unallowed value " + compiler_type_value)
+
     return compiler_type_provider(compiler_type = compiler_type_value)
 
 compiler_type = rule(
@@ -48,7 +49,7 @@ mongo_toolchain_version = rule(
 # linker
 # ==========
 
-linker_values = ["auto", "gold", "lld"]
+linker_values = ["auto", "gold", "lld", "mold"]
 
 linker_provider = provider(
     doc = "Specify the type of linker to use.",
@@ -239,20 +240,6 @@ use_glibcxx_debug_provider = provider(
 
 use_glibcxx_debug = rule(
     implementation = lambda ctx: use_glibcxx_debug_provider(enabled = ctx.build_setting_value),
-    build_setting = config.bool(flag = True),
-)
-
-# =========
-# libc++
-# =========
-
-use_libcxx_provider = provider(
-    doc = """use libc++ (experimental, requires clang)""",
-    fields = ["enabled"],
-)
-
-use_libcxx = rule(
-    implementation = lambda ctx: use_libcxx_provider(enabled = ctx.build_setting_value),
     build_setting = config.bool(flag = True),
 )
 
@@ -652,20 +639,6 @@ pgo_profile = rule(
 )
 
 # =============
-# xcode developer dir
-# =============
-
-developer_dir_provider = provider(
-    doc = "The path for which xcode sdk to use, e.g. DEVELOPER_DIR=/Applications/Xcode13.app",
-    fields = {"path": "Path to developer dir.]"},
-)
-
-developer_dir = rule(
-    implementation = lambda ctx: developer_dir_provider(path = ctx.build_setting_value),
-    build_setting = config.string(flag = True),
-)
-
-# =============
 # sdkroot
 # =============
 
@@ -704,5 +677,19 @@ server_js_provider = provider(
 
 server_js = rule(
     implementation = lambda ctx: server_js_provider(enabled = ctx.build_setting_value),
+    build_setting = config.bool(flag = True),
+)
+
+# =========
+# create_dwp
+# =========
+
+create_dwp_provider = provider(
+    doc = "Create dwp files when using install targets",
+    fields = ["enabled"],
+)
+
+create_dwp = rule(
+    implementation = lambda ctx: create_dwp_provider(enabled = ctx.build_setting_value),
     build_setting = config.bool(flag = True),
 )

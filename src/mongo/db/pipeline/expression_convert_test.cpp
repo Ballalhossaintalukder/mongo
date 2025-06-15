@@ -27,15 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/idl/server_parameter_test_util.h"
-#include <cmath>
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -58,6 +49,14 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
+
+#include <cmath>
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -250,7 +249,7 @@ TEST_F(ExpressionConvertTest, ConvertOptimizesToExpressionConstant) {
 
     auto constResult = dynamic_cast<ExpressionConstant*>(convertExp.get());
     ASSERT(constResult);
-    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), 0.0, BSONType::NumberDouble);
+    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), 0.0, BSONType::numberDouble);
 }
 
 TEST_F(ExpressionConvertTest, ConvertWithFormatOptimizesToExpressionConstant) {
@@ -269,7 +268,7 @@ TEST_F(ExpressionConvertTest, ConvertWithFormatOptimizesToExpressionConstant) {
 
     auto constResult = dynamic_cast<ExpressionConstant*>(convertExp.get());
     ASSERT(constResult);
-    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), result, BSONType::BinData);
+    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), result, BSONType::binData);
 }
 
 TEST_F(ExpressionConvertTest, ConvertWithOnErrorOptimizesToExpressionConstant) {
@@ -284,7 +283,7 @@ TEST_F(ExpressionConvertTest, ConvertWithOnErrorOptimizesToExpressionConstant) {
 
     auto constResult = dynamic_cast<ExpressionConstant*>(convertExp.get());
     ASSERT(constResult);
-    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), "X"_sd, BSONType::String);
+    ASSERT_VALUE_CONTENTS_AND_TYPE(constResult->getValue(), "X"_sd, BSONType::string);
 }
 
 TEST_F(ExpressionConvertTest, ConvertBinDataToIntFeatureFlagOffFails) {

@@ -27,9 +27,10 @@
  *    it in the license file.
  */
 
+#include "mongo/db/ftdc/metadata_compressor.h"
+
 #include "mongo/db/exec/mutable_bson/algorithm.h"
 #include "mongo/db/exec/mutable_bson/document.h"
-#include "mongo/db/ftdc/metadata_compressor.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
 #include "mongo/unittest/unittest.h"
 
@@ -108,7 +109,7 @@ void alterOneFieldValueAndAddSample(
 
     BSONObj deltaElement;
 
-    if (field1Elements.at(idx).firstElementType() == BSONType::String) {
+    if (field1Elements.at(idx).firstElementType() == BSONType::string) {
         deltaElement = BSON(field1Elements.at(idx).firstElementFieldNameStringData() << 42);
     } else {
         deltaElement =
@@ -285,14 +286,14 @@ TEST(FTDCMetadataCompressorTest, TestReconstruction) {
                 mmb::findFirstChildNamed(doc.root(), deltaElement.fieldNameStringData());
             ASSERT(currentElement.ok());
 
-            if (deltaElement.type() != BSONType::Object) {
-                ASSERT_FALSE(currentElement.isType(BSONType::Object));
+            if (deltaElement.type() != BSONType::object) {
+                ASSERT_FALSE(currentElement.isType(BSONType::object));
                 ASSERT_OK(currentElement.setValueBSONElement(deltaElement));
                 continue;
             }
 
             // Do reconstruction for next level of objects
-            ASSERT(currentElement.isType(BSONType::Object));
+            ASSERT(currentElement.isType(BSONType::object));
 
             BSONObjIterator deltaLvl2Itr(deltaElement.Obj());
             while (deltaLvl2Itr.more()) {
@@ -304,13 +305,13 @@ TEST(FTDCMetadataCompressorTest, TestReconstruction) {
 
                 if (multiservice) {
                     // go one more level deeper
-                    if (deltaLvl2Element.type() != BSONType::Object) {
-                        ASSERT_FALSE(currentLvl2Element.isType(BSONType::Object));
+                    if (deltaLvl2Element.type() != BSONType::object) {
+                        ASSERT_FALSE(currentLvl2Element.isType(BSONType::object));
                         ASSERT_OK(currentLvl2Element.setValueBSONElement(deltaLvl2Element));
                         continue;
                     }
 
-                    ASSERT(currentLvl2Element.isType(BSONType::Object));
+                    ASSERT(currentLvl2Element.isType(BSONType::object));
                     BSONObjIterator deltaLvl3Itr(deltaLvl2Element.Obj());
                     while (deltaLvl3Itr.more()) {
                         auto deltaLvl3Element = deltaLvl3Itr.next();

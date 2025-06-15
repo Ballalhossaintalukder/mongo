@@ -29,16 +29,6 @@
 
 #include "mongo/db/collection_crud/collection_write_path.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -55,7 +45,6 @@
 #include "mongo/db/catalog/local_oplog_info.h"
 #include "mongo/db/collection_crud/capped_collection_maintenance.h"
 #include "mongo/db/concurrency/d_concurrency.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/write_stage_common.h"
@@ -69,6 +58,7 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/damage_vector.h"
 #include "mongo/db/storage/duplicate_key_error_info.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/index_entry_comparison.h"
 #include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/record_data.h"
@@ -83,6 +73,17 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -250,15 +251,28 @@ Status insertDocumentsImpl(OperationContext* opCtx,
     }
 
     if (collection->needsCappedLock()) {
-        // X-lock the metadata resource for this replicated, non-clustered capped collection until
-        // the end of the WUOW. Non-clustered capped collections require writes to be serialized on
+        // Ensure that we have X-locked the metadata resource for this replicated, non-clustered
+        // capped collection. Non-clustered capped collections require writes to be serialized on
         // the secondary in order to guarantee insertion order (SERVER-21483); this exclusive access
         // to the metadata resource prevents the primary from executing with more concurrency than
         // secondaries - thus helping secondaries keep up - and protects '_cappedFirstRecord'. See
         // SERVER-21646. On the other hand, capped clustered collections with a monotonically
         // increasing cluster key natively guarantee preservation of the insertion order, and don't
         // need serialisation. We allow concurrent inserts for clustered capped collections.
-        Lock::ResourceLock heldUntilEndOfWUOW{opCtx, ResourceId(RESOURCE_METADATA, nss), MODE_X};
+        bool oplogSlotsReserved = std::any_of(
+            begin, end, [](InsertStatement statement) { return !statement.oplogSlot.isNull(); });
+        if (oplogSlotsReserved) {
+            tassert(8218001,
+                    "Operation on non-clustered capped collection had reserved an oplog time but "
+                    "did not have an exclusive lock on "
+                    "the metadata resource",
+                    shard_role_details::getLocker(opCtx)->isLockHeldForMode(
+                        ResourceId(ResourceType::RESOURCE_METADATA, collection->ns()), MODE_X));
+        } else if (!shard_role_details::getLocker(opCtx)->isLockHeldForMode(
+                       ResourceId(ResourceType::RESOURCE_METADATA, collection->ns()), MODE_X)) {
+            Lock::ResourceLock heldUntilEndOfWUOW{
+                opCtx, ResourceId(RESOURCE_METADATA, nss), MODE_X};
+        }
     }
 
     std::vector<Record> records;
@@ -579,7 +593,7 @@ Status insertDocuments(OperationContext* opCtx,
             // If the failpoint specifies no collection or matches the existing one, hang.
             return (fpNss.isEmpty() || nss == fpNss) &&
                 (!firstIdElem ||
-                 (begin != end && firstIdElem.type() == mongo::String &&
+                 (begin != end && firstIdElem.type() == BSONType::string &&
                   begin->doc["_id"].str() == firstIdElem.str()));
         });
 
@@ -704,6 +718,12 @@ void updateDocument(OperationContext* opCtx,
         invariant(!(args->retryableWrite && setNeedsRetryImageOplogField));
     }
 
+    if (collection->ns().isOplog()) {
+        uassert(ErrorCodes::IllegalOperation,
+                "Cannot change the size of a document in the oplog",
+                !LocalOplogInfo::get(opCtx)->getTruncateMarkers() ||
+                    oldDoc.value().objsize() == newDoc.objsize());
+    }
     uassertStatusOK(collection->getRecordStore()->updateRecord(
         opCtx, oldLocation, newDoc.objdata(), newDoc.objsize()));
 

@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <map>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -49,6 +41,14 @@
 #include "mongo/db/query/query_planner_test_lib.h"
 #include "mongo/db/query/query_solution.h"
 #include "mongo/unittest/unittest.h"
+
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace {
 using namespace mongo;
@@ -165,7 +165,7 @@ TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfOneGroupWithMultipleAccumulat
 
 TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfASingleLookup) {
     const std::vector<BSONObj> rawPipeline = {
-        fromjson("{$lookup: {from: '" + kSecondaryNamespace.coll().toString() +
+        fromjson("{$lookup: {from: '" + std::string{kSecondaryNamespace.coll()} +
                  "', localField: 'x', foreignField: 'y', as: 'out'}}"),
     };
     auto pipeline = buildTestPipeline(rawPipeline);
@@ -192,9 +192,9 @@ TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfASingleLookup) {
 
 TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfTwoLookups) {
     const std::vector<BSONObj> rawPipeline = {
-        fromjson("{$lookup: {from: '" + kSecondaryNamespace.coll().toString() +
+        fromjson("{$lookup: {from: '" + std::string{kSecondaryNamespace.coll()} +
                  "', localField: 'x', foreignField: 'y', as: 'out'}}"),
-        fromjson("{$lookup: {from: '" + kSecondaryNamespace.coll().toString() +
+        fromjson("{$lookup: {from: '" + std::string{kSecondaryNamespace.coll()} +
                  "', localField: 'a', foreignField: 'b', as: 'c'}}"),
     };
     auto pipeline = buildTestPipeline(rawPipeline);
@@ -224,10 +224,10 @@ TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfTwoLookups) {
 
 TEST_F(QueryPlannerPipelinePushdownTest, PushdownOfTwoLookupsAndTwoGroups) {
     const std::vector<BSONObj> rawPipeline = {
-        fromjson("{$lookup: {from: '" + kSecondaryNamespace.coll().toString() +
+        fromjson("{$lookup: {from: '" + std::string{kSecondaryNamespace.coll()} +
                  "', localField: 'x', foreignField: 'y', as: 'out'}}"),
         fromjson("{$group: {_id: '$out', count: {$sum: '$x'}}}"),
-        fromjson("{$lookup: {from: '" + kSecondaryNamespace.coll().toString() +
+        fromjson("{$lookup: {from: '" + std::string{kSecondaryNamespace.coll()} +
                  "', localField: 'a', foreignField: 'b', as: 'c'}}"),
         fromjson("{$group: {_id: '$c', count: {$min: '$count'}}}"),
     };

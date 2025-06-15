@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/commands.h"
@@ -37,9 +34,11 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/service_context.h"
 #include "mongo/s/cluster_commands_helpers.h"
-#include "mongo/s/grid.h"
 #include "mongo/s/request_types/auto_split_vector_gen.h"
 #include "mongo/s/router_role.h"
+
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -67,33 +66,34 @@ public:
             const auto nss = ns();
             const auto& req = request();
 
-            auto cri = uassertStatusOK(
-                Grid::get(opCtx)->catalogCache()->getCollectionRoutingInfo(opCtx, nss));
+            return routing_context_utils::withValidatedRoutingContext(
+                opCtx, {nss}, [&](RoutingContext& routingCtx) {
+                    BSONObj filteredCmdObj =
+                        CommandHelpers::filterCommandRequestForPassthrough(req.toBSON());
 
-            BSONObj filteredCmdObj =
-                CommandHelpers::filterCommandRequestForPassthrough(req.toBSON());
+                    // autoSplitVector is allowed to run on a sharded cluster only if the range
+                    // requested belongs to one shard. We target the shard owning the input min
+                    // chunk and we let the targetted shard figure whether the range is fully owned
+                    // by itself. In case the constraint is not respected we will get a
+                    // InvalidOptions as part of the response.
+                    auto response = scatterGatherVersionedTargetByRoutingTable(
+                                        opCtx,
+                                        nss,
+                                        routingCtx,
+                                        filteredCmdObj,
+                                        ReadPreferenceSetting::get(opCtx),
+                                        Shard::RetryPolicy::kIdempotent,
+                                        req.getMin(),
+                                        {} /*collation*/,
+                                        boost::none /*letParameters*/,
+                                        boost::none /*runtimeConstants*/)
+                                        .front();
 
-            // autoSplitVector is allowed to run on a sharded cluster only if the range requested
-            // belongs to one shard. We target the shard owning the input min chunk and we let the
-            // targetted shard figure whether the range is fully owned by itself. In case the
-            // constraint is not respected we will get a InvalidOptions as part of the response.
-            auto response =
-                scatterGatherVersionedTargetByRoutingTable(opCtx,
-                                                           nss,
-                                                           cri,
-                                                           filteredCmdObj,
-                                                           ReadPreferenceSetting::get(opCtx),
-                                                           Shard::RetryPolicy::kIdempotent,
-                                                           req.getMin(),
-                                                           {} /*collation*/,
-                                                           boost::none /*letParameters*/,
-                                                           boost::none /*runtimeConstants*/)
-                    .front();
-
-            auto status = AsyncRequestsSender::Response::getEffectiveStatus(response);
-            uassertStatusOK(status);
-            return AutoSplitVectorResponse::parse(IDLParserContext(""),
-                                                  response.swResponse.getValue().data);
+                    auto status = AsyncRequestsSender::Response::getEffectiveStatus(response);
+                    uassertStatusOK(status);
+                    return AutoSplitVectorResponse::parse(IDLParserContext(""),
+                                                          response.swResponse.getValue().data);
+                });
         }
 
     private:

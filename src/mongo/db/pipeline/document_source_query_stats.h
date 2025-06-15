@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <deque>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/auth/action_type.h"
@@ -61,11 +52,21 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/producer_consumer_queue.h"
 
+#include <deque>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 using namespace query_stats;
 
-class DocumentSourceQueryStats final : public DocumentSource {
+class DocumentSourceQueryStats final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$queryStats"_sd;
 
@@ -141,7 +142,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -193,6 +194,7 @@ private:
                              TransformAlgorithmEnum algorithm = TransformAlgorithmEnum::kNone,
                              std::string hmacKey = {})
         : DocumentSource(kStageName, expCtx),
+          exec::agg::Stage(kStageName, expCtx),
           _currentCopiedPartition(0),
           _transformIdentifiers(algorithm != TransformAlgorithmEnum::kNone),
           _algorithm(algorithm),

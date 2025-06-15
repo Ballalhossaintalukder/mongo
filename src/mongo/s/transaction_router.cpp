@@ -27,23 +27,11 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <fmt/format.h>
-#include <memory>
-#include <mutex>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/transaction_router.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/client/read_preference.h"
 #include "mongo/client/remote_command_retry_scheduler.h"
 #include "mongo/db/commands/txn_cmds_gen.h"
@@ -66,17 +54,15 @@
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/compiler.h"
-#include "mongo/rpc/get_status_from_command_result.h"
+#include "mongo/rpc/get_status_from_command_result_write_util.h"
 #include "mongo/s/async_requests_sender.h"
 #include "mongo/s/client/shard.h"
-#include "mongo/s/client/shard_registry.h"
 #include "mongo/s/cluster_commands_helpers.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/multi_statement_transaction_requests_sender.h"
 #include "mongo/s/router_transactions_metrics.h"
 #include "mongo/s/shard_cannot_refresh_due_to_locks_held_exception.h"
 #include "mongo/s/stale_exception.h"
-#include "mongo/s/transaction_router.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/decorable.h"
@@ -85,6 +71,18 @@
 #include "mongo/util/log_with_sampling.h"
 #include "mongo/util/net/socket_utils.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTransaction
 
@@ -638,10 +636,18 @@ BSONObj TransactionRouter::appendFieldsForContinueTransaction(
     return cmdBob.obj();
 }
 
-void TransactionRouter::Router::processParticipantResponse(OperationContext* opCtx,
-                                                           const ShardId& shardId,
-                                                           const BSONObj& responseObj,
-                                                           bool forAsyncGetMore) {
+TransactionRouter::ParsedParticipantResponseMetadata
+TransactionRouter::Router::parseParticipantResponseMetadata(const BSONObj& responseObj) {
+    return {.status = getStatusFromCommandResult(responseObj),
+            .txnResponseMetadata = TxnResponseMetadata::parse(
+                IDLParserContext{"processParticipantResponse"}, responseObj)};
+}
+
+void TransactionRouter::Router::processParticipantResponse(
+    OperationContext* opCtx,
+    const ShardId& shardId,
+    const TransactionRouter::ParsedParticipantResponseMetadata& parsedMetadata,
+    bool forAsyncGetMore) {
     auto participant = getParticipant(shardId);
     invariant(participant, "Participant should exist if processing participant response");
 
@@ -654,9 +660,6 @@ void TransactionRouter::Router::processParticipantResponse(OperationContext* opC
         // since a participant's state is partially reset on commit and abort.
         return;
     }
-
-    auto txnResponseMetadata =
-        TxnResponseMetadata::parse(IDLParserContext{"processParticipantResponse"}, responseObj);
 
     auto determineReadOnlyValue =
         [&](const ShardId& shardIdToUpdate,
@@ -760,7 +763,8 @@ void TransactionRouter::Router::processParticipantResponse(OperationContext* opC
     };
 
     auto processAdditionalParticipants = [&](bool okResponse) {
-        auto additionalParticipants = txnResponseMetadata.getAdditionalParticipants();
+        const auto& additionalParticipants =
+            parsedMetadata.txnResponseMetadata.getAdditionalParticipants();
         if (!additionalParticipants)
             return;
 
@@ -795,7 +799,7 @@ void TransactionRouter::Router::processParticipantResponse(OperationContext* opC
         }
     };
     boost::optional<Participant::ReadOnly> readOnlyValue = boost::none;
-    auto commandStatus = getStatusFromCommandResult(responseObj);
+    const auto& commandStatus = parsedMetadata.status;
     // WouldChangeOwningShard errors don't abort their transaction and the responses containing them
     // include transaction metadata, so we treat them as successful responses.
     if (!commandStatus.isOK() && commandStatus != ErrorCodes::WouldChangeOwningShard) {
@@ -805,15 +809,15 @@ void TransactionRouter::Router::processParticipantResponse(OperationContext* opC
     } else {
         readOnlyValue = determineReadOnlyValue(shardId,
                                                participant->readOnly,
-                                               txnResponseMetadata.getReadOnly(),
+                                               parsedMetadata.txnResponseMetadata.getReadOnly(),
                                                false /* isAdditionalParticipant */);
         // Create any participants added by the shard 'shardId'
         processAdditionalParticipants(true /* okResponse */);
     }
 
     // Set isSubRouter for this participant
-    bool shardIsSubRouter = txnResponseMetadata.getAdditionalParticipants() &&
-        txnResponseMetadata.getAdditionalParticipants()->size() > 0;
+    bool shardIsSubRouter = parsedMetadata.txnResponseMetadata.getAdditionalParticipants() &&
+        parsedMetadata.txnResponseMetadata.getAdditionalParticipants()->size() > 0;
 
     _updateParticipant(opCtx, shardId, readOnlyValue, shardIsSubRouter);
 }
@@ -2349,7 +2353,7 @@ void TransactionRouter::MetricsTracker::endTransaction(
     if (terminationCause == TerminationCause::kAborted) {
         dassert(!abortCause.empty());
         routerTxnMetrics->incrementTotalAborted();
-        routerTxnMetrics->incrementAbortCauseMap(abortCause.toString());
+        routerTxnMetrics->incrementAbortCauseMap(std::string{abortCause});
     } else {
         dassert(commitType != CommitType::kNotInitiated);
         routerTxnMetrics->incrementTotalCommitted();

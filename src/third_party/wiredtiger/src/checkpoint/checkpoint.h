@@ -23,6 +23,11 @@ struct __wt_ckpt_session {
 
     /* Checkpoint crash. */
     u_int crash_point; /* Crash point in the middle of checkpoint process */
+    enum {
+        CKPT_CRASH_BEFORE_METADATA_SYNC = 0,
+        CKPT_CRASH_BEFORE_METADATA_UPDATE,
+        CKPT_CRASH_ENUM_END
+    } ckpt_crash_state;
 
     /* Named checkpoint drop list, during a checkpoint */
     WT_ITEM *drop_list;
@@ -142,6 +147,9 @@ struct __wt_ckpt_snapshot {
     uint64_t *snapshot_txns;
     uint32_t snapshot_count;
 };
+
+#define WT_DISAGG_CHECKPOINT_ID_NONE 0
+#define WT_DISAGG_CHECKPOINT_ID_FIRST 1
 
 struct __wt_checkpoint_cleanup {
     WT_SESSION_IMPL *session; /* checkpoint cleanup session */

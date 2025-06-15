@@ -29,18 +29,18 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <queue>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/pipeline/document_source.h"
-#include "mongo/db/pipeline/search/document_source_list_search_indexes_gen.h"
 #include "mongo/db/query/search/search_query_view_spec_gen.h"
+
+#include <queue>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 class DocumentSourceListSearchIndexesSpec;
 
-class DocumentSourceListSearchIndexes final : public DocumentSource {
+class DocumentSourceListSearchIndexes final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$listSearchIndexes"_sd;
     static constexpr StringData kCursorFieldName = "cursor"_sd;
@@ -97,10 +97,12 @@ public:
 
     DocumentSourceListSearchIndexes(const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
                                     BSONObj cmdObj)
-        : DocumentSource(kStageName, pExpCtx), _cmdObj(cmdObj.getOwned()) {}
+        : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
+          _cmdObj(cmdObj.getOwned()) {}
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

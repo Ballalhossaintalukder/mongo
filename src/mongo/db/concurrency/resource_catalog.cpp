@@ -29,21 +29,21 @@
 
 #include "mongo/db/concurrency/resource_catalog.h"
 
-#include <absl/container/flat_hash_set.h>
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/none.hpp>
-#include <boost/type_traits/decay.hpp>
-#include <mutex>
-#include <new>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/util/assert_util.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/static_immortal.h"
+
+#include <mutex>
+#include <new>
+#include <utility>
+
+#include <absl/container/flat_hash_set.h>
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/type_traits/decay.hpp>
 
 namespace mongo {
 
@@ -64,7 +64,7 @@ void ResourceCatalog::add(ResourceId id, const DatabaseName& dbName) {
 
 void ResourceCatalog::add(ResourceId id, DDLResourceName resourceName) {
     invariant(id.getType() == RESOURCE_DDL_DATABASE || id.getType() == RESOURCE_DDL_COLLECTION);
-    _add(id, StringData(resourceName).toString());
+    _add(id, std::string{StringData(resourceName)});
 }
 
 void ResourceCatalog::_add(ResourceId id, std::string name) {
@@ -84,7 +84,7 @@ void ResourceCatalog::remove(ResourceId id, const DatabaseName& dbName) {
 
 void ResourceCatalog::remove(ResourceId id, DDLResourceName resourceName) {
     invariant(id.getType() == RESOURCE_DDL_DATABASE || id.getType() == RESOURCE_DDL_COLLECTION);
-    _remove(id, StringData(resourceName).toString());
+    _remove(id, std::string{StringData(resourceName)});
 }
 
 ResourceId ResourceCatalog::newResourceIdForMutex(std::string resourceLabel) {
@@ -136,7 +136,7 @@ boost::optional<std::string> ResourceCatalog::name(ResourceId id) const {
         default:
             return boost::none;
     }
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083514);
 }
 
 }  // namespace mongo

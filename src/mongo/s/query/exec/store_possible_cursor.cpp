@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <utility>
-#include <vector>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/query/exec/store_possible_cursor.h"
 
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -57,9 +51,16 @@
 #include "mongo/s/query/exec/cluster_client_cursor_params.h"
 #include "mongo/s/query/exec/cluster_cursor_manager.h"
 #include "mongo/s/query/exec/collect_query_stats_mongos.h"
-#include "mongo/s/query/exec/store_possible_cursor.h"
 #include "mongo/s/transaction_router.h"
 #include "mongo/util/decorable.h"
+
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -70,9 +71,9 @@ StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
                                         TailableModeEnum tailableMode) {
     auto executorPool = Grid::get(opCtx)->getExecutorPool();
     auto result = storePossibleCursor(opCtx,
-                                      remoteCursor->getShardId().toString(),
+                                      std::string{remoteCursor->getShardId()},
                                       remoteCursor->getHostAndPort(),
-                                      remoteCursor->getCursorResponse(),
+                                      std::move(remoteCursor->getCursorResponse()),
                                       requestedNss,
                                       executorPool->getArbitraryExecutor(),
                                       Grid::get(opCtx)->getCursorManager(),
@@ -104,7 +105,7 @@ StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
         return incomingCursorResponse.getStatus();
     }
 
-    const auto& response = incomingCursorResponse.getValue();
+    auto& response = incomingCursorResponse.getValue();
     if (const auto& cursorMetrics = response.getCursorMetrics()) {
         CurOp::get(opCtx)->debug().additiveMetrics.aggregateCursorMetrics(*cursorMetrics);
     }
@@ -112,7 +113,7 @@ StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
     return storePossibleCursor(opCtx,
                                shardId,
                                server,
-                               response,
+                               std::move(response),
                                requestedNss,
                                std::move(executor),
                                cursorManager,
@@ -124,7 +125,7 @@ StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
 StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
                                         const ShardId& shardId,
                                         const HostAndPort& server,
-                                        const CursorResponse& incomingCursorResponse,
+                                        CursorResponse&& incomingCursorResponse,
                                         const NamespaceString& requestedNss,
                                         std::shared_ptr<executor::TaskExecutor> executor,
                                         ClusterCursorManager* cursorManager,
@@ -199,7 +200,7 @@ StatusWith<BSONObj> storePossibleCursor(OperationContext* opCtx,
 
     CursorResponse outgoingCursorResponse(requestedNss,
                                           clusterCursorId.getValue(),
-                                          incomingCursorResponse.getBatch(),
+                                          incomingCursorResponse.releaseBatch(),
                                           incomingCursorResponse.getAtClusterTime(),
                                           incomingCursorResponse.getPostBatchResumeToken());
     return outgoingCursorResponse.toBSON(CursorResponse::ResponseType::InitialResponse);

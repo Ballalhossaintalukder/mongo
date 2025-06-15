@@ -28,13 +28,6 @@
  */
 
 
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -69,6 +62,13 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -220,11 +220,11 @@ Status checkHashedShardKeyRange(const ChunkRange& range, const KeyPattern& shard
  */
 Status checkForTimeseriesTimeFieldKeyRange(const ChunkRange& range, StringData timeField) {
     const std::string controlTimeField =
-        timeseries::kControlMinFieldNamePrefix.toString() + timeField;
+        std::string{timeseries::kControlMinFieldNamePrefix} + timeField;
     const BSONElement minRangeControlTimeField = range.getMin().getField(controlTimeField);
     const BSONElement maxRangeControlTimeField = range.getMax().getField(controlTimeField);
-    if ((minRangeControlTimeField && minRangeControlTimeField.type() != MinKey) ||
-        (maxRangeControlTimeField && maxRangeControlTimeField.type() != MinKey)) {
+    if ((minRangeControlTimeField && minRangeControlTimeField.type() != BSONType::minKey) ||
+        (maxRangeControlTimeField && maxRangeControlTimeField.type() != BSONType::minKey)) {
         return {
             ErrorCodes::InvalidOptions,
             str::stream()

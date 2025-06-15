@@ -28,9 +28,7 @@
  */
 
 
-#include <mutex>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/index_builds/duplicate_key_tracker.h"
 
 #include "mongo/base/status_with.h"
 #include "mongo/bson/timestamp.h"
@@ -40,7 +38,6 @@
 #include "mongo/db/curop.h"
 #include "mongo/db/index/index_access_method.h"
 #include "mongo/db/index/index_descriptor.h"
-#include "mongo/db/index_builds/duplicate_key_tracker.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/record_data.h"
@@ -54,6 +51,10 @@
 #include "mongo/util/bufreader.h"
 #include "mongo/util/progress_meter.h"
 #include "mongo/util/str.h"
+
+#include <mutex>
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -146,7 +147,8 @@ boost::optional<SortedDataInterface::DuplicateKey> DuplicateKeyTracker::checkCon
 
         BufReader reader(record->data.data(), record->data.size());
         auto key = key_string::View::deserialize(reader, index->getKeyStringVersion(), boost::none);
-        if (auto duplicateKey = index->dupKeyCheck(opCtx, key)) {
+        if (auto duplicateKey =
+                index->dupKeyCheck(opCtx, *shard_role_details::getRecoveryUnit(opCtx), key)) {
             return duplicateKey;
         }
 

@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -60,15 +48,22 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 
-class Collection;
-class CollectionPtr;
-class CollectionTruncateMarkers;
-class MAdvise;
 class OperationContext;
-class OplogData;
-class RecordStore;
 class RecoveryUnit;
 class ValidateResults;
 
@@ -167,8 +162,11 @@ public:
      *
      * 'tolerateCappedRepositioning' allows repositioning a capped cursor, which is useful for
      * range writes.
+     *
+     * TODO (SERVER-105846): Remove the overload without RecoveryUnit.
      */
     virtual bool restore(bool tolerateCappedRepositioning = true) = 0;
+    virtual bool restore(RecoveryUnit& ru, bool tolerateCappedRepositioning = true) = 0;
 
     /**
      * Detaches from the OperationContext. Releases storage-engine resources, unless
@@ -312,12 +310,70 @@ private:
  * an OperationContext may throw a WriteConflictException.
  *
  * This class must be thread-safe. In addition, for storage engines implementing the KVEngine some
- * methods must be thread safe, see DurableCatalog.
+ * methods must be thread safe, see MDBCatalog.
  */
 class RecordStore {
 public:
     class Capped;
     class Oplog;
+
+    /**
+     * Options for generating a new RecordStore. Each RecordStore subclass is responsible for
+     * parsing its applicable fields - not all fields apply to every RecordStore implementation.
+     */
+    struct Options {
+        /**
+         * The KeyFormat for RecordIds in the RecordStore.
+         */
+        KeyFormat keyFormat{KeyFormat::Long};
+
+        /**
+         * True if the RecordStore is for a capped collection.
+         */
+        bool isCapped{false};
+
+        /*
+         * True if the RecordStore is for the oplog collection.
+         */
+        bool isOplog{false};
+
+        /**
+         * The initial maximum size an Oplog's RecordStore should reach. Non-zero value is only
+         * valid when 'isOplog' is true.
+         */
+        long long oplogMaxSize{0};
+
+        /**
+         * Whether or not the RecordStore allows allows writes to overwrite existing records with
+         * the same RecordId.
+         */
+        bool allowOverwrite{true};
+
+        /**
+         * True if updates through the RecordStore must force updates to the full document.
+         */
+        bool forceUpdateWithFullDocument{false};
+
+        /**
+         * When not none, defines a block compression algorithm to use in liu of the default for
+         * RecordStores which support block compression. Otherwise, the RecordStore should utilize
+         * the default block compressor.
+         */
+        boost::optional<std::string> customBlockCompressor;
+
+        /**
+         * Empty by default. Holds collection-specific storage engine configuration options. For
+         * example, the 'storageEngine' options passed into `db.createCollection()`. Expected to be
+         * mirror the 'CollectionOptions::storageEngine' format { storageEngine: { <storage engine
+         * name> : { configString: "<option>=<setting>,..."} } }.
+         *
+         * If fields in the 'configString' conflict with fields set either by global defaults or
+         * other members of the 'RecordStore::Options' struct, RecordStores should prefer values
+         * from the 'configString'. However, this is difficult to guarantee across RecordStores, and
+         * any concerns should be validated through explicit testing.
+         */
+        BSONObj storageEngineCollectionOptions;
+    };
 
     virtual ~RecordStore() {}
 
@@ -329,7 +385,7 @@ public:
 
     virtual std::shared_ptr<Ident> getSharedIdent() const = 0;
 
-    virtual const std::string& getIdent() const = 0;
+    virtual StringData getIdent() const = 0;
 
     virtual void setIdent(std::shared_ptr<Ident>) = 0;
 
@@ -380,8 +436,11 @@ public:
      *
      * In general, prefer findRecord or RecordCursor::seekExact since they can tell you if a record
      * has been removed.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual RecordData dataFor(OperationContext*, const RecordId&) const = 0;
+    virtual RecordData dataFor(OperationContext*, RecoveryUnit&, const RecordId&) const = 0;
 
     /**
      * @param out - If the record exists, the contents of this are set.
@@ -392,39 +451,71 @@ public:
      *
      * In general prefer RecordCursor::seekExact since it can avoid copying data in more
      * storageEngines.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual bool findRecord(OperationContext*, const RecordId&, RecordData*) const = 0;
+    virtual bool findRecord(OperationContext*,
+                            RecoveryUnit&,
+                            const RecordId&,
+                            RecordData*) const = 0;
 
+    /**
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
+     */
     virtual void deleteRecord(OperationContext* opCtx, const RecordId& dl) = 0;
+    virtual void deleteRecord(OperationContext* opCtx, RecoveryUnit&, const RecordId& dl) = 0;
 
     /**
      * Inserts the specified records into this RecordStore by copying the passed-in record data and
      * updates 'inOutRecords' to contain the ids of the inserted records.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual Status insertRecords(OperationContext*,
+                                 std::vector<Record>*,
+                                 const std::vector<Timestamp>&) = 0;
+    virtual Status insertRecords(OperationContext*,
+                                 RecoveryUnit&,
                                  std::vector<Record>*,
                                  const std::vector<Timestamp>&) = 0;
 
     /**
      * A thin wrapper around insertRecords() to simplify handling of single document inserts.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual StatusWith<RecordId> insertRecord(OperationContext*,
                                               const char* data,
                                               int len,
                                               Timestamp) = 0;
+    virtual StatusWith<RecordId> insertRecord(
+        OperationContext*, RecoveryUnit&, const char* data, int len, Timestamp) = 0;
 
     /**
      * A thin wrapper around insertRecords() to simplify handling of single document inserts.
      * If RecordId is null, the storage engine will generate one and return it.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual StatusWith<RecordId> insertRecord(
         OperationContext*, const RecordId&, const char* data, int len, Timestamp) = 0;
+    virtual StatusWith<RecordId> insertRecord(OperationContext*,
+                                              RecoveryUnit&,
+                                              const RecordId&,
+                                              const char* data,
+                                              int len,
+                                              Timestamp) = 0;
 
     /**
      * Updates the record with id 'recordId', replacing its contents with those described by
      * 'data' and 'len'.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual Status updateRecord(OperationContext*, const RecordId&, const char* data, int len) = 0;
+    virtual Status updateRecord(
+        OperationContext*, RecoveryUnit&, const RecordId&, const char* data, int len) = 0;
 
     /**
      * @return Returns 'false' if this record store does not implement
@@ -443,8 +534,16 @@ public:
      *
      * @return the updated version of the record. If unowned data is returned, then it is valid
      * until the next modification of this Record or the lock on the collection has been released.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual StatusWith<RecordData> updateWithDamages(OperationContext*,
+                                                     const RecordId&,
+                                                     const RecordData&,
+                                                     const char* damageSource,
+                                                     const DamageVector&) = 0;
+    virtual StatusWith<RecordData> updateWithDamages(OperationContext*,
+                                                     RecoveryUnit&,
                                                      const RecordId&,
                                                      const RecordData&,
                                                      const char* damageSource,
@@ -465,8 +564,13 @@ public:
      * collection so that Record will be returned on the first call to next(). Implementations
      * are allowed to lazily seek to the first Record when next() is called rather than doing
      * it on construction.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext*,
+                                                            bool forward = true) const = 0;
+    virtual std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext*,
+                                                            RecoveryUnit&,
                                                             bool forward = true) const = 0;
 
     /**
@@ -479,13 +583,20 @@ public:
      * the same document more than once and, as a result, may return more documents than exist in
      * the record store. Implementations should avoid obvious biases toward older, newer, larger
      * smaller or other specific classes of documents.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual std::unique_ptr<RecordCursor> getRandomCursor(OperationContext*) const = 0;
+    virtual std::unique_ptr<RecordCursor> getRandomCursor(OperationContext*,
+                                                          RecoveryUnit&) const = 0;
 
     /**
      * Removes all Records.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual Status truncate(OperationContext*) = 0;
+    virtual Status truncate(OperationContext*, RecoveryUnit&) = 0;
 
     /**
      * Removes all Records in the range [minRecordId, maxRecordId] inclusive of both. The hint*
@@ -494,8 +605,16 @@ public:
      * order to update numRecords and dataSize correctly. Implementations are free to ignore the
      * hints if they have a way of obtaining the correct values without the help of external
      * callers.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual Status rangeTruncate(OperationContext*,
+                                 const RecordId& minRecordId = RecordId(),
+                                 const RecordId& maxRecordId = RecordId(),
+                                 int64_t hintDataSizeIncrement = 0,
+                                 int64_t hintNumRecordsIncrement = 0) = 0;
+    virtual Status rangeTruncate(OperationContext*,
+                                 RecoveryUnit&,
                                  const RecordId& minRecordId = RecordId(),
                                  const RecordId& maxRecordId = RecordId(),
                                  int64_t hintDataSizeIncrement = 0,
@@ -512,8 +631,13 @@ public:
      * Attempt to reduce the storage space used by this RecordStore.
      * Only called if compactSupported() returns true.
      * Returns an estimated number of bytes when doing a dry run.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual StatusWith<int64_t> compact(OperationContext*, const CompactOptions&) = 0;
+    virtual StatusWith<int64_t> compact(OperationContext*,
+                                        RecoveryUnit&,
+                                        const CompactOptions&) = 0;
 
     /**
      * Performs record store specific validation to ensure consistency of underlying data
@@ -544,14 +668,23 @@ public:
      *
      * May throw WriteConflictException in certain cache-stuck scenarios even if the operation isn't
      * part of a WriteUnitOfWork.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual RecordId getLargestKey(OperationContext*) const = 0;
+    virtual RecordId getLargestKey(OperationContext*, RecoveryUnit&) const = 0;
 
     /**
      * Reserve a range of contiguous RecordIds. Returns the first valid RecordId in the range. Must
      * only be called on a RecordStore with KeyFormat::Long.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual void reserveRecordIds(OperationContext*, std::vector<RecordId>*, size_t numRecords) = 0;
+    virtual void reserveRecordIds(OperationContext*,
+                                  RecoveryUnit&,
+                                  std::vector<RecordId>*,
+                                  size_t numRecords) = 0;
 
     /**
      * Called after a repair operation is run with the recomputed numRecords and dataSize.
@@ -571,6 +704,12 @@ public:
 
 class RecordStore::Capped {
 public:
+    struct TruncateAfterResult {
+        int64_t recordsRemoved = 0;
+        int64_t bytesRemoved = 0;
+        RecordId firstRemovedId;
+    };
+
     /**
      * Get a pointer to a capped insert notifier object. The caller can wait on this object
      * until it is notified of a new insert into the capped collection.
@@ -598,35 +737,37 @@ public:
      * collection.  The collection cannot be completely emptied using this
      * function.  An assertion will be thrown if that is attempted.
      * @param inclusive - Truncate 'end' as well iff true
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
-    using AboutToDeleteRecordCallback =
-        std::function<void(OperationContext*, const RecordId&, RecordData)>;
-    virtual void truncateAfter(OperationContext*,
-                               const RecordId&,
-                               bool inclusive,
-                               const AboutToDeleteRecordCallback&) = 0;
+    virtual TruncateAfterResult truncateAfter(OperationContext*,
+                                              const RecordId&,
+                                              bool inclusive) = 0;
+    virtual TruncateAfterResult truncateAfter(OperationContext*,
+                                              RecoveryUnit&,
+                                              const RecordId&,
+                                              bool inclusive) = 0;
 };
 
 class RecordStore::Oplog {
 public:
     /**
-     * Storage engines can manage oplog truncation internally as opposed to having higher layers
-     * manage it for them.
-     */
-    virtual bool selfManagedTruncation() const = 0;
-
-    /**
      * Storage engines can choose whether to support changing the oplog size online.
      */
     virtual Status updateSize(long long size) = 0;
 
-    virtual const OplogData* getOplogData() const = 0;
+    virtual int64_t getMaxSize() const = 0;
 
     /**
      * Returns a new cursor on the oplog, ignoring any visibility semantics specific to forward
      * cursors.
+     *
+     * TODO (SERVER-105771): Remove the overload without RecoveryUnit.
      */
     virtual std::unique_ptr<SeekableRecordCursor> getRawCursor(OperationContext* opCtx,
+                                                               bool forward = true) const = 0;
+    virtual std::unique_ptr<SeekableRecordCursor> getRawCursor(OperationContext* opCtx,
+                                                               RecoveryUnit&,
                                                                bool forward = true) const = 0;
     /**
      * If supported, this method returns the timestamp value for the latest storage engine committed
@@ -646,14 +787,6 @@ public:
      * Unsupported RecordStores return the OplogOperationUnsupported error code.
      */
     virtual StatusWith<Timestamp> getEarliestTimestamp(RecoveryUnit&) = 0;
-
-    /**
-     * Returns a shared reference to the oplog truncate markers to allow the caller to wait
-     * for a deletion request.
-     * This should only be called if StorageEngine::supportsOplogTruncateMarkers() is true.
-     * Storage engines supporting oplog truncate markers must implement this function.
-     */
-    virtual std::shared_ptr<CollectionTruncateMarkers> getCollectionTruncateMarkers() = 0;
 };
 
 }  // namespace mongo

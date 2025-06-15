@@ -8,11 +8,13 @@
  *   requires_non_retryable_commands,
  *   # We need a timeseries collection.
  *   requires_timeseries,
- *   # During fcv upgrade/downgrade the index created might not be what we expect.
  * ]
  */
 
-import {FeatureFlagUtil} from "jstests/libs/feature_flag_util.js";
+import {
+    areViewlessTimeseriesEnabled,
+    getTimeseriesBucketsColl,
+} from "jstests/core/timeseries/libs/viewless_timeseries_util.js";
 
 const collName = jsTestName();
 const coll = db.getCollection(collName);
@@ -78,8 +80,16 @@ assert.commandWorked(db.runCommand({"collMod": collName, "timeseries": {"granula
 // collection.
 assert.commandFailedWithCode(
     db.runCommand(
-        {"collMod": ("system.buckets." + collName), "timeseries": {"granularity": "hours"}}),
-    [ErrorCodes.InvalidNamespace, 6201808 /* mongos error code */]);
+        {"collMod": getTimeseriesBucketsColl(collName), "timeseries": {"granularity": "hours"}}),
+    [
+        ErrorCodes.InvalidNamespace,
+        // Error code thrown by collmod coordinator.
+        //
+        // TODO SERVER-105548 remove the following error code once 9.0 becomes last LTS
+        // Currently needded for multiversion compability. Since 8.2 we throw InvalidNamespace also
+        // on sharded clusters.
+        6201808,
+    ]);
 
 // Tries to set one seconds parameter without the other (bucketMaxSpanSeconds or
 // bucketRoundingSeconds).
@@ -178,16 +188,18 @@ assert.commandFailedWithCode(db.runCommand({
 
 // Verify seconds was correctly set on the collection and granularity removed since a custom
 // value was added.
-let collections = assert.commandWorked(db.runCommand({listCollections: 1})).cursor.firstBatch;
+if (!areViewlessTimeseriesEnabled(db)) {
+    const collectionEntry = getTimeseriesBucketsColl(coll).getMetadata();
+    assert(collectionEntry);
 
-let collectionEntry = collections.find(entry => entry.name === 'system.buckets.' + coll.getName());
-assert(collectionEntry);
+    assert.eq(collectionEntry.options.timeseries.bucketRoundingSeconds,
+              bucketMaxSpanSecondsHours + 1);
+    assert.eq(collectionEntry.options.timeseries.bucketMaxSpanSeconds,
+              bucketMaxSpanSecondsHours + 1);
+    assert.isnull(collectionEntry.options.timeseries.granularity);
+}
 
-assert.eq(collectionEntry.options.timeseries.bucketRoundingSeconds, bucketMaxSpanSecondsHours + 1);
-assert.eq(collectionEntry.options.timeseries.bucketMaxSpanSeconds, bucketMaxSpanSecondsHours + 1);
-assert.isnull(collectionEntry.options.timeseries.granularity);
-
-collectionEntry = collections.find(entry => entry.name === coll.getName());
+const collectionEntry = coll.getMetadata();
 assert(collectionEntry);
 assert.eq(collectionEntry.options.timeseries.bucketRoundingSeconds, bucketMaxSpanSecondsHours + 1);
 assert.eq(collectionEntry.options.timeseries.bucketMaxSpanSeconds, bucketMaxSpanSecondsHours + 1);

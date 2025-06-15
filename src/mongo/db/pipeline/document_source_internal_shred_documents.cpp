@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/pipeline/document_source_internal_shred_documents.h"
 
@@ -46,7 +45,7 @@ ALLOCATE_DOCUMENT_SOURCE_ID(_internalShredDocuments, DocumentSourceInternalShred
 
 DocumentSourceInternalShredDocuments::DocumentSourceInternalShredDocuments(
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageName, pExpCtx) {}
+    : DocumentSource(kStageName, pExpCtx), exec::agg::Stage(kStageName, pExpCtx) {}
 
 DocumentSource::GetNextResult DocumentSourceInternalShredDocuments::doGetNext() {
     auto next = pSource->getNext();
@@ -64,7 +63,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceInternalShredDocuments::creat
     BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(7997500,
             "$_internalShredDocuments specification must be an object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     uassert(7997501, "$_internalShredDocuments specification must be empty", elem.Obj().isEmpty());
     return DocumentSourceInternalShredDocuments::create(expCtx);
 }

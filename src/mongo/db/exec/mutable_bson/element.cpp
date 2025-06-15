@@ -29,7 +29,6 @@
 
 #include "mongo/db/exec/mutable_bson/element.h"
 
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 
@@ -166,9 +165,9 @@ std::string Element::toString() const {
     const BSONType type = getType();
 
     // The only types that sometimes don't have a value are Object and Array nodes.
-    dassert((type == mongo::Object) || (type == mongo::Array));
+    dassert((type == BSONType::object) || (type == BSONType::array));
 
-    if (type == mongo::Object) {
+    if (type == BSONType::object) {
         BSONObjBuilder builder;
         writeTo(&builder);
         BSONObj obj = builder.obj();

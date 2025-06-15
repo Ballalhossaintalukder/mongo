@@ -30,9 +30,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <initializer_list>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -42,10 +39,12 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/query/write_ops/write_ops_parsers_test_helpers.h"
 #include "mongo/s/chunk_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/unittest/unittest.h"
+
+#include <initializer_list>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -90,9 +89,7 @@ TEST(BatchedCommandRequest, InsertWithShardVersion) {
         ASSERT_EQ(insertRequest.getBatchType(), BatchedCommandRequest::BatchType_Insert);
         ASSERT_EQ("TestDB.test", insertRequest.getInsertRequest().getNamespace().ns_forTest());
         ASSERT(insertRequest.hasShardVersion());
-        ASSERT_EQ(ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 2}),
-                                            boost::optional<CollectionIndexes>(boost::none))
-                      .toString(),
+        ASSERT_EQ(ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 2})).toString(),
                   insertRequest.getShardVersion().toString());
     }
 }
@@ -121,10 +118,10 @@ TEST(BatchedCommandRequest, InsertCloneWithIds) {
     const auto& insertDocs = clonedRequest.getInsertRequest().getDocuments();
     ASSERT_EQ(2u, insertDocs.size());
 
-    ASSERT_EQ(jstOID, insertDocs[0]["_id"].type());
+    ASSERT_EQ(BSONType::oid, insertDocs[0]["_id"].type());
     ASSERT_EQ(1, insertDocs[0]["x"].numberLong());
 
-    ASSERT_EQ(jstOID, insertDocs[1]["_id"].type());
+    ASSERT_EQ(BSONType::oid, insertDocs[1]["_id"].type());
     ASSERT_EQ(2, insertDocs[1]["x"].numberLong());
 }
 

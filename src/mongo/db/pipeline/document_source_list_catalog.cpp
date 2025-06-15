@@ -29,12 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_list_catalog.h"
 
-#include <fmt/format.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/auth/action_set.h"
@@ -52,6 +46,11 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 
 using boost::intrusive_ptr;
@@ -63,7 +62,7 @@ REGISTER_DOCUMENT_SOURCE(listCatalog,
 ALLOCATE_DOCUMENT_SOURCE_ID(listCatalog, DocumentSourceListCatalog::id)
 
 const char* DocumentSourceListCatalog::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 PrivilegeVector DocumentSourceListCatalog::LiteParsed::requiredPrivileges(
@@ -114,13 +113,13 @@ DocumentSource::GetNextResult DocumentSourceListCatalog::doGetNext() {
 
 DocumentSourceListCatalog::DocumentSourceListCatalog(
     const intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageName, pExpCtx) {}
+    : DocumentSource(kStageName, pExpCtx), exec::agg::Stage(kStageName, pExpCtx) {}
 
 intrusive_ptr<DocumentSource> DocumentSourceListCatalog::createFromBson(
     BSONElement elem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
     uassert(6200600,
             "The $listCatalog stage specification must be an empty object",
-            elem.type() == Object && elem.Obj().isEmpty());
+            elem.type() == BSONType::object && elem.Obj().isEmpty());
 
     const NamespaceString& nss = pExpCtx->getNamespaceString();
 

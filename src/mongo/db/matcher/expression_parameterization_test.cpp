@@ -29,16 +29,6 @@
 
 #include "mongo/db/matcher/expression_parameterization.h"
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -57,6 +47,16 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -500,7 +500,7 @@ TEST(MatchExpressionParameterizationVisitor, SizeMatchExpressionSetsOneParamId) 
 }
 
 TEST(MatchExpressionParameterizationVisitor, TypeMatchExpressionWithStringSetsOneParamId) {
-    TypeMatchExpression expr{"a"_sd, BSONType::String};
+    TypeMatchExpression expr{"a"_sd, BSONType::string};
 
     MatchExpressionParameterizationVisitorContext context{};
     MatchExpressionParameterizationVisitor visitor{&context};
@@ -510,7 +510,7 @@ TEST(MatchExpressionParameterizationVisitor, TypeMatchExpressionWithStringSetsOn
 }
 
 TEST(MatchExpressionParameterizationVisitor, TypeMatchExpressionWithArraySetsNoParamIds) {
-    TypeMatchExpression expr{"a"_sd, BSONType::Array};
+    TypeMatchExpression expr{"a"_sd, BSONType::array};
 
     MatchExpressionParameterizationVisitorContext context{};
     MatchExpressionParameterizationVisitor visitor{&context};

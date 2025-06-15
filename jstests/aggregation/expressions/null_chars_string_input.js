@@ -88,6 +88,16 @@ function getFieldPathErrorPipelines(nullStr) {
         [{$bucket: {groupBy: "$foo", boundaries: [0, 5, 10], default: nullStr}}],
         [{$fill: {partitionBy: nullStr, sortBy: {foo: 1}, output: {out: {method: "linear"}}}}],
         [{$setWindowFields: {partitionBy: nullStr, output: {count: {$sum: 1}}}}],
+        [{$lookup: {
+                    from: "foo",
+                    localField: "local",
+                    foreignField: "foreign",
+                    as: "result",
+                    pipeline: [{
+                        $sortByCount: "$$x"
+                    }],
+                    let: {x : nullStr}
+        }}]
     ];
 
     const nullStrComparisons = [
@@ -362,6 +372,7 @@ const skips = new Set([
     "$_internalChangeStreamCheckResumability",
     "$_internalChangeStreamCheckTopologyChange",
     "$_internalChangeStreamHandleTopologyChange",
+    "$_internalChangeStreamInjectControlEvents",
     "$_internalChangeStreamOplogMatch",
     "$_internalChangeStreamTransform",
     "$_internalChangeStreamUnwindTransaction",
@@ -400,7 +411,6 @@ const skips = new Set([
     "$listSearchIndexes",
     "$listSessions",
     "$mergeCursors",
-    "$operationMetrics",
     "$planCacheStats",
     "$querySettings",
     "$queryStats",

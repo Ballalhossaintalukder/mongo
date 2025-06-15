@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/oid.h"
 #include "mongo/client/connection_string.h"
@@ -54,6 +47,14 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/timer.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -288,13 +289,11 @@ private:
     };
     boost::optional<ScopedRegisterer> _scopedRegisterer;
 
-    // The epoch of the collection being migrated and its UUID, as of the time the migration
-    // started. Values are boost::optional only up until the constructor runs, because UUID doesn't
-    // have a default constructor.
-    // TODO SERVER-80188: remove _collectionEpoch once 8.0 becomes last-lts.
-    boost::optional<OID> _collectionEpoch;
+    // The UUID and timesetamp of the collection being migrated. The UUID values is boost::optional
+    // only up until the constructor runs, because UUID doesn't have a default constructor.
     boost::optional<UUID> _collectionUUID;
-    boost::optional<Timestamp> _collectionTimestamp;
+
+    Timestamp _collectionTimestamp;
 
     // The version of the chunk at the time the migration started.
     boost::optional<ChunkVersion> _chunkVersion;

@@ -27,23 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <list>
-#include <memory>
-#include <ostream>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -95,6 +78,23 @@
 #include "mongo/util/interruptible.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <list>
+#include <memory>
+#include <ostream>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -1395,7 +1395,7 @@ TEST_F(ReplCoordHBV1Test, IgnoreTheContentsOfMetadataWhenItsReplicaSetIdDoesNotM
     auto statusObj = statusBuilder.obj();
     LOGV2(21495, "replica set status = {statusObj}", "statusObj"_attr = statusObj);
 
-    ASSERT_EQ(mongo::Array, statusObj["members"].type());
+    ASSERT_EQ(mongo::BSONType::array, statusObj["members"].type());
     auto members = statusObj["members"].Array();
     ASSERT_EQ(2U, members.size());
     ASSERT_TRUE(members[1].isABSONObj());

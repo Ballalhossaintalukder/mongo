@@ -29,11 +29,11 @@
 
 #pragma once
 
-#include <cstddef>
-
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/canonical_query.h"
 #include "mongo/db/repl/oplog.h"
+
+#include <cstddef>
 
 namespace mongo {
 class Collection;
@@ -58,5 +58,10 @@ size_t getTrialPeriodMaxWorks(OperationContext* opCtx,
  * trial period. As soon as any plan hits this number of documents, the trial period ends.
  */
 size_t getTrialPeriodNumToReturn(const CanonicalQuery& query);
+
+/**
+ * Returns the fraction of the collection that we are allowed to scan for each candidate plan.
+ */
+double getCollFractionPerCandidatePlan(const CanonicalQuery& query, size_t numSolutions);
 }  // namespace trial_period
 }  // namespace mongo

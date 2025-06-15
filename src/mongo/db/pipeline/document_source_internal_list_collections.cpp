@@ -29,16 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_internal_list_collections.h"
 
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <list>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -57,13 +47,23 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 
+#include <iterator>
+#include <list>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 using boost::intrusive_ptr;
 
 DocumentSourceInternalListCollections::DocumentSourceInternalListCollections(
     const boost::intrusive_ptr<ExpressionContext>& pExpCtx)
-    : DocumentSource(kStageNameInternal, pExpCtx) {}
+    : DocumentSource(kStageNameInternal, pExpCtx), exec::agg::Stage(kStageNameInternal, pExpCtx) {}
 
 REGISTER_DOCUMENT_SOURCE(_internalListCollections,
                          DocumentSourceInternalListCollections::LiteParsed::parse,
@@ -101,7 +101,7 @@ intrusive_ptr<DocumentSource> DocumentSourceInternalListCollections::createFromB
     uassert(9525805,
             str::stream() << kStageNameInternal
                           << " must take a nested empty object but found: " << elem,
-            elem.type() == BSONType::Object && elem.embeddedObject().isEmpty());
+            elem.type() == BSONType::object && elem.embeddedObject().isEmpty());
 
     uassert(9525806,
             str::stream() << "The " << kStageNameInternal
@@ -154,7 +154,7 @@ Pipeline::SourceContainer::iterator DocumentSourceInternalListCollections::doOpt
 }
 
 const char* DocumentSourceInternalListCollections::getSourceName() const {
-    return kStageNameInternal.rawData();
+    return kStageNameInternal.data();
 }
 
 void DocumentSourceInternalListCollections::serializeToArray(

@@ -113,6 +113,19 @@ server_parameters:
             gte: 1
         redact: false
 
+    wiredTigerSessionCacheMaxPercentage:
+        description: >-
+            This value is a percentage calculated against wiredTigerSessionMax
+            representing the maximum number of sessions in the cache
+        set_at: startup
+        cpp_vartype: "std::int32_t"
+        cpp_varname: "gWiredTigerSessionCacheMaxPercentage"
+        default: 50
+        validator:
+            gte: 0
+            lte: 100
+        redact: false
+
     wiredTigerEvictionDirtyTargetGB:
         description: >-
             Absolute dirty cache eviction target. Once eviction begins,
@@ -137,6 +150,19 @@ server_parameters:
         default: 0
         validator:
             gte: 0.01
+            lte: 10000
+        redact: false
+
+    wiredTigerEvictionUpdatesMaxGB:
+        description: >-
+            Absolute threshold for updates in cache where eviction starts operating
+            aggressively;
+            Defaults to half of eviction dirty trigger.
+        set_at: startup
+        cpp_varname: "wiredTigerGlobalOptions.evictionUpdatesTriggerGB"
+        default: 0
+        validator:
+            gte: 0
             lte: 10000
         redact: false
 
@@ -264,18 +290,68 @@ server_parameters:
         default: false
         redact: false
 
+    spillWiredTigerEngineRuntimeConfig:
+        description: "Spill WiredTiger Configuration"
+        set_at: runtime
+        cpp_class:
+            name: SpillWiredTigerEngineRuntimeConfigParameter
+            data: "std::pair<synchronized_value<std::string>, SpillWiredTigerKVEngine*>"
+        condition: {expr: false}
+        redact: false
+
+    enableTemporarilyUnavailableExceptions:
+        description:
+            "Enables the use of TemporarilyUnavailableExceptions. When disabled, reverts to
+            throwing WriteConflictException."
+        set_at: [startup, runtime]
+        cpp_varname: "gEnableTemporarilyUnavailableExceptions"
+        cpp_vartype: AtomicWord<bool>
+        default: true
+        redact: false
+
+    transactionTooLargeForCacheThreshold:
+        description:
+            "Threshold on the proportion of total dirty cache bytes that the running
+            transaction's dirty cache bytes can represent and still be considered
+            fullfillable on retry. If this threshold is exceeded, a
+            TransactionTooLargeForCache exception is thrown. Setting this parameter to 1.0
+            causes this check to be disabled, and TransactionTooLargeForCache exceptions
+            will not be thrown."
+        set_at: [startup, runtime]
+        cpp_varname: "gTransactionTooLargeForCacheThreshold"
+        cpp_vartype: AtomicWord<double>
+        default: 0.75
+        validator:
+            gte: 0.0
+            lte: 1.0
+        redact: false
+
 configs:
     # WiredTiger storage engine options
     "storage.wiredTiger.engineConfig.cacheSizeGB":
         description: >-
-            Maximum amount of memory to allocate for cache;
-            Defaults to 1/2 of physical RAM
+            Maximum amount of memory to allocate for cache in GB;
+            Defaults to 1/2 of physical RAM. Only one of either
+            wiredTigerCacheSizePct or wiredTigerCacheSizeGB can
+            be provided
         arg_vartype: Double
         cpp_varname: "wiredTigerGlobalOptions.cacheSizeGB"
         short_name: wiredTigerCacheSizeGB
         validator:
             gte: 0.25
             lte: 10000
+    "storage.wiredTiger.engineConfig.cacheSizePct":
+        description: >-
+            Maximum amount of memory to allocate for cache as a percentage of physical RAM;
+            Defaults to 1/2 of physical RAM and a minimum of 256MB. Only one of either
+            wiredTigerCacheSizePct or wiredTigerCacheSizeGB can
+            be provided
+        arg_vartype: Double
+        cpp_varname: "wiredTigerGlobalOptions.cacheSizePct"
+        short_name: wiredTigerCacheSizePct
+        validator:
+            gte: 0
+            lte: 0.8
     "storage.wiredTiger.engineConfig.statisticsLogDelaySecs":
         # FTDC supersedes WiredTiger's statistics logging.
         description: >-
@@ -381,3 +457,16 @@ configs:
         cpp_varname: "wiredTigerGlobalOptions.indexConfig"
         short_name: wiredTigerIndexConfigString
         hidden: true
+
+    # Spill WiredTiger engine options
+    "storage.spillWiredTiger.engineConfig.cacheSizeGB":
+        description: >-
+            Maximum amount of memory to allocate for the spill WiredTiger cache. 
+            This cache is used to prevent every write from incurring I/O.
+        arg_vartype: Double
+        cpp_varname: "spillWiredTigerGlobalOptions.cacheSizeGB"
+        short_name: spillWiredTigerCacheSizeGB
+        default: 0.1
+        validator:
+            gt: 0
+            lte: 10000

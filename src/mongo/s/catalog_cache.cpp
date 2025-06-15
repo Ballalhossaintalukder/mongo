@@ -29,20 +29,6 @@
 
 #include "mongo/s/catalog_cache.h"
 
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <list>
-#include <memory>
-#include <set>
-#include <vector>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
@@ -66,7 +52,6 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/mongod_and_mongos_server_parameters_gen.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
 #include "mongo/s/shard_cannot_refresh_due_to_locks_held_exception.h"
@@ -79,6 +64,20 @@
 #include "mongo/util/invalidating_lru_cache.h"
 #include "mongo/util/str.h"
 #include "mongo/util/timer.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <list>
+#include <memory>
+#include <set>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -190,7 +189,7 @@ const DatabaseVersion& CollectionRoutingInfo::getDbVersion() const {
 }
 
 ShardVersion CollectionRoutingInfo::getCollectionVersion() const {
-    ShardVersion sv = ShardVersionFactory::make(_cm, boost::none);
+    ShardVersion sv = ShardVersionFactory::make(_cm);
     if (MONGO_unlikely(shouldIgnoreUuidMismatch)) {
         sv.setIgnoreShardingCatalogUuidMismatch();
     }
@@ -198,7 +197,7 @@ ShardVersion CollectionRoutingInfo::getCollectionVersion() const {
 }
 
 ShardVersion CollectionRoutingInfo::getShardVersion(const ShardId& shardId) const {
-    auto sv = ShardVersionFactory::make(_cm, shardId, boost::none);
+    auto sv = ShardVersionFactory::make(_cm, shardId);
     if (MONGO_unlikely(shouldIgnoreUuidMismatch)) {
         sv.setIgnoreShardingCatalogUuidMismatch();
     }
@@ -273,10 +272,12 @@ bool ComparableDatabaseVersion::operator<(const ComparableDatabaseVersion& other
 }
 
 CatalogCache::CatalogCache(ServiceContext* const service,
-                           std::shared_ptr<CatalogCacheLoader> cacheLoader,
+                           std::shared_ptr<CatalogCacheLoader> databaseCacheLoader,
+                           std::shared_ptr<CatalogCacheLoader> collectionCacheLoader,
+                           bool cascadeDatabaseCacheLoaderShutdown,
+                           bool cascadeCollectionCacheLoaderShutdown,
                            StringData kind)
     : _kind(kind),
-      _cacheLoader(cacheLoader),
       _executor([this] {
           ThreadPool::Options options;
           options.poolName = "CatalogCache" + (_kind.empty() ? "" : "::" + _kind);
@@ -284,8 +285,29 @@ CatalogCache::CatalogCache(ServiceContext* const service,
           options.maxThreads = 6;
           return options;
       }()),
-      _databaseCache(service, _executor, _cacheLoader),
-      _collectionCache(service, _executor, _cacheLoader) {
+      _cascadeDatabaseCacheLoaderShutdown(cascadeDatabaseCacheLoaderShutdown),
+      _cascadeCollectionCacheLoaderShutdown(cascadeCollectionCacheLoaderShutdown),
+      _databaseCache(service, _executor, databaseCacheLoader),
+      _collectionCache(service, _executor, collectionCacheLoader) {
+    _executor.startup();
+}
+
+CatalogCache::CatalogCache(ServiceContext* const service,
+                           std::shared_ptr<CatalogCacheLoader> cacheLoader,
+                           StringData kind)
+    : _kind(kind),
+      _executor([this] {
+          ThreadPool::Options options;
+          options.poolName = "CatalogCache" + (_kind.empty() ? "" : "::" + _kind);
+          options.minThreads = 0;
+          options.maxThreads = 6;
+          return options;
+      }()),
+      // As both caches points to the same cache loader, it is enough to shutDown once.
+      _cascadeDatabaseCacheLoaderShutdown(true),
+      _cascadeCollectionCacheLoaderShutdown(false),
+      _databaseCache(service, _executor, cacheLoader),
+      _collectionCache(service, _executor, cacheLoader) {
     _executor.startup();
 }
 
@@ -301,7 +323,13 @@ void CatalogCache::shutDownAndJoin() {
     _executor.shutdown();
     _executor.join();
 
-    _cacheLoader->shutDown();
+    if (_cascadeDatabaseCacheLoaderShutdown) {
+        _databaseCache.shutDown();
+    }
+
+    if (_cascadeCollectionCacheLoaderShutdown) {
+        _collectionCache.shutDown();
+    }
 }
 
 StatusWith<CachedDatabaseInfo> CatalogCache::getDatabase(OperationContext* opCtx,

@@ -27,22 +27,23 @@
  *    it in the license file.
  */
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/index_builds/index_build_oplog_entry.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
-#include "mongo/db/index_builds/index_build_oplog_entry.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
 #include "mongo/logv2/redaction.h"
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 StatusWith<IndexBuildOplogEntry> IndexBuildOplogEntry::parse(const repl::OplogEntry& entry) {
@@ -83,7 +84,7 @@ StatusWith<IndexBuildOplogEntry> IndexBuildOplogEntry::parse(const repl::OplogEn
     auto commandName = first.fieldNameStringData();
     uassert(ErrorCodes::InvalidNamespace,
             str::stream() << commandName << " value must be a string",
-            first.type() == mongo::String);
+            first.type() == BSONType::string);
 
     auto buildUUIDElem = obj.getField("indexBuildUUID");
     if (buildUUIDElem.eoo()) {
@@ -100,7 +101,7 @@ StatusWith<IndexBuildOplogEntry> IndexBuildOplogEntry::parse(const repl::OplogEn
         return {ErrorCodes::BadValue, str::stream() << "Missing required field 'indexes'"};
     }
 
-    if (indexesElem.type() != Array) {
+    if (indexesElem.type() != BSONType::array) {
         return {ErrorCodes::BadValue,
                 str::stream() << "Field 'indexes' must be an array of index spec objects"};
     }
@@ -128,7 +129,7 @@ StatusWith<IndexBuildOplogEntry> IndexBuildOplogEntry::parse(const repl::OplogEn
         if (causeElem.eoo()) {
             return {ErrorCodes::BadValue, "Missing required field 'cause'."};
         }
-        if (causeElem.type() != Object) {
+        if (causeElem.type() != BSONType::object) {
             return {ErrorCodes::BadValue, "Field 'cause' must be an object."};
         }
         auto causeStatusObj = causeElem.Obj();
@@ -140,7 +141,7 @@ StatusWith<IndexBuildOplogEntry> IndexBuildOplogEntry::parse(const repl::OplogEn
 
     return IndexBuildOplogEntry{*collUUID,
                                 commandType,
-                                commandName.toString(),
+                                std::string{commandName},
                                 swBuildUUID.getValue(),
                                 std::move(indexNames),
                                 std::move(indexSpecs),

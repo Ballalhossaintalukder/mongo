@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <memory>
-#include <typeindex>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/bson/bsonelement.h"
@@ -53,6 +46,14 @@
 #include "mongo/db/query/fle/query_rewriter_interface.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/assert_util.h"
+
+#include <functional>
+#include <memory>
+#include <typeindex>
+#include <variant>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 /**
  * This file contains an abstract class that describes rewrites on agg Expressions and
@@ -263,14 +264,9 @@ extern MatchTypeToRewriteMap matchPredicateRewriteMap;
 /**
  * Register an agg rewrite behind a feature flag.
  */
-#define REGISTER_ENCRYPTED_AGG_PREDICATE_REWRITE_WITH_FLAG(matchType, rewriteClass, featureFlag)  \
-    REGISTER_ENCRYPTED_AGG_PREDICATE_REWRITE_GUARDED(                                             \
-        matchType,                                                                                \
-        rewriteClass,                                                                             \
-        CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {                   \
-            return fcvGatedFlag.isEnabledUseLatestFCVWhenUninitialized(                           \
-                kNoVersionContext, serverGlobalParams.featureCompatibility.acquireFCVSnapshot()); \
-        }))
+#define REGISTER_ENCRYPTED_AGG_PREDICATE_REWRITE_WITH_FLAG(matchType, rewriteClass, featureFlag) \
+    REGISTER_ENCRYPTED_AGG_PREDICATE_REWRITE_GUARDED(                                            \
+        matchType, rewriteClass, (featureFlag).canBeEnabled())
 
 /**
  * Register a MatchExpression rewrite if a condition is true at startup time.
@@ -303,11 +299,6 @@ extern MatchTypeToRewriteMap matchPredicateRewriteMap;
  */
 #define REGISTER_ENCRYPTED_MATCH_PREDICATE_REWRITE_WITH_FLAG(matchType, rewriteClass, featureFlag) \
     REGISTER_ENCRYPTED_MATCH_PREDICATE_REWRITE_GUARDED(                                            \
-        matchType,                                                                                 \
-        rewriteClass,                                                                              \
-        CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {                    \
-            return fcvGatedFlag.isEnabled(                                                         \
-                serverGlobalParams.featureCompatibility.acquireFCVSnapshot());                     \
-        }))
+        matchType, rewriteClass, (featureFlag).canBeEnabled())
 }  // namespace fle
 }  // namespace mongo

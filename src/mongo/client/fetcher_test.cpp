@@ -27,18 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/smart_ptr.hpp>
-#include <list>
-#include <memory>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
+#include "mongo/client/fetcher.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/client/fetcher.h"
 #include "mongo/executor/network_interface_mock.h"
 #include "mongo/executor/remote_command_response.h"
 #include "mongo/executor/task_executor_test_fixture.h"
@@ -50,6 +44,13 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/future_test_utils.h"
+
+#include <list>
+#include <memory>
+#include <tuple>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace {
 
@@ -1004,7 +1005,7 @@ TEST_F(FetcherTest, EmptyGetMoreRequestAfterFirstBatchMakesFetcherInactiveAndKil
     auto firstElement = cmdObj.firstElement();
     ASSERT_EQUALS("killCursors", firstElement.fieldNameStringData());
     ASSERT_EQUALS(nss.coll(), firstElement.String());
-    ASSERT_EQUALS(mongo::BSONType::Array, cmdObj["cursors"].type());
+    ASSERT_EQUALS(mongo::BSONType::array, cmdObj["cursors"].type());
     auto cursors = cmdObj["cursors"].Array();
     ASSERT_EQUALS(1U, cursors.size());
     ASSERT_EQUALS(cursorId, cursors.front().numberLong());
@@ -1074,7 +1075,7 @@ TEST_F(FetcherTest, UpdateNextActionAfterSecondBatch) {
         auto firstElement = cmdObj.firstElement();
         ASSERT_EQUALS("killCursors", firstElement.fieldNameStringData());
         ASSERT_EQUALS(nss.coll(), firstElement.String());
-        ASSERT_EQUALS(mongo::BSONType::Array, cmdObj["cursors"].type());
+        ASSERT_EQUALS(mongo::BSONType::array, cmdObj["cursors"].type());
         auto cursors = cmdObj["cursors"].Array();
         ASSERT_EQUALS(1U, cursors.size());
         ASSERT_EQUALS(cursorId, cursors.front().numberLong());

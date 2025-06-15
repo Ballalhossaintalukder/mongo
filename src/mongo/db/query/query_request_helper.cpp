@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <memory>
-#include <string>
-
+#include "mongo/db/query/query_request_helper.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -50,7 +43,6 @@
 #include "mongo/db/query/client_cursor/cursor_response_gen.h"
 #include "mongo/db/query/find_command_gen.h"
 #include "mongo/db/query/query_knobs_gen.h"
-#include "mongo/db/query/query_request_helper.h"
 #include "mongo/db/query/tailable_mode.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/server_options.h"
@@ -58,6 +50,15 @@
 #include "mongo/s/resharding/resharding_feature_flag_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -124,10 +125,10 @@ Status validateResumeInput(OperationContext* opCtx,
 
     BSONType recordIdType = resumeInput["$recordId"].type();
     if (resumeInput.nFields() > 2 ||
-        (recordIdType != BSONType::NumberLong && recordIdType != BSONType::BinData &&
-         recordIdType != BSONType::jstNULL) ||
+        (recordIdType != BSONType::numberLong && recordIdType != BSONType::binData &&
+         recordIdType != BSONType::null) ||
         (resumeInput.nFields() == 2 &&
-         (resumeInput["$initialSyncId"].type() != BSONType::BinData ||
+         (resumeInput["$initialSyncId"].type() != BSONType::binData ||
           resumeInput["$initialSyncId"].binDataType() != BinDataType::newUUID))) {
         return Status(ErrorCodes::BadValue,
                       str::stream()
@@ -147,8 +148,8 @@ Status validateResumeInput(OperationContext* opCtx,
     // Clustered collections can only accept '$_resumeAfter' or '$_startAt' parameter of type
     // BinData. Non clustered collections should only accept '$_resumeAfter' or '$_startAt' of type
     // Long.
-    if ((isClusteredCollection && recordIdType == BSONType::NumberLong) ||
-        (!isClusteredCollection && recordIdType == BSONType::BinData)) {
+    if ((isClusteredCollection && recordIdType == BSONType::numberLong) ||
+        (!isClusteredCollection && recordIdType == BSONType::binData)) {
         return Status(ErrorCodes::Error(7738600),
                       str::stream()
                           << "The '" << resumeInputName
@@ -255,7 +256,7 @@ std::unique_ptr<FindCommandRequest> makeFromFindCommandForTests(
 
 bool isTextScoreMeta(BSONElement elt) {
     // elt must be foo: {$meta: "textScore"}
-    if (mongo::Object != elt.type()) {
+    if (BSONType::object != elt.type()) {
         return false;
     }
     BSONObj metaObj = elt.Obj();
@@ -268,7 +269,7 @@ bool isTextScoreMeta(BSONElement elt) {
     if (metaElt.fieldNameStringData() != "$meta") {
         return false;
     }
-    if (mongo::String != metaElt.type()) {
+    if (BSONType::string != metaElt.type()) {
         return false;
     }
     if (metaElt.valueStringData() != metaTextScore) {

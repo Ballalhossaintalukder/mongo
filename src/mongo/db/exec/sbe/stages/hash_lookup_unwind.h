@@ -29,6 +29,14 @@
 
 #pragma once
 
+#include "mongo/db/exec/sbe/stages/lookup_hash_table.h"
+#include "mongo/db/exec/sbe/stages/stages.h"
+#include "mongo/db/exec/sbe/values/row.h"
+#include "mongo/db/exec/sbe/values/slot.h"
+#include "mongo/db/exec/sbe/values/value.h"
+#include "mongo/db/operation_context.h"
+#include "mongo/db/query/collation/collator_interface.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -38,14 +46,6 @@
 #include <vector>
 
 #include <boost/optional/optional.hpp>
-
-#include "mongo/db/exec/sbe/stages/lookup_hash_table.h"
-#include "mongo/db/exec/sbe/stages/stages.h"
-#include "mongo/db/exec/sbe/values/row.h"
-#include "mongo/db/exec/sbe/values/slot.h"
-#include "mongo/db/exec/sbe/values/value.h"
-#include "mongo/db/operation_context.h"
-#include "mongo/db/query/collation/collator_interface.h"
 
 namespace mongo::sbe {
 /**
@@ -173,5 +173,9 @@ private:
     LookupHashTable _hashTable;
     // Tracks whether we are already processing an outer key.
     bool _outerKeyOpen{false};
+
+    void doForceSpill() final {
+        _hashTable.forceSpill();
+    };
 };  // class HashLookupUnwindStage
 }  // namespace mongo::sbe

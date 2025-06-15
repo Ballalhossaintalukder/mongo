@@ -35,10 +35,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstdint>
-#include <memory>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -57,6 +53,7 @@
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/op_observer/op_observer.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/raw_data_operation.h"
 #include "mongo/db/repl/repl_set_member_in_standalone_mode.h"
 #include "mongo/db/repl/repl_settings.h"
@@ -82,6 +79,10 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <memory>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -124,12 +125,8 @@ StatusWith<const IndexDescriptor*> getDescriptorByKeyPattern(OperationContext* o
                                                              const IndexCatalog* indexCatalog,
                                                              const BSONObj& keyPattern) {
     std::vector<const IndexDescriptor*> indexes;
-    indexCatalog->findIndexesByKeyPattern(opCtx,
-                                          keyPattern,
-                                          IndexCatalog::InclusionPolicy::kReady |
-                                              IndexCatalog::InclusionPolicy::kUnfinished |
-                                              IndexCatalog::InclusionPolicy::kFrozen,
-                                          &indexes);
+    indexCatalog->findIndexesByKeyPattern(
+        opCtx, keyPattern, IndexCatalog::InclusionPolicy::kAll, &indexes);
     if (indexes.empty()) {
         return Status(ErrorCodes::IndexNotFound,
                       str::stream() << "can't find index with key: " << keyPattern);
@@ -387,10 +384,7 @@ void dropReadyIndexes(OperationContext* opCtx,
         }
 
         auto writableEntry = indexCatalog->getWritableEntryByName(
-            opCtx,
-            indexName,
-            IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished |
-                IndexCatalog::InclusionPolicy::kFrozen);
+            opCtx, indexName, IndexCatalog::InclusionPolicy::kAll);
         if (!writableEntry) {
             uasserted(ErrorCodes::IndexNotFound,
                       str::stream() << "index not found with name [" << indexName << "]");
@@ -402,7 +396,7 @@ void dropReadyIndexes(OperationContext* opCtx,
 void assertNoMovePrimaryInProgress(OperationContext* opCtx, const NamespaceString& nss) {
     try {
         bool isMovePrimaryInProgress =
-            DatabaseShardingState::assertDbLockedAndAcquireShared(opCtx, nss.dbName())
+            DatabaseShardingState::assertDbLockedAndAcquire(opCtx, nss.dbName())
                 ->isMovePrimaryInProgress();
         auto scopedCss = CollectionShardingState::assertCollectionLockedAndAcquire(opCtx, nss);
 
@@ -590,9 +584,13 @@ DropIndexesReply dropIndexes(OperationContext* opCtx,
         IndexBuildsCoordinator::get(opCtx)->assertNoIndexBuildInProgForCollection(collectionUUID);
         writeConflictRetry(opCtx, "dropIndexes", (*collection)->ns(), [&] {
             WriteUnitOfWork wuow(opCtx);
-
-            // This is necessary to check shard version.
-            OldClientContext ctx(opCtx, (*collection)->ns());
+            AutoStatsTracker statsTracker(
+                opCtx,
+                (*collection)->ns(),
+                Top::LockType::WriteLocked,
+                AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                DatabaseProfileSettings::get(opCtx->getServiceContext())
+                    .getDatabaseProfileLevel((*collection)->ns().dbName()));
 
             // Iterate through all the aborted indexes and drop any indexes that are ready in
             // the index catalog. This would indicate that while we yielded our locks during the
@@ -602,23 +600,17 @@ DropIndexesReply dropIndexes(OperationContext* opCtx,
             auto indexCatalog = writableColl->getIndexCatalog();
             for (const auto& indexName : indexNames) {
                 auto collDesc = CollectionShardingState::assertCollectionLockedAndAcquire(
-                                    opCtx, (*collection)->ns())
+                                    opCtx, collWriter->ns())
                                     ->getCollectionDescription(opCtx);
                 if (collDesc.isSharded()) {
                     uassert(ErrorCodes::CannotDropShardKeyIndex,
                             "Cannot drop the only compatible index for this collection's shard key",
-                            !isLastNonHiddenRangedShardKeyIndex(opCtx,
-                                                                collection->getCollection(),
-                                                                indexName,
-                                                                collDesc.getKeyPattern()));
+                            !isLastNonHiddenRangedShardKeyIndex(
+                                opCtx, collWriter.get(), indexName, collDesc.getKeyPattern()));
                 }
 
                 auto writableEntry = indexCatalog->getWritableEntryByName(
-                    opCtx,
-                    indexName,
-                    IndexCatalog::InclusionPolicy::kReady |
-                        IndexCatalog::InclusionPolicy::kUnfinished |
-                        IndexCatalog::InclusionPolicy::kFrozen);
+                    opCtx, indexName, IndexCatalog::InclusionPolicy::kAll);
                 if (!writableEntry) {
                     // A similar index wasn't created while we yielded the locks during abort.
                     continue;
@@ -646,9 +638,14 @@ DropIndexesReply dropIndexes(OperationContext* opCtx,
     writeConflictRetry(
         opCtx, "dropIndexes", (*collection)->ns(), [opCtx, &collection, &indexNames, &reply] {
             WriteUnitOfWork wunit(opCtx);
+            AutoStatsTracker statsTracker(
+                opCtx,
+                (*collection)->ns(),
+                Top::LockType::WriteLocked,
+                AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                DatabaseProfileSettings::get(opCtx->getServiceContext())
+                    .getDatabaseProfileLevel((*collection)->ns().dbName()));
 
-            // This is necessary to check shard version.
-            OldClientContext ctx(opCtx, (*collection)->ns());
             CollectionWriter writer{opCtx, *collection};
             dropReadyIndexes(opCtx, writer.getWritableCollection(opCtx), indexNames, &reply, false);
             wunit.commit();
@@ -695,10 +692,12 @@ Status dropIndexesForApplyOps(OperationContext* opCtx,
         }
 
         WriteUnitOfWork wunit(opCtx);
-
-        // This is necessary to check shard version.
-        OldClientContext ctx(opCtx, nss);
-
+        AutoStatsTracker statsTracker(opCtx,
+                                      collAcq.nss(),
+                                      Top::LockType::WriteLocked,
+                                      AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                                      DatabaseProfileSettings::get(opCtx->getServiceContext())
+                                          .getDatabaseProfileLevel(collAcq.nss().dbName()));
         CollectionWriter writer{opCtx, &collAcq};
 
         DropIndexesReply ignoredReply;

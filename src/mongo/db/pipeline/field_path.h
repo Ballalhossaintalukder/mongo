@@ -29,18 +29,18 @@
 
 #pragma once
 
+#include "mongo/base/error_codes.h"
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bson_depth.h"
+#include "mongo/db/exec/document_value/document_internal.h"
+#include "mongo/util/assert_util.h"
+
 #include <compare>
 #include <cstddef>
 #include <limits>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bson_depth.h"
-#include "mongo/db/exec/document_value/document_internal.h"
-#include "mongo/util/assert_util.h"
 
 namespace mongo {
 
@@ -79,7 +79,7 @@ public:
     /* implicit */ FieldPath(StringData inputPath,
                              bool precomputeHashes = false,
                              bool validateFieldNames = true)
-        : FieldPath(inputPath.toString(), precomputeHashes, validateFieldNames) {}
+        : FieldPath(std::string{inputPath}, precomputeHashes, validateFieldNames) {}
     /* implicit */ FieldPath(const char* inputPath,
                              bool precomputeHashes = false,
                              bool validateFieldNames = true)

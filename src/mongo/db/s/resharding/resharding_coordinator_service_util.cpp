@@ -29,25 +29,6 @@
 
 #include "mongo/db/s/resharding/resharding_coordinator_service_util.h"
 
-#include "mongo/s/resharding/common_types_gen.h"
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <iterator>
-#include <mutex>
-#include <set>
-#include <string>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -104,6 +85,7 @@
 #include "mongo/s/request_types/flush_resharding_state_change_gen.h"
 #include "mongo/s/request_types/flush_routing_table_cache_updates_gen.h"
 #include "mongo/s/request_types/update_zone_key_range_gen.h"
+#include "mongo/s/resharding/common_types_gen.h"
 #include "mongo/s/resharding/resharding_coordinator_service_conflicting_op_in_progress_info.h"
 #include "mongo/s/resharding/resharding_feature_flag_gen.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
@@ -123,6 +105,24 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <mutex>
+#include <set>
+#include <string>
+#include <tuple>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
@@ -180,6 +180,7 @@ using resharding_metrics::getIntervalStartFieldName;
 using DocT = ReshardingCoordinatorDocument;
 const auto metricsPrefix = resharding_metrics::getMetricsPrefix<DocT>();
 
+
 void buildStateDocumentCloneMetricsForUpdate(BSONObjBuilder& bob, Date_t timestamp) {
     bob.append(getIntervalStartFieldName<DocT>(ReshardingRecipientMetrics::kDocumentCopyFieldName),
                timestamp);
@@ -190,7 +191,7 @@ void buildStateDocumentApplyMetricsForUpdate(BSONObjBuilder& bob, Date_t timesta
                timestamp);
 
     bob.append(
-        getIntervalEndFieldName<DocT>(ReshardingRecipientMetrics::kOplogApplicationFieldName),
+        getIntervalStartFieldName<DocT>(ReshardingRecipientMetrics::kOplogApplicationFieldName),
         timestamp);
 }
 
@@ -200,6 +201,7 @@ void buildStateDocumentBlockingWritesMetricsForUpdate(BSONObjBuilder& bob, Date_
         timestamp);
 }
 
+// TODO SERVER-102424: Remove once we can delete writeToCoordinatorStateNss().
 void buildStateDocumentMetricsForUpdate(BSONObjBuilder& bob,
                                         CoordinatorStateEnum newState,
                                         Date_t timestamp) {
@@ -301,7 +303,7 @@ BSONObj createReshardingFieldsUpdateForOriginalNss(
                             << newCollectionEpoch.value() << "lastmod"
                             << opCtx->getServiceContext()->getPreciseClockSource()->now()
                             << "reshardingFields.state"
-                            << CoordinatorState_serializer(coordinatorDoc.getState()).toString()
+                            << CoordinatorState_serializer(coordinatorDoc.getState())
                             << "reshardingFields.recipientFields" << recipientFields.toBSON());
             if (newCollectionTimestamp.has_value()) {
                 setFields =
@@ -331,7 +333,7 @@ BSONObj createReshardingFieldsUpdateForOriginalNss(
                 BSONObjBuilder setBuilder(updateBuilder.subobjStart("$set"));
 
                 setBuilder.append("reshardingFields.state",
-                                  CoordinatorState_serializer(nextState).toString());
+                                  std::string{CoordinatorState_serializer(nextState)});
                 setBuilder.append("lastmod",
                                   opCtx->getServiceContext()->getPreciseClockSource()->now());
 
@@ -441,7 +443,7 @@ void writeToConfigCollectionsForTempNss(OperationContext* opCtx,
                                                            SerializationContext::stateDefault())),
                     BSON("$set" << BSON(
                              "reshardingFields.state"
-                             << CoordinatorState_serializer(nextState).toString()
+                             << CoordinatorState_serializer(nextState)
                              << "reshardingFields.recipientFields.approxDocumentsToCopy"
                              << coordinatorDoc.getApproxDocumentsToCopy().value()
                              << "reshardingFields.recipientFields.approxBytesToCopy"
@@ -472,7 +474,7 @@ void writeToConfigCollectionsForTempNss(OperationContext* opCtx,
                     BSONObjBuilder setBuilder(updateBuilder.subobjStart("$set"));
 
                     setBuilder.append("reshardingFields.state",
-                                      CoordinatorState_serializer(nextState).toString());
+                                      std::string{CoordinatorState_serializer(nextState)});
                     setBuilder.append("lastmod",
                                       opCtx->getServiceContext()->getPreciseClockSource()->now());
 
@@ -551,7 +553,7 @@ void setupZonesForTempNss(OperationContext* opCtx,
     for (const auto& zone : newZones) {
         BSONObjBuilder cmdBuilder;
         ConfigsvrUpdateZoneKeyRange cmd(
-            nss, zone.getMin(), zone.getMax(), zone.getZone().toString());
+            nss, zone.getMin(), zone.getMax(), std::string{zone.getZone()});
         cmd.serialize(&cmdBuilder);
         cmdBuilder.append("writeConcern", resharding::kMajorityWriteConcern.toBSON());
 
@@ -826,7 +828,8 @@ void writeParticipantShardsAndTempCollInfo(
 void writeStateTransitionAndCatalogUpdatesThenBumpCollectionPlacementVersions(
     OperationContext* opCtx,
     ReshardingMetrics* metrics,
-    const ReshardingCoordinatorDocument& coordinatorDoc) {
+    const ReshardingCoordinatorDocument& coordinatorDoc,
+    boost::optional<PhaseTransitionFn> phaseTransitionFn) {
     // Run updates to config.reshardingOperations and config.collections in a transaction
     auto nextState = coordinatorDoc.getState();
 
@@ -841,19 +844,32 @@ void writeStateTransitionAndCatalogUpdatesThenBumpCollectionPlacementVersions(
             collNames,
             [&](OperationContext* opCtx, TxnNumber txnNumber) {
                 // Update the config.reshardingOperations entry
-                writeToCoordinatorStateNss(opCtx, metrics, coordinatorDoc, txnNumber);
+
+                // TODO SERVER-103243 - once this ticket is done we can remove if statement and
+                // directly call the phase transition function.
+                ReshardingCoordinatorDocument updatedCoordinatorDoc = coordinatorDoc;
+                if (phaseTransitionFn) {
+                    resharding::TransactionalDaoStorageClientImpl client(txnNumber);
+                    updatedCoordinatorDoc = (*phaseTransitionFn)(opCtx, &client);
+                } else {
+                    writeToCoordinatorStateNss(opCtx, metrics, coordinatorDoc, txnNumber);
+                }
 
                 // Update the config.collections entry for the original collection
                 updateConfigCollectionsForOriginalNss(
-                    opCtx, coordinatorDoc, boost::none, boost::none, txnNumber);
+                    opCtx, updatedCoordinatorDoc, boost::none, boost::none, txnNumber);
 
                 // Update the config.collections entry for the temporary resharding collection. If
                 // we've already successfully committed that the operation will succeed, we've
                 // removed the entry for the temporary collection and updated the entry with
                 // original namespace to have the new shard key, UUID, and epoch
                 if (nextState < CoordinatorStateEnum::kCommitting) {
-                    writeToConfigCollectionsForTempNss(
-                        opCtx, coordinatorDoc, boost::none, boost::none, boost::none, txnNumber);
+                    writeToConfigCollectionsForTempNss(opCtx,
+                                                       updatedCoordinatorDoc,
+                                                       boost::none,
+                                                       boost::none,
+                                                       boost::none,
+                                                       txnNumber);
                 }
             },
             ShardingCatalogClient::writeConcernLocalHavingUpstreamWaiter());

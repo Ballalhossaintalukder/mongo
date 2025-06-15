@@ -27,9 +27,22 @@
  *    it in the license file.
  */
 
+#include "mongo/executor/connection_pool.h"
+
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/executor/connection_pool_stats.h"
+#include "mongo/executor/connection_pool_test_fixture.h"
+#include "mongo/unittest/log_test.h"
+#include "mongo/unittest/thread_assertion_monitor.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/duration.h"
+#include "mongo/util/executor_test_util.h"
+#include "mongo/util/net/hostandport.h"
+#include "mongo/util/scopeguard.h"
+
 #include <algorithm>
 #include <array>
-#include <boost/smart_ptr.hpp>
 #include <memory>
 #include <random>
 #include <ratio>
@@ -40,17 +53,7 @@
 
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/executor/connection_pool.h"
-#include "mongo/executor/connection_pool_stats.h"
-#include "mongo/executor/connection_pool_test_fixture.h"
-#include "mongo/unittest/thread_assertion_monitor.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/duration.h"
-#include "mongo/util/executor_test_util.h"
-#include "mongo/util/net/hostandport.h"
-#include "mongo/util/scopeguard.h"
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 namespace executor {
@@ -160,6 +163,79 @@ private:
     std::shared_ptr<OutOfLineExecutor> _executor = InlineQueuedCountingExecutor::make();
     std::shared_ptr<ConnectionPool> _pool;
 };
+
+TEST_F(ConnectionPoolTest, CheckRejectedConnectionRequest) {
+    ConnectionPool::Options opts;
+    opts.connectionRequestsMaxQueueDepth = 1;
+    auto pool = makePool(opts);
+
+    FailPointEnableBlock fpb("connectionPoolDoesNotFulfillRequests");
+    auto conn1Fut = getFromPool(HostAndPort(), transport::kGlobalSSLMode, Seconds(1));
+    ASSERT_FALSE(conn1Fut.isReady());
+
+    auto fut = getFromPool(HostAndPort(), transport::kGlobalSSLMode, Seconds(1));
+    ASSERT_TRUE(fut.isReady());
+    ASSERT_THROWS_CODE(
+        std::move(fut).get(), DBException, ErrorCodes::PooledConnectionAcquisitionRejected);
+}
+
+/**
+ * Verify that the limit on the size of connection requests queue
+ * is enforced properly.
+ */
+TEST_F(ConnectionPoolTest, CheckRejectedConnectionRequestBasic) {
+    auto pool = makePool();
+    FailPointEnableBlock fpb("connectionPoolRejectsConnectionRequests");
+    auto fut = getFromPool(HostAndPort(), transport::kGlobalSSLMode, Seconds(1));
+    ASSERT_TRUE(fut.isReady());
+    ASSERT_THROWS_CODE(
+        std::move(fut).get(), DBException, ErrorCodes::PooledConnectionAcquisitionRejected);
+}
+
+TEST_F(ConnectionPoolTest, StatsTest) {
+    constexpr auto numConnections = 3;
+    auto hosts = std::vector<HostAndPort>(
+        {HostAndPort("host1:123"), HostAndPort("host2:456"), HostAndPort("host3:789")});
+
+    auto pool = makePool();
+    auto createAndUseConnection = [&](HostAndPort host) {
+        ConnectionImpl::pushSetup(Status::OK());
+        pool->get_forTest(
+            host, Milliseconds(5000), [&](StatusWith<ConnectionPool::ConnectionHandle> swConn) {
+                doneWith(swConn.getValue());
+            });
+        pool->setKeepOpen(host, false);
+    };
+    auto getStats = [&] {
+        ConnectionPoolStats stats;
+        pool->appendConnectionStats(&stats);
+        return stats;
+    };
+
+    for (int i = 0; i < numConnections; ++i) {
+        createAndUseConnection(hosts.at(i));
+    }
+
+    ASSERT_EQ(getStats().totalCreated, numConnections);
+
+    // After dropping connections to the first host, totalCreated stat should not change.
+    pool->dropConnections(hosts.at(0));
+    ASSERT_EQ(getStats().totalCreated, numConnections);
+
+    // After dropping connections to all hosts, totalCreated stat should not change.
+    pool->dropConnections();
+    ASSERT_EQ(getStats().totalCreated, numConnections);
+
+    // Opening a connection to an old host should update created stats accordingly.
+    createAndUseConnection(hosts.at(0));
+    auto stats = getStats();
+    ASSERT_EQ(stats.statsByHost[hosts.at(0)].created, 2);
+    ASSERT_EQ(getStats().totalCreated, numConnections + 1);
+
+    // And dropping the connection again should not change totalCreated.
+    pool->dropConnections();
+    ASSERT_EQ(getStats().totalCreated, numConnections + 1);
+}
 
 /**
  * Verify that we get the same connection if we grab one, return it and grab
@@ -2264,6 +2340,41 @@ TEST_F(ConnectionPoolTest, DismissBeforeCancelGet) {
     ConnectionImpl::pushSetup(Status::OK());
     ASSERT_TRUE(connFuture.isReady());
     doneWith(connFuture.get());
+}
+
+TEST_F(ConnectionPoolTest, EnsureReasonIsLogged) {
+    // Bumping up the log severity for this unit test to catch all logs.
+    unittest::MinimumLoggedSeverityGuard logSeverityGuardNetwork{
+        logv2::LogComponent::kConnectionPool, logv2::LogSeverity::Debug(5)};
+
+    ConnectionPool::Options options;
+    options.minConnections = 0;
+    auto pool = makePool(options);
+
+    startCapturingLogMessages();
+
+    HostAndPort hap("a");
+
+    // Successfully get connection to host.
+    ConnectionImpl::pushSetup(Status::OK());
+    pool->get_forTest(
+        hap, Milliseconds(0), [&](StatusWith<ConnectionPool::ConnectionHandle> swConn) {
+            doneWith(swConn.getValue());
+        });
+
+    std::string reason = "TEST: Ensuring reason is logged";
+
+    // Check number of connections before and after dropping connection to host.
+    ASSERT_EQ(1ul, pool->getNumConnectionsPerHost(hap));
+    pool->dropConnections(hap, Status(ErrorCodes::PooledConnectionsDropped, reason));
+    ASSERT_EQ(0ul, pool->getNumConnectionsPerHost(hap));
+
+    stopCapturingLogMessages();
+
+    // Check the BSON format for the specific log message.
+    auto msgCounter = countBSONFormatLogLinesIsSubset(
+        BSON("attr" << BSON("error" << "PooledConnectionsDropped: " + reason)));
+    ASSERT_EQ(1ul, msgCounter);
 }
 
 }  // namespace connection_pool_test_details

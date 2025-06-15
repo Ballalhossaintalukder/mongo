@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -74,6 +62,19 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 
 namespace mongo {
@@ -223,7 +224,7 @@ Status getStatusFromAbortReason(ClassWithAbortReason& c) {
     BSONElement errmsgElement = abortReasonObj["errmsg"];
     int code = codeElement.numberInt();
     std::string errmsg;
-    if (errmsgElement.type() == String) {
+    if (errmsgElement.type() == BSONType::string) {
         errmsg = errmsgElement.String();
     } else if (!errmsgElement.eoo()) {
         errmsg = errmsgElement.toString();
@@ -430,12 +431,12 @@ void verifyIndexSpecsMatch(InputIterator1 sourceIndexSpecsBegin,
         localIndexSpecsBegin,
         localIndexSpecsEnd,
         std::inserter(localIndexSpecMap, localIndexSpecMap.end()),
-        [](const auto& spec) { return std::pair(spec.getStringField("name").toString(), spec); });
+        [](const auto& spec) { return std::pair(std::string{spec.getStringField("name")}, spec); });
 
     UnorderedFieldsBSONObjComparator bsonCmp;
     for (auto it = sourceIndexSpecsBegin; it != sourceIndexSpecsEnd; ++it) {
         auto spec = *it;
-        auto specName = spec.getStringField("name").toString();
+        auto specName = std::string{spec.getStringField("name")};
         uassert(9365601,
                 str::stream() << "Resharded collection missing source collection index: "
                               << specName,
@@ -496,6 +497,14 @@ Milliseconds getMajorityReplicationLag(OperationContext* opCtx);
 // Returns the number of indexes on the given namespace or boost::none if the collection does not
 // exist.
 boost::optional<int> getIndexCount(OperationContext* opCtx, const NamespaceString& nss);
+
+
+/**
+ * Re-calculates the exponential moving average based on the previous average and the current value.
+ * Please refer to https://en.wikipedia.org/wiki/Exponential_smoothing for the formula. Throws
+ * an error if the smoothing factor is not greater than 0 and less than 1.
+ */
+double calculateExponentialMovingAverage(double prevAvg, double currVal, double smoothingFactor);
 
 }  // namespace resharding
 }  // namespace mongo

@@ -29,9 +29,6 @@
 
 #include "mongo/rpc/write_concern_error_detail.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/string_data.h"
@@ -42,6 +39,9 @@
 #include "mongo/rpc/write_concern_error_gen.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -162,7 +162,7 @@ WriteConcernErrorDetail getWriteConcernErrorDetail(const BSONElement& wcErrorEle
 
 std::unique_ptr<WriteConcernErrorDetail> getWriteConcernErrorDetailFromBSONObj(const BSONObj& obj) {
     BSONElement wcErrorElem;
-    Status status = bsonExtractTypedField(obj, "writeConcernError", Object, &wcErrorElem);
+    Status status = bsonExtractTypedField(obj, "writeConcernError", BSONType::object, &wcErrorElem);
     if (!status.isOK()) {
         if (status == ErrorCodes::NoSuchKey) {
             return nullptr;

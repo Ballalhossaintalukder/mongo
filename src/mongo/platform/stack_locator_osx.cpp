@@ -27,13 +27,11 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/platform/stack_locator.h"
+#include "mongo/util/assert_util.h"
 
 #include <pthread.h>
-
-#include "mongo/util/assert_util.h"
 
 namespace mongo {
 

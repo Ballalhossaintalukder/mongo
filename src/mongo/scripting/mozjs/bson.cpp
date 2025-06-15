@@ -26,21 +26,7 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <js/CallArgs.h>
-#include <js/Object.h>
-#include <js/PropertyDescriptor.h>
-#include <js/RootingAPI.h>
-#include <jsapi.h>
-#include <jscustomallocator.h>
-
-#include <js/Class.h>
-#include <js/PropertySpec.h>
-#include <js/TypeDecls.h>
+#include "mongo/scripting/mozjs/bson.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -49,7 +35,6 @@
 #include "mongo/bson/bsonobj_comparator_interface.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/pipeline/resume_token.h"
-#include "mongo/scripting/mozjs/bson.h"
 #include "mongo/scripting/mozjs/idwrapper.h"
 #include "mongo/scripting/mozjs/implscope.h"
 #include "mongo/scripting/mozjs/internedstring.h"
@@ -59,6 +44,23 @@
 #include "mongo/scripting/mozjs/valuewriter.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+
+#include <jsapi.h>
+#include <jscustomallocator.h>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
+#include <js/CallArgs.h>
+#include <js/Class.h>
+#include <js/Object.h>
+#include <js/PropertyDescriptor.h>
+#include <js/PropertySpec.h>
+#include <js/RootingAPI.h>
+#include <js/TypeDecls.h>
 
 namespace mongo {
 namespace mozjs {
@@ -148,7 +150,7 @@ void definePropertyFromBSONElement(JSContext* cx,
     ObjectWrapper o(cx, obj);
     o.defineProperty(id, vp, JSPROP_ENUMERATE);
 
-    if (!holder._readOnly && (elem.type() == mongo::Object || elem.type() == mongo::Array)) {
+    if (!holder._readOnly && (elem.type() == BSONType::object || elem.type() == BSONType::array)) {
         // if accessing a subobject, we have no way to know if
         // modifications are being made on writable objects
 
@@ -216,7 +218,7 @@ void BSONInfo::enumerate(JSContext* cx,
         // TODO: when we get heterogenous set lookup, switch to StringData
         // rather than involving the temporary string
         auto fieldNameStringData = e.fieldNameStringData();
-        if (holder->_removed.find(fieldNameStringData.toString()) != holder->_removed.end())
+        if (holder->_removed.find(std::string{fieldNameStringData}) != holder->_removed.end())
             continue;
 
         ValueReader(cx, &val).fromStringData(fieldNameStringData);
@@ -304,7 +306,7 @@ void BSONInfo::resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId id, boo
     auto sname = idw.toStringData(&jsstr);
     if (sname.find('\0') != std::string::npos)
         return;
-    if (!holder->_readOnly && holder->_removed.find(sname.toString()) != holder->_removed.end())
+    if (!holder->_readOnly && holder->_removed.find(std::string{sname}) != holder->_removed.end())
         return;
     if (!holder->_obj.hasField(sname))
         return;

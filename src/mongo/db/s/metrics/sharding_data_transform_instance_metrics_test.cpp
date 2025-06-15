@@ -27,23 +27,24 @@
  *    it in the license file.
  */
 
+#include "mongo/db/s/metrics/sharding_data_transform_instance_metrics.h"
+
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/s/metrics/sharding_data_transform_cumulative_metrics.h"
+#include "mongo/db/s/metrics/sharding_data_transform_metrics_test_fixture.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/clock_source_mock.h"
+#include "mongo/util/duration.h"
+
 #include <algorithm>
-#include <fmt/format.h>
 #include <functional>
 #include <utility>
 #include <vector>
 
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/s/metrics/sharding_data_transform_cumulative_metrics.h"
-#include "mongo/db/s/metrics/sharding_data_transform_instance_metrics.h"
-#include "mongo/db/s/metrics/sharding_data_transform_metrics_test_fixture.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/clock_source_mock.h"
-#include "mongo/util/duration.h"
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -216,7 +217,7 @@ TEST_F(ShardingDataTransformInstanceMetricsTest, ReportForCurrentOpShouldHaveGen
         auto instanceId = UUID::gen();
         auto metrics = createInstanceMetrics(instanceId, role);
         auto report = metrics->reportForCurrentOp();
-        ASSERT_EQ(report.getStringField("desc").toString(),
+        ASSERT_EQ(report.getStringField("desc"),
                   fmt::format("ShardingDataTransformMetrics{}Service {}",
                               ShardingDataTransformMetrics::getRoleName(role),
                               instanceId.toString()));
@@ -453,6 +454,42 @@ TEST_F(ShardingDataTransformInstanceMetricsTest,
         [](auto metrics) { metrics->onDocumentsProcessed(0, 0, Milliseconds{1}); },
         Section::kLatencies,
         "collectionCloningTotalLocalInsertTimeMillis");
+}
+
+TEST_F(ShardingDataTransformInstanceMetricsTest, TestSetStartForIdempotency) {
+    auto metrics = createInstanceMetrics(UUID::gen(), Role::kRecipient);
+    auto start = metrics->getStartFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, boost::none);
+
+    auto now = getClockSource()->now();
+
+    metrics->setStartFor(resharding_metrics::TimedPhase::kCriticalSection, now);
+    start = metrics->getStartFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, now);
+
+    auto later = now + Seconds(10);
+
+    metrics->setStartFor(resharding_metrics::TimedPhase::kCriticalSection, later);
+    start = metrics->getStartFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, now);
+}
+
+TEST_F(ShardingDataTransformInstanceMetricsTest, TestSetEndForIdempotency) {
+    auto metrics = createInstanceMetrics(UUID::gen(), Role::kRecipient);
+    auto start = metrics->getEndFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, boost::none);
+
+    auto now = getClockSource()->now();
+
+    metrics->setEndFor(resharding_metrics::TimedPhase::kCriticalSection, now);
+    start = metrics->getEndFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, now);
+
+    auto later = now + Seconds(10);
+
+    metrics->setEndFor(resharding_metrics::TimedPhase::kCriticalSection, later);
+    start = metrics->getEndFor(resharding_metrics::TimedPhase::kCriticalSection);
+    ASSERT_EQ(start, now);
 }
 
 }  // namespace

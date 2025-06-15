@@ -29,15 +29,15 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/exec/sbe/values/value.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace mongo::stats {
 /**
@@ -154,6 +154,13 @@ double objectIdToDouble(const sbe::value::ObjectIdType* sd);
  * metric will be consistent with ordering in the type.
  */
 double valueToDouble(sbe::value::TypeTags tag, sbe::value::Value val);
+
+/**
+ * Given a BSONBuilder building a document, add an additional field with a specific name and value.
+ */
+void addSbeValueToBSONBuilder(const SBEValue& sbeValue,
+                              const std::string& fieldName,
+                              BSONObjBuilder& builder);
 
 /**
  * Convert a SBEValue of any supported type into a BSONObj.
@@ -296,7 +303,7 @@ bool isEmptyInterval(sbe::value::TypeTags startTag,
  * Returns true if the interval covers a full type. This helps to determine if the interval is
  * estimable by a type count. The design of this method follows the definition of a full interval as
  * inclusive the minimum value of the current type and either:
- * a) inclusive the maximum value of the current type (if representable, e.g., [nan.0, inf.0])
+ * a) inclusive the maximum value of the current type (if representable, e.g., [nan, inf])
  * or
  * b) exclusive the minimume value of the next type (e.g., for Object, [{}, [])).
  */

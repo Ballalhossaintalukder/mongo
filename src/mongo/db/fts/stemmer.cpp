@@ -29,12 +29,12 @@
 
 #include "mongo/db/fts/stemmer.h"
 
+#include "mongo/util/assert_util.h"
+
 #include <cstdlib>
-#include <libstemmer.h>
 #include <string>
 
-
-#include "mongo/util/assert_util.h"
+#include <libstemmer.h>
 
 namespace mongo::fts {
 
@@ -47,7 +47,7 @@ public:
         if (!st)
             return word;
         auto sym =
-            sb_stemmer_stem(st, reinterpret_cast<const sb_symbol*>(word.rawData()), word.size());
+            sb_stemmer_stem(st, reinterpret_cast<const sb_symbol*>(word.data()), word.size());
         invariant(sym);
         return StringData{reinterpret_cast<const char*>(sym),
                           static_cast<size_t>(sb_stemmer_length(st))};

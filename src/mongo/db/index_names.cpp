@@ -29,14 +29,14 @@
 
 #include "mongo/db/index_names.h"
 
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/util/string_map.h"
+
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
 
 namespace mongo {
 
@@ -74,10 +74,10 @@ string IndexNames::findPluginName(const BSONObj& keyPattern) {
     while (i.more()) {
         BSONElement e = i.next();
         StringData fieldName(e.fieldNameStringData());
-        if (String == e.type()) {
+        if (e.type() == BSONType::string) {
             indexTypeStr = e.String();
         } else if (WildcardNames::isWildcardFieldName(fieldName)) {
-            if (keyPattern.firstElement().type() == String &&
+            if (keyPattern.firstElement().type() == BSONType::string &&
                 keyPattern.firstElement().fieldNameStringData() == "columnstore"_sd) {
                 return IndexNames::COLUMN;
             } else {

@@ -27,8 +27,7 @@
  *    it in the license file.
  */
 
-#include <ostream>
-#include <string>
+#include "mongo/crypto/sha512_block.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -37,14 +36,16 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/bsontypes_util.h"
-#include "mongo/crypto/sha512_block.h"
 #include "mongo/unittest/unittest.h"
+
+#include <ostream>
+#include <string>
 
 namespace mongo {
 namespace {
 
 ConstDataRange makeTestItem(StringData sd) {
-    return ConstDataRange(sd.rawData(), sd.size());
+    return ConstDataRange(sd.data(), sd.size());
 }
 
 // SHA-512 test vectors from http://csrc.nist.gov/groups/ST/toolkit/documents/Examples/SHA_All.pdf
@@ -169,7 +170,7 @@ TEST(SHA512Block, BinDataRoundTrip) {
     auto newObj = builder.done();
 
     auto hashElem = newObj["hash"];
-    ASSERT_EQ(BinData, hashElem.type());
+    ASSERT_EQ(BSONType::binData, hashElem.type());
     ASSERT_EQ(BinDataGeneral, hashElem.binDataType());
 
     int binLen = 0;

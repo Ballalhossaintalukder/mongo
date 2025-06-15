@@ -31,6 +31,7 @@
 #include "mongo/db/geo/geometry_container.h"
 
 #include <cstddef>
+
 #include <s1angle.h>
 #include <s2.h>
 #include <s2cap.h>
@@ -42,12 +43,10 @@
 #include <s2polyline.h>
 #include <s2region.h>
 #include <s2regionunion.h>
+
 #include <util/math/vector3-inl.h>
 #include <util/math/vector3.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <set>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement_comparator_interface.h"
@@ -60,6 +59,9 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/transitional_tools_do_not_use/vector_spooling.h"
+
+#include <set>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -1059,7 +1061,7 @@ Status GeometryContainer::parseFromQuery(const BSONElement& elem) {
         status = GeoParser::parseCenterSphere(obj, _cap.get());
     } else if (GeoParser::GEOMETRY == specifier) {
         // GeoJSON geometry or legacy point
-        if (Array == elem.type() || obj.firstElement().isNumber()) {
+        if (BSONType::array == elem.type() || obj.firstElement().isNumber()) {
             // legacy point
             _point.reset(new PointWithCRS());
             status = GeoParser::parseQueryPoint(elem, _point.get());
@@ -1095,20 +1097,38 @@ Status GeometryContainer::parseFromStorage(const BSONElement& elem, bool skipVal
 
     _geoElm = elem;
     Status status = Status::OK();
-    if (Array == elem.type() || elem.Obj().firstElement().isNumber()) {
+    if (BSONType::object == elem.type()) {
+        // GeoJSON
+        // { location: { type: “Point”, coordinates: [...] } }
+        status = parseFromGeoJSON(skipValidation);
+
+        // It's possible that we are dealing with a legacy point. e.g
+        // { location: {x: 1, y: 2, type: “Point” } }
+        // { location: {x: 1, y: 2} }
+        if (status == ErrorCodes::BadValue) {
+            // We must reset _point each time we attempt to re-parse, since it may retain info from
+            // previous attempts.
+            _point.reset(new PointWithCRS());
+            Status legacyParsingStatus = GeoParser::parseLegacyPoint(elem, _point.get(), true);
+            if (legacyParsingStatus.isOK()) {
+                status = legacyParsingStatus;
+            } else {
+                // Return the original error status, as we may be dealing with an invalid GeoJSON
+                // document. e.g. {type: "Point", coordinates: "hello"}
+                return status;
+            }
+        }
+    } else {
         // Legacy point
         // { location: [1, 2] }
         // { location: [1, 2, 3] }
-        // { location: {x: 1, y: 2} }
-        // { location: {x: 1, y: 2, type: "Point" } }
-        _point.reset(new PointWithCRS());
         // Allow more than two dimensions or extra fields, like [1, 2, 3]
+        // We must reset _point each time we attempt to re-parse, since it may retain info from
+        // previous attempts.
+        _point.reset(new PointWithCRS());
         status = GeoParser::parseLegacyPoint(elem, _point.get(), true);
-    } else {
-        // GeoJSON
-        // { location: { type: "Point", coordinates: [...] } }
-        status = parseFromGeoJSON(skipValidation);
     }
+
     if (!status.isOK())
         return status;
 
@@ -1388,7 +1408,7 @@ void StoredGeometry::extractGeometries(const BSONObj& doc,
         if (stored.get()) {
             // Valid geometry element
             geometries->push_back(std::move(stored));
-        } else if (el.type() == Array) {
+        } else if (el.type() == BSONType::array) {
             // Many geometries may be in an array
             BSONObjIterator arrIt(el.Obj());
             while (arrIt.more()) {

@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/auth/privilege.h"
@@ -53,13 +44,22 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * An internal stage available for testing. Gets the host and shard name for every shard server in
  * the cluster.
  */
-class DocumentSourceInternalShardServerInfo final : public DocumentSource {
+class DocumentSourceInternalShardServerInfo final : public DocumentSource, public exec::agg::Stage {
 public:
     class LiteParsed : public LiteParsedDocumentSource {
     public:
@@ -94,7 +94,7 @@ public:
     }
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -125,7 +125,7 @@ public:
 
 private:
     DocumentSourceInternalShardServerInfo(const boost::intrusive_ptr<ExpressionContext>& expCtx)
-        : DocumentSource(kStageName, expCtx) {}
+        : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {}
 
     GetNextResult doGetNext() final;
 

@@ -30,23 +30,23 @@
 
 #include "mongo/s/router_role.h"
 
-#include <memory>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/logv2/log.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/mongod_and_mongos_server_parameters_gen.h"
 #include "mongo/s/shard_version.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/transaction_participant_failed_unyield_exception.h"
 #include "mongo/s/transaction_router.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -100,9 +100,8 @@ void DBPrimaryRouter::_onException(OperationContext* opCtx, RouteContext* contex
         uassertStatusOK(s);
     }
 
-    // It is not safe for a shard to retry stale errors if it acted as a sub-router.
-    auto txnRouter = TransactionRouter::get(opCtx);
-    if (txnRouter && !txnRouter.isSafeToRetryStaleErrors(opCtx)) {
+    // It is not safe to retry stale errors if running in a transaction.
+    if (TransactionRouter::get(opCtx)) {
         uassertStatusOK(s);
     }
 
@@ -220,13 +219,18 @@ void CollectionRouterCommon::_onException(OperationContext* opCtx,
         }
 
         uassertStatusOK(s);
+    } else if (s == ErrorCodes::ShardNotFound) {
+        // Shard has been removed. Attempting to route again.
+        for (const auto& nss : _targetedNamespaces) {
+            catalogCache->onStaleCollectionVersion(nss, boost::none);
+            catalogCache->onStaleDatabaseVersion(nss.dbName(), boost::none);
+        }
     } else {
         uassertStatusOK(s);
     }
 
-    // It is not safe for a shard to retry stale errors if it acted as a sub-router.
-    auto txnRouter = TransactionRouter::get(opCtx);
-    if (txnRouter && !txnRouter.isSafeToRetryStaleErrors(opCtx)) {
+    // It is not safe to retry stale errors if running in a transaction.
+    if (auto txnRouter = TransactionRouter::get(opCtx)) {
         uassertStatusOK(s);
     }
 
@@ -252,7 +256,23 @@ CollectionRoutingInfo CollectionRouterCommon::_getRoutingInfo(OperationContext* 
     // When in a multi-document transaction, allow getting routing info from the CatalogCache even
     // though locks may be held. The CatalogCache will throw CannotRefreshDueToLocksHeld if the
     // entry is not already cached.
-    const auto allowLocks = opCtx->inMultiDocumentTransaction();
+    //
+    // Note that we only do this if we indeed hold a lock. Otherwise first executions on a mongos
+    // would cause this to unnecessarily throw a transient CannotRefreshDueToLocksHeld error.
+    const auto allowLocks =
+        opCtx->inMultiDocumentTransaction() && shard_role_details::getLocker(opCtx)->isLocked();
+
+    // Call getCollectionRoutingInfoAt if we need to read the CollectionRoutingInfo at a specific
+    // point in time. Otherwise just return the most recent one.
+    auto maybeAtClusterTime = repl::ReadConcernArgs::get(opCtx).getArgsAtClusterTime();
+    if (!maybeAtClusterTime && TransactionRouter::get(opCtx)) {
+        maybeAtClusterTime = TransactionRouter::get(opCtx).getSelectedAtClusterTime();
+    }
+
+    if (maybeAtClusterTime) {
+        return uassertStatusOK(catalogCache->getCollectionRoutingInfoAt(
+            opCtx, nss, maybeAtClusterTime->asTimestamp(), allowLocks));
+    }
     return uassertStatusOK(catalogCache->getCollectionRoutingInfo(opCtx, nss, allowLocks));
 }
 

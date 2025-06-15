@@ -28,14 +28,7 @@
  */
 
 
-#include <cstddef>
-#include <list>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/catalog/list_indexes.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -46,7 +39,6 @@
 #include "mongo/db/catalog/clustered_collection_options_gen.h"
 #include "mongo/db/catalog/clustered_collection_util.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/list_indexes.h"
 #include "mongo/db/curop_failpoint_helpers.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
@@ -58,6 +50,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 
+#include <cstddef>
+#include <list>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
 
@@ -65,20 +66,6 @@
 MONGO_FAIL_POINT_DEFINE(hangBeforeListIndexes);
 
 namespace mongo {
-
-StatusWith<std::list<BSONObj>> listIndexes(OperationContext* opCtx,
-                                           const NamespaceStringOrUUID& ns,
-                                           ListIndexesInclude additionalInclude) {
-    AutoGetCollectionForReadCommandMaybeLockFree collection(opCtx, ns);
-    auto nss = collection.getNss();
-    if (!collection) {
-        return StatusWith<std::list<BSONObj>>(
-            ErrorCodes::NamespaceNotFound,
-            str::stream() << "ns does not exist: " << collection.getNss().toStringForErrorMsg());
-    }
-    return StatusWith<std::list<BSONObj>>(
-        listIndexesInLock(opCtx, collection.getCollection(), nss, additionalInclude));
-}
 
 std::list<BSONObj> listIndexesInLock(OperationContext* opCtx,
                                      const CollectionPtr& collection,
@@ -91,7 +78,7 @@ std::list<BSONObj> listIndexesInLock(OperationContext* opCtx,
     std::list<BSONObj> indexSpecs;
     collection->getAllIndexes(&indexNames);
 
-    if (collection->isClustered() && !collection->ns().isTimeseriesBucketsCollection()) {
+    if (collection->isClustered() && !collection->isTimeseriesCollection()) {
         BSONObj collation;
         if (auto collator = collection->getDefaultCollator()) {
             collation = collator->getSpec().toBSON();
@@ -158,7 +145,7 @@ std::list<BSONObj> listIndexesInLock(OperationContext* opCtx,
                 }
                 break;
             default:
-                MONGO_UNREACHABLE;
+                MONGO_UNREACHABLE_TASSERT(10083506);
         }
     }
     return indexSpecs;
@@ -166,7 +153,12 @@ std::list<BSONObj> listIndexesInLock(OperationContext* opCtx,
 std::list<BSONObj> listIndexesEmptyListIfMissing(OperationContext* opCtx,
                                                  const NamespaceStringOrUUID& nss,
                                                  ListIndexesInclude additionalInclude) {
-    auto listStatus = listIndexes(opCtx, nss, additionalInclude);
-    return listStatus.isOK() ? std::move(listStatus.getValue()) : std::list<BSONObj>();
+    AutoGetCollectionForReadCommandMaybeLockFree collection(opCtx, nss);
+    if (!collection) {
+        return {};
+    }
+
+    return listIndexesInLock(
+        opCtx, collection.getCollection(), collection.getNss(), additionalInclude);
 }
 }  // namespace mongo

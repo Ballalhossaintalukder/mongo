@@ -29,17 +29,18 @@
 
 #pragma once
 
-#include <benchmark/benchmark.h>
-#include <boost/optional/optional.hpp>
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/query/query_fcv_environment_for_test.h"
+#include "mongo/platform/random.h"
+#include "mongo/util/time_support.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
 
-#include "mongo/bson/bsonobj.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/platform/basic.h"
-#include "mongo/platform/random.h"
-#include "mongo/util/time_support.h"
+#include <benchmark/benchmark.h>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -48,7 +49,11 @@ private:
     static constexpr int32_t kSeed = 1;
 
 public:
-    ExpressionBenchmarkFixture() : random(kSeed) {};
+    ExpressionBenchmarkFixture() : random(kSeed) {}
+
+    void SetUp(benchmark::State& state) final {
+        QueryFCVEnvironmentForTest::setUp();
+    }
 
     void benchmarkExpression(BSONObj expressionSpec, benchmark::State& benchmarkState);
 

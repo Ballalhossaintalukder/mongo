@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -64,6 +56,14 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -149,7 +149,7 @@ public:
             auto dbNames = validateCmdRequest.getDb()
                 ? std::vector<DatabaseName>{DatabaseNameUtil::deserialize(
                       validateCmdRequest.getDbName().tenantId(),
-                      validateCmdRequest.getDb()->toString(),
+                      std::string{*validateCmdRequest.getDb()},
                       validateCmdRequest.getSerializationContext())}
                 : collectionCatalog->getAllDbNames();
 
@@ -242,10 +242,7 @@ public:
 
             // Ensure there are no unstable indexes.
             const auto* indexCatalog = collection->getIndexCatalog();
-            auto ii = indexCatalog->getIndexIterator(
-                opCtx,
-                IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished |
-                    IndexCatalog::InclusionPolicy::kFrozen);
+            auto ii = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kAll);
             while (ii->more()) {
                 // Check if the index is allowed in API version 1.
                 const IndexDescriptor* desc = ii->next()->descriptor();

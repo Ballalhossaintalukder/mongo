@@ -28,9 +28,6 @@
  */
 
 
-#include <ostream>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
@@ -65,6 +62,9 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/time_support.h"
+
+#include <ostream>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -152,7 +152,7 @@ public:
         }
 
         BSONElement dataElement;
-        auto dataStatus = bsonExtractTypedField(cmdObj, "data", Object, &dataElement);
+        auto dataStatus = bsonExtractTypedField(cmdObj, "data", BSONType::object, &dataElement);
         uassertStatusOK(dataStatus);
 
         Timestamp maxClusterTime;

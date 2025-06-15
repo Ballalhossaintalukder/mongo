@@ -28,18 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <fmt/format.h>
-#include <string>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/validate/collection_validation.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -69,7 +58,6 @@
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_options.h"
 #include "mongo/db/transaction_resources.h"
-#include "mongo/db/validate/collection_validation.h"
 #include "mongo/db/validate/validate_adaptor.h"
 #include "mongo/db/validate/validate_state.h"
 #include "mongo/logv2/log.h"
@@ -81,6 +69,19 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -111,7 +112,7 @@ void _validateIndexesInternalStructure(OperationContext* opCtx,
     // Need to use the IndexCatalog here because the 'validateState->indexes' object hasn't been
     // constructed yet. It must be initialized to ensure we're validating all indexes.
     const IndexCatalog* indexCatalog = validateState->getCollection()->getIndexCatalog();
-    const auto it = indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    const auto it = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
 
     // Validate Indexes Internal Structure, checking if index files have been compromised or
     // corrupted.
@@ -128,7 +129,8 @@ void _validateIndexesInternalStructure(OperationContext* opCtx,
                                 "index"_attr = descriptor->indexName(),
                                 logAttrs(validateState->nss()));
 
-        auto indexResults = iam->validate(opCtx, *validateState);
+        auto indexResults =
+            iam->validate(opCtx, *shard_role_details::getRecoveryUnit(opCtx), *validateState);
 
         results->getIndexValidateResult(descriptor->indexName()) = std::move(indexResults);
     }
@@ -440,10 +442,7 @@ void _validateCatalogEntry(OperationContext* opCtx,
     }
 
     const auto& indexCatalog = collection->getIndexCatalog();
-    auto indexIt = indexCatalog->getIndexIterator(opCtx,
-                                                  IndexCatalog::InclusionPolicy::kReady |
-                                                      IndexCatalog::InclusionPolicy::kUnfinished |
-                                                      IndexCatalog::InclusionPolicy::kFrozen);
+    auto indexIt = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kAll);
 
     while (indexIt->more()) {
         const IndexCatalogEntry* indexEntry = indexIt->next();

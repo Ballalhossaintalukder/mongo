@@ -30,19 +30,6 @@
 
 #include "mongo/db/timeseries/timeseries_index_schema_conversion_functions.h"
 
-#include <algorithm>
-#include <boost/container/small_vector.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -64,6 +51,20 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include "src/mongo/db/index/index_descriptor.h"
+#include <boost/container/small_vector.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
 
@@ -72,8 +73,8 @@ namespace mongo::timeseries {
 namespace {
 
 bool isIndexOnControl(StringData field) {
-    return field.startsWith(timeseries::kControlMinFieldNamePrefix) ||
-        field.startsWith(timeseries::kControlMaxFieldNamePrefix);
+    return field.starts_with(timeseries::kControlMinFieldNamePrefix) ||
+        field.starts_with(timeseries::kControlMaxFieldNamePrefix);
 }
 
 /**
@@ -164,7 +165,7 @@ StatusWith<BSONObj> createBucketsSpecFromTimeseriesSpec(const TimeseriesOptions&
             }
 
             // Time-series indexes on sub-documents of the 'metaField' are allowed.
-            if (elem.fieldNameStringData().startsWith(*metaField + ".")) {
+            if (elem.fieldNameStringData().starts_with(*metaField + ".")) {
                 builder.appendAs(elem,
                                  str::stream()
                                      << timeseries::kBucketMetaFieldName << "."
@@ -271,7 +272,7 @@ boost::optional<BSONObj> createTimeseriesIndexSpecFromBucketsIndexSpec(
                 continue;
             }
 
-            if (elem.fieldNameStringData().startsWith(timeseries::kBucketMetaFieldName + ".")) {
+            if (elem.fieldNameStringData().starts_with(timeseries::kBucketMetaFieldName + ".")) {
                 builder.appendAs(elem,
                                  str::stream() << *metaField << "."
                                                << elem.fieldNameStringData().substr(
@@ -280,7 +281,7 @@ boost::optional<BSONObj> createTimeseriesIndexSpecFromBucketsIndexSpec(
             }
         }
 
-        if (elem.fieldNameStringData().startsWith(timeseries::kBucketDataFieldName + ".") &&
+        if (elem.fieldNameStringData().starts_with(timeseries::kBucketDataFieldName + ".") &&
             elem.valueStringDataSafe() == IndexNames::GEO_2DSPHERE_BUCKET) {
             builder.append(
                 elem.fieldNameStringData().substr(timeseries::kBucketDataFieldName.size() + 1),
@@ -430,7 +431,7 @@ boost::optional<BSONObj> createBucketsIndexSpecFromBucketsShardKeySpec(
             }
 
             // Time-series indexes on sub-documents of the 'metaField' are allowed.
-            if (elem.fieldNameStringData().startsWith(timeseries::kBucketMetaFieldName + ".")) {
+            if (elem.fieldNameStringData().starts_with(timeseries::kBucketMetaFieldName + ".")) {
                 builder.append(elem);
                 continue;
             }
@@ -469,26 +470,38 @@ boost::optional<BSONObj> createTimeseriesIndexFromBucketsIndexSpec(
 boost::optional<BSONObj> createTimeseriesIndexFromBucketsIndex(
     const TimeseriesOptions& timeseriesOptions, const BSONObj& bucketsIndex) {
 
-    if (bucketsIndex.hasField(kOriginalSpecFieldName)) {
-        // This buckets index has the original user index definition available, return it if the
-        // time-series metric indexes feature flag is enabled. If the feature flag isn't enabled,
-        // the reverse mapping mechanism will be used. This is necessary to skip returning any
-        // incompatible indexes created when the feature flag was enabled.
-        BSONObj intermediateObj = bucketsIndex.getObjectField(kOriginalSpecFieldName);
-        return intermediateObj.addField(bucketsIndex[IndexDescriptor::k2dsphereVersionFieldName]);
-    }
-    if (bucketsIndex.hasField(kKeyFieldName)) {
-        auto timeseriesKeyValue = createTimeseriesIndexSpecFromBucketsIndexSpec(
-            timeseriesOptions, bucketsIndex.getField(kKeyFieldName).Obj());
-        if (timeseriesKeyValue) {
-            // This creates a BSONObj copy with the kOriginalSpecFieldName field removed, if it
-            // exists, and modifies the kKeyFieldName field to timeseriesKeyValue.
-            BSONObj intermediateObj =
-                bucketsIndex.removeFields(StringDataSet{kOriginalSpecFieldName});
-            return intermediateObj.addFields(BSON(kKeyFieldName << timeseriesKeyValue.value()),
-                                             StringDataSet{kKeyFieldName});
+    if (const auto originalSpecObj =
+            bucketsIndex.getField(IndexDescriptor::kOriginalSpecFieldName)) {
+        // The raw bucket index spec contains the `originalSpec` object.
+        // This object contains some properties of the index spec already in logical format.
+
+        // Create a copy of the raw bucket index spec without the `originalSpec` field.
+        BSONObj logicalSpec =
+            bucketsIndex.removeFields(StringDataSet{IndexDescriptor::kOriginalSpecFieldName});
+
+        // Extract only specific fields from `originalSpec` and substitute these fields in the top
+        // level index spec object
+        static const StringDataSet fieldsToExtractFromOriginalSpecs = {
+            IndexDescriptor::kKeyPatternFieldName, IndexDescriptor::kPartialFilterExprFieldName};
+
+        logicalSpec = logicalSpec.addFields(originalSpecObj.embeddedObject(),
+                                            fieldsToExtractFromOriginalSpecs);
+        return logicalSpec;
+    } else if (const auto rawKeyPattern =
+                   bucketsIndex.getField(IndexDescriptor::kKeyPatternFieldName)) {
+        // The raw bucket index spec does not contains the `originalSpec` object but contains the
+        // `key` field with key pattern in raw bucket format.
+
+        // Translate the raw key pattern to logical key pattern.
+        auto logicalKeyPattern = createTimeseriesIndexSpecFromBucketsIndexSpec(
+            timeseriesOptions, rawKeyPattern.embeddedObject());
+        if (logicalKeyPattern) {
+            // Substitute the raw key pattern with logical key pattern
+            return bucketsIndex.addFields(
+                BSON(IndexDescriptor::kKeyPatternFieldName << logicalKeyPattern.value()));
         }
     }
+
     return boost::none;
 }
 
@@ -534,7 +547,7 @@ bool shouldIncludeOriginalSpec(const TimeseriesOptions& timeseriesOptions,
                 continue;
             }
 
-            if (elem.fieldNameStringData().startsWith(timeseries::kBucketMetaFieldName + ".")) {
+            if (elem.fieldNameStringData().starts_with(timeseries::kBucketMetaFieldName + ".")) {
                 continue;
             }
         }
@@ -575,7 +588,7 @@ bool doesBucketsIndexIncludeMeasurement(OperationContext* opCtx,
 
         if (metaField) {
             if (name == timeseries::kBucketMetaFieldName ||
-                name.startsWith(timeseries::kBucketMetaFieldName + ".")) {
+                name.starts_with(timeseries::kBucketMetaFieldName + ".")) {
                 return false;
             }
         }
@@ -594,7 +607,7 @@ bool doesBucketsIndexIncludeMeasurement(OperationContext* opCtx,
     if (auto filterElem = bucketsIndex[kPartialFilterExpressionFieldName]) {
         tassert(5916302,
                 str::stream() << "Partial filter expression is not an object: " << filterElem,
-                filterElem.type() == BSONType::Object);
+                filterElem.type() == BSONType::object);
 
         auto expCtx = ExpressionContextBuilder{}.opCtx(opCtx).ns(bucketNs).build();
 
@@ -639,16 +652,16 @@ boost::optional<BSONObj> getIndexSupportingReopeningQuery(OperationContext* opCt
                                                           const IndexCatalog* indexCatalog,
                                                           const TimeseriesOptions& tsOptions) {
     const std::string controlTimeField =
-        timeseries::kControlMinFieldNamePrefix.toString() + tsOptions.getTimeField();
+        std::string{timeseries::kControlMinFieldNamePrefix} + tsOptions.getTimeField();
 
     // Populate a vector of index key fields which we check against existing indexes.
     boost::container::small_vector<std::string, 2> expectedPrefix;
     if (tsOptions.getMetaField().has_value()) {
-        expectedPrefix.push_back(kBucketMetaFieldName.toString());
+        expectedPrefix.push_back(std::string{kBucketMetaFieldName});
     }
     expectedPrefix.push_back(controlTimeField);
 
-    auto indexIt = indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto indexIt = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (indexIt->more()) {
         auto indexEntry = indexIt->next();
         auto indexDesc = indexEntry->descriptor();

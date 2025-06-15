@@ -29,11 +29,8 @@
 
 #include "text_search_predicate.h"
 
+#include "mongo/crypto/fle_tags.h"
 #include "mongo/db/server_feature_flags_gen.h"
-#include "mongo/util/fail_point.h"
-
-// TODO SERVER-101128: remove failpoint once end-to-end tests can be done
-MONGO_FAIL_POINT_DEFINE(fleFailOnFindTextPayload);
 
 namespace mongo::fle {
 
@@ -51,11 +48,12 @@ REGISTER_ENCRYPTED_AGG_PREDICATE_REWRITE_WITH_FLAG(ExpressionEncStrNormalizedEq,
                                                    gFeatureFlagQETextSearchPreview);
 
 std::vector<PrfBlock> TextSearchPredicate::generateTags(BSONValue payload) const {
-    // TODO SERVER-101128: Update to generate the correct tags.
-    if (MONGO_unlikely(fleFailOnFindTextPayload.shouldFail())) {
-        uasserted(10164300, "Failing due to fleFailOnFindTextPayload failpoint");
-    }
-    return {};
+    ParsedFindTextSearchPayload tokens = parseFindPayload<ParsedFindTextSearchPayload>(payload);
+    return readTags(_rewriter->getTagQueryInterface(),
+                    _rewriter->getESCNss(),
+                    tokens.esc,
+                    tokens.edc,
+                    tokens.maxCounter);
 }
 
 std::unique_ptr<Expression> TextSearchPredicate::rewriteToTagDisjunction(Expression* expr) const {

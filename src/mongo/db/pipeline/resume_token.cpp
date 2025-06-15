@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/optional.hpp>
-#include <ostream>
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/pipeline/resume_token.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
@@ -42,17 +37,25 @@
 #include "mongo/bson/ordering.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/pipeline/change_stream_helpers.h"
-#include "mongo/db/pipeline/resume_token.h"
 #include "mongo/db/storage/key_string/key_string.h"
+#include "mongo/platform/compiler.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/bufreader.h"
 #include "mongo/util/hex.h"
-#include "mongo/util/optional_util.h"
 #include "mongo/util/str.h"
 
+#include <ostream>
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
-constexpr StringData ResumeToken::kDataFieldName;
-constexpr StringData ResumeToken::kTypeBitsFieldName;
+namespace {
+// This is our default resume token for the representative query shape.
+const auto kDefaultTokenQueryStats = ResumeToken::makeHighWaterMarkToken(Timestamp(), 1);
+}  // namespace
 
 ResumeTokenData::ResumeTokenData(Timestamp clusterTimeIn,
                                  int versionIn,
@@ -67,7 +70,7 @@ ResumeTokenData::ResumeTokenData(Timestamp clusterTimeIn,
             documentKey.missing() || opDescription.missing());
 
     // For v1 classic change events, the eventIdentifier is always the documentKey, even if missing.
-    if (change_stream::kClassicOperationTypes.count(opType) && version <= 1) {
+    if (MONGO_unlikely(version <= 1 && change_stream::kClassicOperationTypes.count(opType))) {
         eventIdentifier = documentKey;
         return;
     }
@@ -120,13 +123,13 @@ ResumeToken::ResumeToken(const Document& resumeDoc) {
             str::stream()
                 << "Bad resume token: _data of missing or of wrong type. Expected string, got "
                 << resumeDoc.toString(),
-            dataVal.getType() == BSONType::String);
+            dataVal.getType() == BSONType::string);
     _hexKeyString = dataVal.getString();
     _typeBits = resumeDoc[kTypeBitsFieldName];
     uassert(40648,
             str::stream() << "Bad resume token: _typeBits of wrong type " << resumeDoc.toString(),
             _typeBits.missing() ||
-                (_typeBits.getType() == BSONType::BinData &&
+                (_typeBits.getType() == BSONType::binData &&
                  _typeBits.getBinData().type == BinDataGeneral));
 }
 
@@ -225,7 +228,7 @@ ResumeTokenData ResumeToken::getData() const {
     auto versionElt = i.next();
     uassert(50854,
             "Invalid resume token: wrong type for version",
-            versionElt.type() == BSONType::NumberInt);
+            versionElt.type() == BSONType::numberInt);
     result.version = versionElt.numberInt();
     uassert(50795,
             "Invalid Resume Token: only supports version 0, 1 and 2",
@@ -237,7 +240,7 @@ ResumeTokenData ResumeToken::getData() const {
         auto tokenType = i.next();
         uassert(51056,
                 "Resume Token tokenType is not an int.",
-                tokenType.type() == BSONType::NumberInt);
+                tokenType.type() == BSONType::numberInt);
         auto typeInt = tokenType.numberInt();
         uassert(51057,
                 str::stream() << "Token type " << typeInt << " not recognized",
@@ -251,7 +254,7 @@ ResumeTokenData ResumeToken::getData() const {
     auto txnOpIndexElt = i.next();
     uassert(50855,
             "Resume Token txnOpIndex is not an integer",
-            txnOpIndexElt.type() == BSONType::NumberInt);
+            txnOpIndexElt.type() == BSONType::numberInt);
     const int txnOpIndexInd = txnOpIndexElt.numberInt();
     uassert(50794, "Invalid Resume Token: txnOpIndex should be non-negative", txnOpIndexInd >= 0);
     result.txnOpIndex = txnOpIndexInd;
@@ -263,7 +266,7 @@ ResumeTokenData ResumeToken::getData() const {
         auto fromInvalidate = i.next();
         uassert(50870,
                 "Resume Token fromInvalidate is not a boolean.",
-                fromInvalidate.type() == BSONType::Bool);
+                fromInvalidate.type() == BSONType::boolean);
         result.fromInvalidate = ResumeTokenData::FromInvalidate(fromInvalidate.boolean());
     }
 
@@ -274,7 +277,7 @@ ResumeTokenData ResumeToken::getData() const {
     }
 
     // The UUID comes first, then eventIdentifier. From v2 onwards, UUID may be explicitly null.
-    if (auto uuidElem = i.next(); uuidElem.type() != BSONType::jstNULL) {
+    if (auto uuidElem = i.next(); uuidElem.type() != BSONType::null) {
         result.uuid = uassertStatusOK(UUID::parse(uuidElem));
     }
 
@@ -295,13 +298,13 @@ ResumeTokenData ResumeToken::getData() const {
     result.eventIdentifier = Value(i.next());
     uassert(6189503,
             "Resume Token eventIdentifier is not an object",
-            result.eventIdentifier.getType() == BSONType::Object);
+            result.eventIdentifier.getType() == BSONType::object);
 
     if (i.more() && result.version >= 2) {
         auto fragmentNum = i.next();
         uassert(7182501,
                 "Resume token 'fragmentNum' must be a non-negative integer.",
-                fragmentNum.type() == BSONType::NumberInt && fragmentNum.numberInt() >= 0);
+                fragmentNum.type() == BSONType::numberInt && fragmentNum.numberInt() >= 0);
         result.fragmentNum = fragmentNum.numberInt();
     }
 
@@ -310,9 +313,6 @@ ResumeTokenData ResumeToken::getData() const {
 }
 
 Document ResumeToken::toDocument(const SerializationOptions& options) const {
-    // This is our default resume token for the representative query shape.
-    static const auto kDefaultTokenQueryStats = makeHighWaterMarkToken(Timestamp(), 1);
-
     return Document{
         {kDataFieldName,
          options.serializeLiteral(_hexKeyString, Value(kDefaultTokenQueryStats._hexKeyString))},

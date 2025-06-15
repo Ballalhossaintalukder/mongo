@@ -28,11 +28,6 @@
  */
 #pragma once
 
-#include <cstddef>
-#include <functional>
-#include <memory>
-#include <mutex>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -54,6 +49,13 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/future.h"
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <mutex>
+
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -173,6 +175,10 @@ public:
         return future.get(&interruptible);
     }
 
+    void setConnectionPoolOptions(const ConnectionPool::Options& opts) {
+        _opts = opts;
+    }
+
 protected:
     virtual std::unique_ptr<NetworkInterface> _makeNet(std::string instanceName,
                                                        transport::TransportProtocol protocol);
@@ -188,6 +194,8 @@ private:
     size_t _workInProgress = 0;
     stdx::condition_variable _fixtureIsIdle;
     mutable stdx::mutex _mutex;
+
+    boost::optional<ConnectionPool::Options> _opts;
 };
 
 }  // namespace executor

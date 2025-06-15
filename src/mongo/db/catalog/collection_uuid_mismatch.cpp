@@ -29,16 +29,15 @@
 
 #include "mongo/db/catalog/collection_uuid_mismatch.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/type_traits/decay.hpp>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_uuid_mismatch_info.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/type_traits/decay.hpp>
 
 namespace mongo {
 
@@ -77,9 +76,9 @@ void checkCollectionUUIDMismatch(OperationContext* opCtx,
     uassert(
         (CollectionUUIDMismatchInfo{ns.dbName(),
                                     *uuid,
-                                    ns.coll().toString(),
+                                    std::string{ns.coll()},
                                     actualNamespace && actualNamespace->isEqualDb(ns)
-                                        ? boost::make_optional(actualNamespace->coll().toString())
+                                        ? boost::make_optional(std::string{actualNamespace->coll()})
                                         : boost::none}),
         "Collection UUID does not match that specified",
         coll && coll->uuid() == *uuid);

@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <cstring>
-#include <memory>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/fle/implicit_validator.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -50,13 +44,20 @@
 #include "mongo/db/matcher/expression_type.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/query/fle/implicit_validator.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -67,7 +68,7 @@ FleBlobHeader makeFleHeader(const EncryptedField& field, EncryptedBinDataType su
     blob.fleBlobSubtype = static_cast<uint8_t>(subtype);
     memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
     ASSERT(field.getBsonType().has_value());
-    blob.originalBsonType = typeFromName(field.getBsonType().value());
+    blob.originalBsonType = stdx::to_underlying(typeFromName(field.getBsonType().value()));
     return blob;
 }
 
@@ -80,18 +81,18 @@ const UUID kTestKeyId = UUID::parse("deadbeef-0000-0000-0000-0000deadbeef").getV
 
 
 void replace_str(std::string& str, StringData search, StringData replace) {
-    auto pos = str.find(search.rawData(), 0, search.size());
+    auto pos = str.find(search.data(), 0, search.size());
     if (pos == std::string::npos)
         return;
-    str.replace(pos, search.size(), replace.rawData(), replace.size());
+    str.replace(pos, search.size(), replace.data(), replace.size());
 }
 
 void replace_all(std::string& str, StringData search, StringData replace) {
-    auto pos = str.find(search.rawData(), 0, search.size());
+    auto pos = str.find(search.data(), 0, search.size());
     while (pos != std::string::npos) {
-        str.replace(pos, search.size(), replace.rawData(), replace.size());
+        str.replace(pos, search.size(), replace.data(), replace.size());
         pos += replace.size();
-        pos = str.find(search.rawData(), pos, search.size());
+        pos = str.find(search.data(), pos, search.size());
     }
 }
 

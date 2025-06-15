@@ -27,17 +27,12 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
-
-#include "mongo/config.h"
 
 #include "mongo/util/net/ssl_options.h"
 
-#include <boost/range/size.hpp>
-#include <ostream>
-
 #include "mongo/base/init.h"
 #include "mongo/base/initializer.h"
+#include "mongo/config.h"
 #include "mongo/db/server_options_base.h"
 #include "mongo/db/server_options_server_helpers.h"
 #include "mongo/unittest/unittest.h"
@@ -47,6 +42,10 @@
 #include "mongo/util/options_parser/option_section.h"
 #include "mongo/util/options_parser/options_parser.h"
 #include "mongo/util/options_parser/startup_options.h"
+
+#include <ostream>
+
+#include <boost/range/size.hpp>
 
 namespace moe = mongo::optionenvironment;
 

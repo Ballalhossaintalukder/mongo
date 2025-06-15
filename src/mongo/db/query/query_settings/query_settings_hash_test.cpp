@@ -27,14 +27,15 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
+#include "mongo/db/query/query_settings/query_settings_hash.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/basic_types.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/query/query_settings/query_settings_gen.h"
-#include "mongo/db/query/query_settings/query_settings_hash.h"
 #include "mongo/unittest/unittest.h"
+
+#include <fmt/format.h>
 
 namespace mongo::query_settings {
 
@@ -83,7 +84,7 @@ TEST(QuerySettingsHashTest, QuerySettingsHashStability) {
     settings.setReject(true);
     auto observedHash = mongo::query_settings::hash(settings);
 
-    static const size_t expectedHash = 0xf9c438f33d810af8;
+    static const size_t expectedHash = 0xd14b8e06bcb187b;
 
     ASSERT_EQ(observedHash, expectedHash)
         << fmt::format("{:#016x} != {:#016x}", observedHash, expectedHash);

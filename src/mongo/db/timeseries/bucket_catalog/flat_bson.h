@@ -29,8 +29,12 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/optional/optional.hpp>
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonelement.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/util/tracking/string_map.h"
+#include "mongo/util/tracking/vector.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -39,11 +43,8 @@
 #include <tuple>
 #include <utility>
 
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/util/tracking/string_map.h"
-#include "mongo/util/tracking/vector.h"
+#include <absl/container/node_hash_map.h>
+#include <boost/optional/optional.hpp>
 
 
 namespace mongo::timeseries::bucket_catalog {
@@ -525,7 +526,7 @@ struct BSONTypeValue {
     int64_t size() const;
 
 private:
-    BSONType _type = BSONType::EOO;
+    BSONType _type = BSONType::eoo;
 };
 
 class SchemaElement;

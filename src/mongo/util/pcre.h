@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include "mongo/base/string_data.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -37,8 +39,6 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
-
-#include "mongo/base/string_data.h"
 
 namespace mongo::pcre {
 
@@ -539,9 +539,9 @@ public:
      * the full matched substring, followed by captures.
      *
      * An empty and null capture are slightly different and can be
-     * distinguished by their rawData pointer. The difference doesn't
+     * distinguished by their data pointer. The difference doesn't
      * often matter though. E.g.,
-     *    Regex{"(A|B(C))"}.match("A")[2].rawData() == nullptr
+     *    Regex{"(A|B(C))"}.match("A")[2].data() == nullptr
      * because capture group 2 (the `C`) was on the inactive `B` branch.
      * Throws `ExceptionFor<NoSuchKey>` if capture not found.
      * Requires `i <= captureCount()`.

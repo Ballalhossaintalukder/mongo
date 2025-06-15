@@ -29,17 +29,6 @@
 
 #include <absl/container/flat_hash_map.h>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <algorithm>
-#include <cstddef>
-#include <iterator>
-#include <list>
-#include <memory>
-#include <type_traits>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -51,29 +40,26 @@
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/matcher/extensions_callback_noop.h"
 #include "mongo/db/matcher/match_expression_dependencies.h"
-#include "mongo/db/pipeline/document_path_support.h"
 #include "mongo/db/pipeline/document_source_match.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/pipeline/semantic_analysis.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/ctype.h"
+#include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <list>
+#include <memory>
+#include <type_traits>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
-namespace {
-
-bool containsTextOperator(const MatchExpression& expr) {
-    if (expr.matchType() == MatchExpression::MatchType::TEXT)
-        return true;
-    for (auto child : expr) {
-        if (containsTextOperator(*child))
-            return true;
-    }
-    return false;
-}
-
-}  // namespace
 using boost::intrusive_ptr;
 using std::pair;
 using std::string;
@@ -86,16 +72,26 @@ REGISTER_DOCUMENT_SOURCE(match,
                          AllowedWithApiStrict::kAlways);
 ALLOCATE_DOCUMENT_SOURCE_ID(match, DocumentSourceMatch::id)
 
+bool DocumentSourceMatch::containsTextOperator(const MatchExpression& expr) {
+    if (expr.matchType() == MatchExpression::MatchType::TEXT)
+        return true;
+    for (auto child : expr) {
+        if (containsTextOperator(*child))
+            return true;
+    }
+    return false;
+}
+
 DocumentSourceMatch::DocumentSourceMatch(std::unique_ptr<MatchExpression> expr,
                                          const boost::intrusive_ptr<ExpressionContext>& expCtx)
-    : DocumentSource(kStageName, expCtx) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {
     auto bsonObj = expr->serialize();
     rebuild(std::move(bsonObj), std::move(expr));
 }
 
 DocumentSourceMatch::DocumentSourceMatch(const BSONObj& query,
                                          const intrusive_ptr<ExpressionContext>& expCtx)
-    : DocumentSource(kStageName, expCtx) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {
     rebuild(query);
 }
 
@@ -117,11 +113,11 @@ void DocumentSourceMatch::rebuild(BSONObj predicate, std::unique_ptr<MatchExpres
     DepsTracker dependencies =
         DepsTracker(_isTextQuery ? DepsTracker::kOnlyTextScore : DepsTracker::kNoMetadata);
     getDependencies(expr.get(), &dependencies);
-    _matchProcessor.emplace(MatchProcessor(std::move(expr), std::move(dependencies)));
+    _matchProcessor.emplace(std::move(expr), std::move(dependencies));
 }
 
 const char* DocumentSourceMatch::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 Value DocumentSourceMatch::serialize(const SerializationOptions& opts) const {
@@ -199,32 +195,27 @@ namespace {
 // the Match expression has been successfully parsed so they can assume that
 // input is well formed.
 
-bool isAllDigits(StringData str) {
-    return !str.empty() &&
-        std::all_of(str.begin(), str.end(), [](char c) { return ctype::isDigit(c); });
-}
-
 bool isFieldnameRedactSafe(StringData fieldName) {
     // Can't have numeric elements in the dotted path since redacting elements from an array
     // would change the indexes.
 
     const size_t dotPos = fieldName.find('.');
     if (dotPos == string::npos)
-        return !isAllDigits(fieldName);
+        return fieldName.empty() || !str::isAllDigits(fieldName);
 
     const StringData part = fieldName.substr(0, dotPos);
     const StringData rest = fieldName.substr(dotPos + 1);
-    return !isAllDigits(part) && isFieldnameRedactSafe(rest);
+    return (part.empty() || !str::isAllDigits(part)) && isFieldnameRedactSafe(rest);
 }
 
 bool isTypeRedactSafeInComparison(BSONType type) {
-    if (type == Array)
+    if (type == BSONType::array)
         return false;
-    if (type == Object)
+    if (type == BSONType::object)
         return false;
-    if (type == jstNULL)
+    if (type == BSONType::null)
         return false;
-    if (type == Undefined)
+    if (type == BSONType::undefined)
         return false;  // Currently a parse error.
 
     return true;
@@ -355,7 +346,7 @@ Document redactSafePortionTopLevel(BSONObj query) {
     MutableDocument output;
     for (BSONElement field : query) {
         StringData fieldName = field.fieldNameStringData();
-        if (fieldName.startsWith("$")) {
+        if (fieldName.starts_with("$")) {
             if (fieldName == "$or") {
                 // $or must be all-or-nothing (line $in). Can't include subset of elements.
                 vector<Value> okClauses;
@@ -389,14 +380,14 @@ Document redactSafePortionTopLevel(BSONObj query) {
             continue;
 
         switch (field.type()) {
-            case Array:
+            case BSONType::array:
                 continue;  // exact matches on arrays are never allowed
-            case jstNULL:
+            case BSONType::null:
                 continue;  // can't look for missing fields
-            case Undefined:
+            case BSONType::undefined:
                 continue;  // Currently a parse error.
 
-            case Object: {
+            case BSONType::object: {
                 Document sub = redactSafePortionDollarOps(field.Obj());
                 if (!sub.empty())
                     output[field.fieldNameStringData()] = Value(sub);
@@ -594,7 +585,9 @@ intrusive_ptr<DocumentSourceMatch> DocumentSourceMatch::create(
 
 intrusive_ptr<DocumentSource> DocumentSourceMatch::createFromBson(
     BSONElement elem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
-    uassert(15959, "the match filter must be an expression in an object", elem.type() == Object);
+    uassert(15959,
+            "the match filter must be an expression in an object",
+            elem.type() == BSONType::object);
 
     return DocumentSourceMatch::create(elem.Obj(), pExpCtx);
 }

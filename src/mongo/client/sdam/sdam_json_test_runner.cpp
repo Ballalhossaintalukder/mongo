@@ -27,24 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <fstream>  // IWYU pragma: keep
-#include <iostream>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/filesystem/directory.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/path_traits.hpp>
-#include <boost/iterator/iterator_facade.hpp>
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -70,6 +52,22 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/optional_util.h"
+
+#include <algorithm>
+#include <fstream>  // IWYU pragma: keep
+#include <iostream>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/filesystem.hpp>
+#include <boost/iterator/iterator_facade.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -231,7 +229,7 @@ private:
                 fieldName,
                 [&]() {
                     boost::optional<std::string> result;
-                    if (expectedField.type() != BSONType::jstNULL) {
+                    if (expectedField.type() != BSONType::null) {
                         result = expectedField.String();
                     }
                     return result;
@@ -245,7 +243,7 @@ private:
                 fieldName,
                 [&]() {
                     boost::optional<int> result;
-                    if (expectedField.type() != BSONType::jstNULL) {
+                    if (expectedField.type() != BSONType::null) {
                         result = expectedField.numberInt();
                     }
                     return result;
@@ -259,7 +257,7 @@ private:
                 fieldName,
                 [&]() {
                     boost::optional<OID> result;
-                    if (expectedField.type() != BSONType::jstNULL) {
+                    if (expectedField.type() != BSONType::null) {
                         result = expectedField.OID();
                     }
                     return result;
@@ -273,7 +271,7 @@ private:
                 fieldName,
                 [&]() {
                     boost::optional<int> result;
-                    if (expectedField.type() != BSONType::jstNULL) {
+                    if (expectedField.type() != BSONType::null) {
                         result = expectedField.numberInt();
                     }
                     return result;
@@ -517,7 +515,7 @@ private:
             _jsonTest = fromjson(json.str());
         }
 
-        _testName = _jsonTest.getStringField("description").toString();
+        _testName = std::string{_jsonTest.getStringField("description")};
         _testUri = uassertStatusOK(mongo::MongoURI::parse(_jsonTest["uri"].String()));
 
         _replicaSetName = _testUri.getOption("replicaSet");

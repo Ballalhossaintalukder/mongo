@@ -27,11 +27,10 @@
  *    it in the license file.
  */
 
-#include "mongo/unittest/unittest.h"
-
 #include "mongo/db/exec/sbe/expression_test_base.h"
 #include "mongo/db/exec/sbe/sbe_unittest.h"
 #include "mongo/db/exec/sbe/values/slot.h"
+#include "mongo/unittest/unittest.h"
 
 namespace mongo::sbe {
 
@@ -71,7 +70,7 @@ TEST_F(SBEFillTypeTest, FillType) {
     {
         // Test valid type mask.
         auto [typeMaskTag, typeMaskVal] =
-            makeInt32(getBSONTypeMask(BSONType::jstNULL) | getBSONTypeMask(BSONType::Undefined));
+            makeInt32(getBSONTypeMask(BSONType::null) | getBSONTypeMask(BSONType::undefined));
         typeMaskAccessor.reset(typeMaskTag, typeMaskVal);
 
         {

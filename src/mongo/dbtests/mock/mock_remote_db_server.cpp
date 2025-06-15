@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
+#include "mongo/dbtests/mock/mock_remote_db_server.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -44,7 +39,6 @@
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/query/projection_parser.h"
 #include "mongo/db/query/projection_policies.h"
-#include "mongo/dbtests/mock/mock_remote_db_server.h"
 #include "mongo/rpc/op_msg_rpc_impls.h"
 #include "mongo/rpc/reply_builder_interface.h"
 #include "mongo/rpc/reply_interface.h"
@@ -53,6 +47,13 @@
 #include "mongo/util/net/socket_exception.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <memory>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 using std::string;
 using std::vector;
@@ -152,12 +153,12 @@ void MockRemoteDBServer::remove(const NamespaceString& nss, const BSONObj&) {
 
 void MockRemoteDBServer::assignCollectionUuid(StringData ns, const mongo::UUID& uuid) {
     scoped_spinlock sLock(_lock);
-    _uuidToNs[uuid] = ns.toString();
+    _uuidToNs[uuid] = std::string{ns};
 }
 
 rpc::UniqueReply MockRemoteDBServer::runCommand(InstanceID id, const OpMsgRequest& request) {
     checkIfUp(id);
-    std::string cmdName = request.getCommandName().toString();
+    std::string cmdName = std::string{request.getCommandName()};
 
     StatusWith<BSONObj> reply([this, &cmdName] {
         scoped_spinlock lk(_lock);

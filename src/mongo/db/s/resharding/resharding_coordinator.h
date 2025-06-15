@@ -29,15 +29,17 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/db/cancelable_operation_context.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/repl/primary_only_service.h"
 #include "mongo/db/s/resharding/coordinator_document_gen.h"
+#include "mongo/db/s/resharding/resharding_coordinator_dao.h"
+#include "mongo/db/s/resharding/resharding_coordinator_service_util.h"
 #include "mongo/executor/async_rpc.h"
 #include "mongo/s/request_types/reshard_collection_gen.h"
 #include "mongo/stdx/mutex.h"
+
+#include <vector>
 
 namespace mongo {
 
@@ -419,6 +421,9 @@ private:
         boost::optional<ReshardingApproxCopySize> approxCopySize = boost::none,
         boost::optional<Status> abortReason = boost::none);
 
+    void _updateCoordinatorDocStateAndCatalogEntries(
+        resharding::PhaseTransitionFn phaseTransitionFn);
+
     /**
      * Updates the entry for this resharding operation in config.reshardingOperations to the
      * quiesced state, or removes it if quiesce isn't being done.  Removes the resharding fields
@@ -539,6 +544,7 @@ private:
 
     // The updated coordinator state document.
     ReshardingCoordinatorDocument _coordinatorDoc;
+    resharding::ReshardingCoordinatorDao _coordinatorDao;
 
     // Holds the cancellation tokens relevant to the ReshardingCoordinator.
     std::unique_ptr<CoordinatorCancellationTokenHolder> _ctHolder;

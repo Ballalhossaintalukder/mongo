@@ -30,14 +30,6 @@
 
 #include "mongo/db/s/sharding_ddl_coordinator_service.h"
 
-#include <mutex>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -53,6 +45,7 @@
 #include "mongo/db/s/clone_authoritative_metadata_coordinator.h"
 #include "mongo/db/s/collmod_coordinator.h"
 #include "mongo/db/s/compact_structured_encryption_data_coordinator.h"
+#include "mongo/db/s/complete_promotion_to_sharded_cluster_coordinator.h"
 #include "mongo/db/s/convert_to_capped_coordinator.h"
 #include "mongo/db/s/create_collection_coordinator.h"
 #include "mongo/db/s/create_database_coordinator.h"
@@ -78,6 +71,14 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
 #include "mongo/util/str.h"
+
+#include <mutex>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -136,6 +137,9 @@ std::shared_ptr<ShardingDDLCoordinator> constructShardingDDLCoordinatorInstance(
         case DDLCoordinatorTypeEnum::kCloneAuthoritativeMetadata:
             return std::make_shared<CloneAuthoritativeMetadataCoordinator>(service,
                                                                            std::move(initialState));
+        case DDLCoordinatorTypeEnum::kCompletePromotionToShardedCluster:
+            return std::make_shared<CompletePromotionToShardedClusterCoordinator>(
+                service, std::move(initialState));
         default:
             uasserted(ErrorCodes::BadValue,
                       str::stream()
@@ -390,7 +394,7 @@ ShardingDDLCoordinatorService::getOrCreateInstance(OperationContext* opCtx,
                 "Request sent without attaching database version",
                 clientDbVersion);
         {
-            const auto scopedDss = DatabaseShardingState::acquireShared(opCtx, nss.dbName());
+            const auto scopedDss = DatabaseShardingState::acquire(opCtx, nss.dbName());
             scopedDss->assertIsPrimaryShardForDb(opCtx);
         }
         coorMetadata.setDatabaseVersion(clientDbVersion);

@@ -27,15 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -61,6 +52,15 @@
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -191,8 +191,9 @@ BSONObj makeExplainedObj(const BSONObj& outerObj,
                          const DatabaseName& dbName,
                          const SerializationContext& serializationContext) {
     const auto& first = outerObj.firstElement();
-    uassert(
-        ErrorCodes::BadValue, "explain command requires a nested object", first.type() == Object);
+    uassert(ErrorCodes::BadValue,
+            "explain command requires a nested object",
+            first.type() == BSONType::object);
     const BSONObj& innerObj = first.Obj();
 
     if (auto innerDb = innerObj["$db"]) {

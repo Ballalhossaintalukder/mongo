@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstring>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/op_msg_fuzzer_fixture.h"
 
 #include "mongo/base/initializer.h"
 #include "mongo/base/status.h"
@@ -49,7 +44,6 @@
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
-#include "mongo/db/op_msg_fuzzer_fixture.h"
 #include "mongo/db/op_observer/op_observer.h"
 #include "mongo/db/op_observer/op_observer_registry.h"
 #include "mongo/db/repl/repl_settings.h"
@@ -57,6 +51,8 @@
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/collection_sharding_state_factory_shard.h"
+#include "mongo/db/s/database_sharding_state_factory_shard.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_entry_point_shard_role.h"
 #include "mongo/db/session_manager_mongod.h"
@@ -66,13 +62,19 @@
 #include "mongo/db/vector_clock_mutable.h"
 #include "mongo/rpc/message.h"
 #include "mongo/s/service_entry_point_router_role.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/future.h"
 #include "mongo/util/periodic_runner_factory.h"
 #include "mongo/util/shared_buffer.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstring>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -91,7 +93,7 @@ void OpMsgFuzzerFixture::_setAuthorizationManager() {
 }
 
 OpMsgFuzzerFixture::OpMsgFuzzerFixture(bool skipGlobalInitializers)
-    : _dir(kTempDirStem.toString()) {
+    : _dir(std::string{kTempDirStem}) {
     if (!skipGlobalInitializers) {
         auto ret = runGlobalInitializers(std::vector<std::string>{});
         invariant(ret);
@@ -137,6 +139,8 @@ OpMsgFuzzerFixture::OpMsgFuzzerFixture(bool skipGlobalInitializers)
     ShardingState::create(_serviceContext);
     CollectionShardingStateFactory::set(
         _serviceContext, std::make_unique<CollectionShardingStateFactoryShard>(_serviceContext));
+    DatabaseShardingStateFactory::set(_serviceContext,
+                                      std::make_unique<DatabaseShardingStateFactoryShard>());
     DatabaseHolder::set(_serviceContext, std::make_unique<DatabaseHolderImpl>());
     Collection::Factory::set(_serviceContext, std::make_unique<CollectionImpl::FactoryImpl>());
 
@@ -150,6 +154,7 @@ OpMsgFuzzerFixture::OpMsgFuzzerFixture(bool skipGlobalInitializers)
 
 OpMsgFuzzerFixture::~OpMsgFuzzerFixture() {
     CollectionShardingStateFactory::clear(_serviceContext);
+    DatabaseShardingStateFactory::clear(_serviceContext);
 
     {
         auto clientGuard = _shardStrand->bind();
@@ -159,7 +164,8 @@ OpMsgFuzzerFixture::~OpMsgFuzzerFixture() {
         databaseHolder->closeAll(opCtx.get());
     }
 
-    catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(_serviceContext);
+    catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(_serviceContext,
+                                                                    true /* memLeakAllowed */);
 }
 
 ClientStrand* OpMsgFuzzerFixture::_getStrand(ClusterRole role) {

@@ -35,19 +35,6 @@
 #include <boost/smart_ptr.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstdint>
-#include <iomanip>
-#include <istream>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -108,6 +95,7 @@
 #include "mongo/db/s/sharding_config_server_parameters_gen.h"
 #include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/sharding_logging.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_util.h"
 #include "mongo/db/s/topology_change_helpers.h"
 #include "mongo/db/s/user_writes_critical_section_document_gen.h"
@@ -147,7 +135,6 @@
 #include "mongo/s/request_types/shardsvr_join_migrations_request_gen.h"
 #include "mongo/s/sharding_cluster_parameters_gen.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
@@ -165,6 +152,19 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <iomanip>
+#include <istream>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -197,13 +197,14 @@ AggregateCommandRequest makeUnshardedCollectionsOnSpecificShardAggregation(Opera
     static const BSONObj listStage = fromjson(R"({
        $listClusterCatalog: { "shards": true }
      })");
+    const BSONObj shardsCondition = BSON("shards" << shardId);
     const BSONObj matchStage = fromjson(str::stream() << R"({
        $match: {
            $and: [
                { sharded: false },
                { db: {$ne: 'config'} },
                { db: {$ne: 'admin'} },
-               { shards: ")" << shardId << R"("},
+               )" << shardsCondition.jsonString() << R"(,
                { type: {$nin: ["timeseries","view"]} },
                { ns: {$not: {$regex: "^enxcol_\..*(\.esc|\.ecc|\.ecoc|\.ecoc\.compact)$"} }},
                { $or: [
@@ -334,101 +335,6 @@ StatusWith<std::vector<DatabaseName>> ShardingCatalogManager::_getDBNamesListFro
     } catch (DBException& ex) {
         return ex.toStatus();
     }
-}
-
-StatusWith<std::vector<CollectionType>> ShardingCatalogManager::_getCollListFromShard(
-    OperationContext* opCtx,
-    const std::vector<DatabaseName>& dbNames,
-    std::shared_ptr<RemoteCommandTargeter> targeter) {
-    std::vector<CollectionType> nssList;
-
-    for (auto& dbName : dbNames) {
-        Status fetchStatus =
-            Status(ErrorCodes::InternalError, "Internal error running cursor callback in command");
-        auto host = uassertStatusOK(
-            targeter->findHost(opCtx, ReadPreferenceSetting{ReadPreference::PrimaryOnly}));
-        const Milliseconds maxTimeMS =
-            std::min(opCtx->getRemainingMaxTimeMillis(), Milliseconds(kRemoteCommandTimeout));
-
-        auto fetcherCallback = [&](const Fetcher::QueryResponseStatus& dataStatus,
-                                   Fetcher::NextAction* nextAction,
-                                   BSONObjBuilder* getMoreBob) {
-            // Throw out any accumulated results on error.
-            if (!dataStatus.isOK()) {
-                fetchStatus = dataStatus.getStatus();
-                return;
-            }
-            const auto& data = dataStatus.getValue();
-
-            try {
-                for (const BSONObj& doc : data.documents) {
-                    auto collInfo = ListCollectionsReplyItem::parse(
-                        IDLParserContext("ListCollectionReply"), doc);
-                    // Skip views and special collections.
-                    if (!collInfo.getInfo() || !collInfo.getInfo()->getUuid()) {
-                        continue;
-                    }
-
-                    const auto nss = NamespaceStringUtil::deserialize(dbName, collInfo.getName());
-
-                    if (nss.isNamespaceAlwaysUntracked()) {
-                        continue;
-                    }
-
-                    auto coll = CollectionType(nss,
-                                               OID::gen(),
-                                               Timestamp(Date_t::now()),
-                                               Date_t::now(),
-                                               collInfo.getInfo()->getUuid().get(),
-                                               sharding_ddl_util::unsplittableCollectionShardKey());
-                    coll.setUnsplittable(true);
-                    if (!doc["options"].eoo() && !doc["options"]["timeseries"].eoo()) {
-                        coll.setTimeseriesFields(TypeCollectionTimeseriesFields::parse(
-                            IDLParserContext("AddShardContext"),
-                            doc["options"]["timeseries"].Obj()));
-                    }
-                    nssList.push_back(coll);
-                }
-                *nextAction = Fetcher::NextAction::kNoAction;
-            } catch (DBException& ex) {
-                fetchStatus = ex.toStatus();
-                return;
-            }
-            fetchStatus = Status::OK();
-
-            if (!getMoreBob) {
-                return;
-            }
-            getMoreBob->append("getMore", data.cursorId);
-            getMoreBob->append("collection", data.nss.coll());
-        };
-        ListCollections listCollections;
-        listCollections.setDbName(dbName);
-        auto fetcher =
-            std::make_unique<Fetcher>(_executorForAddShard.get(),
-                                      host,
-                                      dbName,
-                                      listCollections.toBSON(),
-                                      fetcherCallback,
-                                      BSONObj() /* metadata tracking, only used for shards */,
-                                      maxTimeMS /* command network timeout */,
-                                      maxTimeMS /* getMore network timeout */);
-
-        auto scheduleStatus = fetcher->schedule();
-        if (!scheduleStatus.isOK()) {
-            return scheduleStatus;
-        }
-
-        auto joinStatus = fetcher->join(opCtx);
-        if (!joinStatus.isOK()) {
-            return joinStatus;
-        }
-        if (!fetchStatus.isOK()) {
-            return fetchStatus;
-        }
-    }
-
-    return nssList;
 }
 
 void ShardingCatalogManager::installConfigShardIdentityDocument(OperationContext* opCtx) {
@@ -665,19 +571,6 @@ StatusWith<std::string> ShardingCatalogManager::addShard(
 
     const auto fcvSnapshot = fcvRegion->acquireFCVSnapshot();
 
-    std::vector<CollectionType> collList;
-
-    if (feature_flags::gTrackUnshardedCollectionsUponCreation.isEnabled(
-            VersionContext::getDecoration(opCtx), fcvSnapshot)) {
-        // TODO SERVER-80532: the sharding catalog might lose some collections.
-        auto listStatus = _getCollListFromShard(opCtx, dbNamesStatus.getValue(), targeter);
-        if (!listStatus.isOK()) {
-            return listStatus.getStatus();
-        }
-
-        collList = std::move(listStatus.getValue());
-    }
-
     // (Generic FCV reference): These FCV checks should exist across LTS binary versions.
     const auto currentFCV = fcvSnapshot.getVersion();
     invariant(currentFCV == multiversion::GenericFCV::kLatest ||
@@ -741,7 +634,7 @@ StatusWith<std::string> ShardingCatalogManager::addShard(
 
         auto& executor = Grid::get(opCtx)->getExecutorPool()->getFixedExecutor();
         topology_change_helpers::addShardInTransaction(
-            opCtx, shardType, std::move(dbNamesStatus.getValue()), std::move(collList), executor);
+            opCtx, shardType, std::move(dbNamesStatus.getValue()), {}, executor);
     }
     // Once the transaction has committed, we must immediately dismiss the guard to avoid
     // incorrectly removing the RSM after persisting the shard addition.

@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <memory>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
@@ -43,6 +38,11 @@
 #include "mongo/db/matcher/expression_visitor.h"
 #include "mongo/db/matcher/path.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -78,8 +78,8 @@ public:
                                         Value(value),
                                         ElementPath::LeafArrayBehavior::kNoTraversal,
                                         ElementPath::NonLeafArrayBehavior::kMatchSubpath) {
-        invariant(_rhs.type() != BSONType::Undefined);
-        invariant(_rhs.type() != BSONType::Array);
+        invariant(_rhs.type() != BSONType::undefined);
+        invariant(_rhs.type() != BSONType::array);
     }
 
     ~InternalExprComparisonMatchExpression() override = default;

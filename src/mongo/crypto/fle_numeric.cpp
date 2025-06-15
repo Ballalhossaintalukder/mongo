@@ -30,18 +30,20 @@
 #include "mongo/crypto/fle_numeric.h"
 
 #include <algorithm>
+
 #include <boost/container/small_vector.hpp>
 #include <boost/multiprecision/cpp_int/import_export.hpp>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/platform/bits.h"
+#include "mongo/platform/overflow_arithmetic.h"
+
 #include <cmath>
 #include <iterator>
 #include <limits>
 
-#include "mongo/platform/bits.h"
-#include "mongo/platform/overflow_arithmetic.h"
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -425,7 +427,7 @@ OSTType_Decimal128 getTypeInfoDecimal128(Decimal128 value,
         // converting to int128.
         v_prime2 = v_prime2.round(Decimal128::kRoundTowardZero);
 
-        invariant(v_prime2.logarithm(Decimal128(2)).isLess(Decimal128(128)));
+        invariant(v_prime2.log2().isLess(Decimal128(128)));
 
         // Now we need to get the Decimal128 out as a 128-bit integer
         // But Decimal128 does not support conversion to Int128.
@@ -568,9 +570,8 @@ bool canUsePrecisionMode(Decimal128 min, Decimal128 max, uint32_t precision, uin
 
     const auto t_1 = scaled_max.subtract(scaled_min);
     const auto t_4 = int_128_max_decimal.subtract(t_1);
-    const auto t_5 = t_4.logarithm(Decimal128(10))
-                         .round(Decimal128::RoundingMode::kRoundTowardZero)
-                         .subtract(Decimal128(1));
+    const auto t_5 =
+        t_4.log10().round(Decimal128::RoundingMode::kRoundTowardZero).subtract(Decimal128(1));
 
     uassert(9178812, "Invalid value for precision", t_5.isGreaterEqual(Decimal128(precision)));
 

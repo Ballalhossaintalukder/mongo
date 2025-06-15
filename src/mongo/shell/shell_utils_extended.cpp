@@ -27,6 +27,14 @@
  *    it in the license file.
  */
 
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>  // IWYU pragma: keep
+#include <string>
+#include <system_error>
+#include <vector>
+
 #include <boost/filesystem/directory.hpp>
 #include <boost/filesystem/exception.hpp>
 #include <boost/filesystem/file_status.hpp>
@@ -35,14 +43,7 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/move/utility_core.hpp>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <fmt/format.h>
-#include <fstream>  // IWYU pragma: keep
-#include <string>
-#include <system_error>
-#include <vector>
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
 
 #ifndef _WIN32
@@ -139,7 +140,7 @@ BSONObj cd(const BSONObj& args, void* data) {
     uassert(16830, "cd requires one argument -- cd(directory)", args.nFields() == 1);
     uassert(16831,
             "cd requires a string argument -- cd(directory)",
-            args.firstElement().type() == String);
+            args.firstElement().type() == BSONType::string);
 #if defined(_WIN32)
     std::wstring dir = toWideString(args.firstElement().String().c_str());
     if (SetCurrentDirectoryW(dir.c_str())) {
@@ -173,7 +174,7 @@ BSONObj cat(const BSONObj& args, void* data) {
     auto filePath = it.next();
     uassert(51012,
             "the first argument to cat() must be a string containing the path to the file",
-            filePath.type() == mongo::String);
+            filePath.type() == BSONType::string);
 
     std::ios::openmode mode = std::ios::in;
 
@@ -182,13 +183,13 @@ BSONObj cat(const BSONObj& args, void* data) {
         uassert(51013,
                 "the second argument to cat(), must be a boolean indicating whether "
                 "or not to read the file in binary mode. If omitted, the default is 'false'.",
-                useBinary.type() == mongo::Bool);
+                useBinary.type() == BSONType::boolean);
 
         if (useBinary.Bool())
             mode |= std::ios::binary;
     }
 
-    ifstream f(filePath.valueStringDataSafe().rawData(), mode);
+    ifstream f(filePath.valueStringDataSafe().data(), mode);
     uassert(CANT_OPEN_FILE, fmt::format("couldn't open file {}", filePath.str()), f.is_open());
     std::streamsize fileSize = 0;
     // will throw on filesystem error
@@ -271,7 +272,7 @@ BSONObj copyFileRange(const BSONObj& args, void* data) {
 BSONObj md5sumFile(const BSONObj& args, void* data) {
     BSONElement e = singleArg(args);
     stringstream ss;
-    FILE* f = fopen(e.valueStringDataSafe().rawData(), "rb");
+    FILE* f = fopen(e.valueStringDataSafe().data(), "rb");
     uassert(CANT_OPEN_FILE, str::stream() << "couldn't open file " << e.str(), f);
     ON_BLOCK_EXIT([&] { fclose(f); });
 
@@ -294,7 +295,7 @@ BSONObj mkdir(const BSONObj& args, void* data) {
     uassert(16833, "mkdir requires one argument -- mkdir(directory)", args.nFields() == 1);
     uassert(16834,
             "mkdir requires a string argument -- mkdir(directory)",
-            args.firstElement().type() == String);
+            args.firstElement().type() == BSONType::string);
 
     // Boost bug 12495 (https://svn.boost.org/trac/boost/ticket/12495):
     // create_directories crashes on empty string. We expect mkdir("") to
@@ -361,12 +362,12 @@ BSONObj writeFile(const BSONObj& args, void* data) {
     auto filePathElem = it.next();
     uassert(40341,
             "the first argument to writeFile() must be a string containing the path to the file",
-            filePathElem.type() == mongo::String);
+            filePathElem.type() == BSONType::string);
 
     auto fileContentElem = it.next();
     uassert(40342,
             "the second argument to writeFile() must be a string to write to the file",
-            fileContentElem.type() == mongo::String);
+            fileContentElem.type() == BSONType::string);
 
     // Limit the capability to writing only new, regular files in existing directories.
 
@@ -391,7 +392,7 @@ BSONObj writeFile(const BSONObj& args, void* data) {
         uassert(51014,
                 "the third argument to writeFile(), must be a boolean indicating whether "
                 "or not to read the file in binary mode. If omitted, the default is 'false'.",
-                useBinary.type() == mongo::Bool);
+                useBinary.type() == BSONType::boolean);
 
         if (useBinary.Bool())
             mode |= std::ios::binary;
@@ -421,12 +422,12 @@ BSONObj appendFile(const BSONObj& args, void* data) {
     auto filePathElem = it.next();
     uassert(9380002,
             "the first argument to appendFile() must be a string containing the path to the file",
-            filePathElem.type() == mongo::String);
+            filePathElem.type() == BSONType::string);
 
     auto fileContentElem = it.next();
     uassert(9380003,
             "the second argument to appendFile() must be a string to append to the file",
-            fileContentElem.type() == mongo::String);
+            fileContentElem.type() == BSONType::string);
 
     // Limit the capability to appending to only existing files.
 
@@ -451,7 +452,7 @@ BSONObj appendFile(const BSONObj& args, void* data) {
         uassert(9380007,
                 "the third argument to appendFile(), must be a boolean indicating whether "
                 "or not to read the file in binary mode. If omitted, the default is 'false'.",
-                useBinary.type() == mongo::Bool);
+                useBinary.type() == BSONType::boolean);
 
         if (useBinary.Bool())
             mode |= std::ios::binary;
@@ -498,9 +499,9 @@ BSONObj changeUmask(const BSONObj& a, void* data) {
 BSONObj getFileMode(const BSONObj& a, void* data) {
     uassert(50975,
             "getFileMode() takes one argument, the absolute path to a file",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
     auto pathStr = a.firstElement().checkAndGetStringData();
-    boost::filesystem::path path(pathStr.rawData());
+    boost::filesystem::path path(pathStr.data());
     boost::system::error_code ec;
     auto fileStatus = boost::filesystem::status(path, ec);
     if (ec) {
@@ -515,7 +516,7 @@ BSONObj getFileMode(const BSONObj& a, void* data) {
 BSONObj decompressBSONColumn(const BSONObj& a, void* data) {
     uassert(ErrorCodes::InvalidOptions,
             "decompressBSONColumn() takes one argument, the BSONColumn BinData element",
-            a.nFields() == 1 && a.firstElementType() == BinData &&
+            a.nFields() == 1 && a.firstElementType() == BSONType::binData &&
                 a.firstElement().binDataType() == BinDataType::Column);
 
     BSONColumn column(a.firstElement());
@@ -542,7 +543,7 @@ BSONObj decompressBSONColumn(const BSONObj& a, void* data) {
 BSONObj dumpBSONAsHex(const BSONObj& a, void* data) {
     uassert(9174601,
             "dumpBSONAsHex() takes one argument: a BSON obj",
-            a.nFields() == 1 && a.firstElementType() == Object);
+            a.nFields() == 1 && a.firstElementType() == BSONType::object);
     auto obj = a.firstElement().Obj();
 
     return BSON("" << hexblob::encodeLower(obj.objdata(), obj.objsize()));
@@ -554,7 +555,7 @@ BSONObj dumpBSONAsHex(const BSONObj& a, void* data) {
 BSONObj hexToBSON(const BSONObj& a, void*) {
     uassert(9174600,
             "hexToBSON takes one argument: a hex string",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
 
     BufBuilder bb;
     hexblob::decode(a.firstElement().String(), &bb);
@@ -609,7 +610,7 @@ BSONObj generateStorageBSON(const BSONObj& args, void* data) {
 BSONObj shellGetEnv(const BSONObj& a, void*) {
     uassert(4671206,
             "_getEnv() takes one argument: the name of the environment variable",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
     const auto envName = a.firstElement().String();
     std::string result{};
 #ifndef _WIN32
@@ -630,7 +631,7 @@ BSONObj shellGetEnv(const BSONObj& a, void*) {
 BSONObj getStringWidth(const BSONObj& a, void* data) {
     uassert(8730901,
             "getStringWidth takes a single string argument",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
     const auto str = a.firstElement().valueStringData();
     int width = icuGetStringWidth(str, false, true);
     return BSON("" << width);
@@ -646,11 +647,11 @@ BSONObj writeBsonArrayToFile(const BSONObj& args, void* data) {
 
     BSONObjIterator it(args);
     auto filePathElem = it.next();
-    uassert(7196708, "first argument must be a string", filePathElem.type() == BSONType::String);
+    uassert(7196708, "first argument must be a string", filePathElem.type() == BSONType::string);
 
     auto fileContentElem = it.next();
     uassert(
-        7196707, "second argument must be a BSON array", fileContentElem.type() == BSONType::Array);
+        7196707, "second argument must be a BSON array", fileContentElem.type() == BSONType::array);
 
     const boost::filesystem::path originalFilePath{filePathElem.String()};
     const boost::filesystem::path normalizedFilePath{originalFilePath.lexically_normal()};
@@ -689,7 +690,7 @@ BSONObj writeBsonArrayToFile(const BSONObj& args, void* data) {
 BSONObj readDumpFile(const BSONObj& a, void*) {
     uassert(31404,
             "readDumpFile() takes one argument: the path to a file",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
 
     // Open the file for reading in binary mode.
     const auto pathStr = a.firstElement().String();
@@ -754,7 +755,7 @@ BSONObj readDumpFile(const BSONObj& a, void*) {
 BSONObj numObjsInDumpFile(const BSONObj& a, void*) {
     uassert(9806101,
             "numObjsInDumpFile() takes one argument: the path to a file",
-            a.nFields() == 1 && a.firstElementType() == String);
+            a.nFields() == 1 && a.firstElementType() == BSONType::string);
 
     // Open the file for reading in binary mode.
     const auto pathStr = a.firstElement().String();
@@ -794,7 +795,7 @@ BSONObj getObjInDumpFile(const BSONObj& a, void*) {
     uassert(9806103,
             "getObjInDumpFile() takes two arguments: the path to a file and the index of the "
             "object to be fetched",
-            a.nFields() == 2 && a.firstElementType() == String);
+            a.nFields() == 2 && a.firstElementType() == BSONType::string);
 
     // Open the file for reading in binary mode.
     BSONObjIterator it(a);

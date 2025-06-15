@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <functional>
-#include <memory>
-#include <queue>
-
-#include <boost/filesystem.hpp>
-
 #include "mongo/db/dbmessage.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/logv2/log.h"
@@ -44,6 +38,12 @@
 #include "mongo/unittest/join_thread.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/util/net/ssl_options.h"
+
+#include <functional>
+#include <memory>
+#include <queue>
+
+#include <boost/filesystem.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -119,7 +119,7 @@ private:
 
 class InlineReactor : public Reactor {
 public:
-    void run() noexcept override {}
+    void run() override {}
     void stop() override {}
 
     void drain() override {
@@ -145,7 +145,7 @@ public:
 
 class NoopReactor : public Reactor {
 public:
-    void run() noexcept override {}
+    void run() override {}
     void stop() override {}
 
     void drain() override {
@@ -236,8 +236,7 @@ class ServiceEntryPointUnimplemented : public ServiceEntryPoint {
 public:
     ServiceEntryPointUnimplemented() = default;
 
-    Future<DbResponse> handleRequest(OperationContext* opCtx,
-                                     const Message& request) noexcept override {
+    Future<DbResponse> handleRequest(OperationContext* opCtx, const Message& request) override {
         MONGO_UNREACHABLE;
     }
 };
@@ -285,9 +284,9 @@ inline std::unique_ptr<TempCertificatesDir> copyCertsToTempDir(std::string caFil
                                                                std::string directoryPrefix) {
     auto tempDir = std::make_unique<TempCertificatesDir>(directoryPrefix);
 
-    boost::filesystem::copy_file(caFile, tempDir->getCAFile().toString());
-    boost::filesystem::copy_file(pemFile, tempDir->getPEMKeyFile().toString());
-    boost::filesystem::copy_file(clientPemFile, tempDir->getClientPEMKeyFile().toString());
+    boost::filesystem::copy_file(caFile, std::string{tempDir->getCAFile()});
+    boost::filesystem::copy_file(pemFile, std::string{tempDir->getPEMKeyFile()});
+    boost::filesystem::copy_file(clientPemFile, std::string{tempDir->getClientPEMKeyFile()});
 
     return tempDir;
 };

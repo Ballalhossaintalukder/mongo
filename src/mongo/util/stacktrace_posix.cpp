@@ -28,6 +28,7 @@
  */
 
 #include <dlfcn.h>
+
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
 #include <algorithm>
@@ -180,7 +181,7 @@ void appendProcessInfoTrimmed(const BSONObj& bsonProcInfo,
                               BSONObjBuilder* bob) {
     for (const BSONElement& be : bsonProcInfo) {
         StringData key = be.fieldNameStringData();
-        if (be.type() != BSONType::Array || key != "somap"_sd) {
+        if (be.type() != BSONType::array || key != "somap"_sd) {
             bob->append(be);
             continue;
         }
@@ -239,6 +240,8 @@ void printMetadata(StackTraceSink& sink, const StackTraceAddressMetadata& meta) 
 }
 
 void mergeDlInfo(StackTraceAddressMetadata& f) {
+    if (f.file() && f.symbol())
+        return;
     Dl_info dli;
     // `man dladdr`:
     //   On success, these functions return a nonzero value.  If the address
@@ -311,11 +314,7 @@ private:
             // `unw_get_proc_name`, with its access to a cursor, and to libunwind's
             // dwarf reader, can generate better metadata than mergeDlInfo, so prefer it.
             unw_word_t offset;
-            if (int r = unw_get_proc_name(&cursor, _symbolBuf, sizeof(_symbolBuf), &offset);
-                r < 0) {
-                _sink << "unw_get_proc_name(" << Hex(meta.address()) << "): " << unw_strerror(r)
-                      << "\n";
-            } else {
+            if (unw_get_proc_name(&cursor, _symbolBuf, sizeof(_symbolBuf), &offset) == 0) {
                 meta.symbol().assign(meta.address() - offset, _symbolBuf);
             }
 

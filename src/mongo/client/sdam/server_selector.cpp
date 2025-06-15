@@ -32,14 +32,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <iterator>
-#include <map>
-#include <ostream>
-#include <ratio>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
@@ -53,6 +45,14 @@
 #include "mongo/platform/random.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
+
+#include <algorithm>
+#include <iterator>
+#include <map>
+#include <ostream>
+#include <ratio>
+#include <string>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -260,7 +260,7 @@ void SdamServerSelector::filterTags(std::vector<ServerDescriptionPtr>* servers,
     }
 
     for (const auto& tagSetElem : tagSetList) {
-        if (tagSetElem.type() != BSONType::Object) {
+        if (tagSetElem.type() != BSONType::object) {
             LOGV2_WARNING(4671202,
                           "Invalid tag set specified for server selection; tag sets should be"
                           " specified as a BSON object",

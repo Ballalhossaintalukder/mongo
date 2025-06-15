@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <ostream>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
+#include "mongo/db/s/range_deleter_service.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -48,7 +45,6 @@
 #include "mongo/db/s/collection_metadata.h"
 #include "mongo/db/s/collection_sharding_runtime.h"
 #include "mongo/db/s/operation_sharding_state.h"
-#include "mongo/db/s/range_deleter_service.h"
 #include "mongo/db/s/range_deleter_service_test.h"
 #include "mongo/db/s/sharding_runtime_d_params_gen.h"
 #include "mongo/db/shard_id.h"
@@ -65,6 +61,11 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/time_support.h"
+
+#include <ostream>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 namespace mongo {
 
@@ -305,7 +306,7 @@ TEST_F(RangeDeleterServiceTest, ScheduledTaskInvalidatedOnStepDown) {
     rds->onStepDown();
     try {
         completionFuture.get(opCtx);
-    } catch (const ExceptionForCat<ErrorCategory::Interruption>&) {
+    } catch (const ExceptionFor<ErrorCategory::Interruption>&) {
         // Expect an interruption error when the service gets disabled
     }
 }
@@ -903,7 +904,7 @@ TEST_F(RangeDeleterServiceTest, WaitForOngoingQueriesInvalidatedOnStepDown) {
     rds->onStepDown();
     try {
         completionFuture.get(opCtx);
-    } catch (const ExceptionForCat<ErrorCategory::Interruption>&) {
+    } catch (const ExceptionFor<ErrorCategory::Interruption>&) {
         // Future must have been set to an interruption error because the service was disabled
     }
 }

@@ -30,17 +30,6 @@
 
 #include "mongo/rpc/rewrite_state_change_errors.h"
 
-#include <array>
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <iterator>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -57,6 +46,17 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/pcre.h"
 #include "mongo/util/static_immortal.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -131,7 +131,7 @@ void editErrorNode(mutablebson::Element&& node) {
         if (auto codeName = node["codeName"]; codeName.ok())
             uassertStatusOK(codeName.setValueString(ErrorCodes::errorString(newCode)));
     }
-    if (auto errmsg = node["errmsg"]; errmsg.ok() && errmsg.isType(String))
+    if (auto errmsg = node["errmsg"]; errmsg.ok() && errmsg.isType(BSONType::string))
         if (auto scrubbed = scrubErrmsg(errmsg.getValueString()))
             uassertStatusOK(errmsg.setValueString(*scrubbed));
 }
@@ -192,16 +192,16 @@ boost::optional<BSONObj> rewriteDocument(const BSONObj& doc, OperationContext* o
 
     // The `writeErrors` and `writeConcernError` nodes might need editing.
     // `writeErrors` is an array of error-bearing nodes like the doc root.
-    if (const auto& we = doc["writeErrors"]; we.type() == Array) {
+    if (const auto& we = doc["writeErrors"]; we.type() == BSONType::array) {
         size_t idx = 0;
         BSONObj bArr = we.Obj();
         for (auto ai = bArr.begin(); ai != bArr.end(); ++ai, ++idx)
-            if (ai->type() == Object && (oldCode = needsRewrite(sc, ai->Obj())))
+            if (ai->type() == BSONType::object && (oldCode = needsRewrite(sc, ai->Obj())))
                 editErrorNode(lazyMutableRoot()["writeErrors"][idx]);
     }
 
     // `writeConcernError` is a single error-bearing node.
-    if (const auto& wce = doc["writeConcernError"]; wce.type() == Object) {
+    if (const auto& wce = doc["writeConcernError"]; wce.type() == BSONType::object) {
         if ((oldCode = needsRewrite(sc, wce.Obj())))
             editErrorNode(lazyMutableRoot()["writeConcernError"]);
     }

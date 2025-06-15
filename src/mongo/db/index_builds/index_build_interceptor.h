@@ -31,16 +31,6 @@
 
 #include <boost/container/small_vector.hpp>
 // IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/type_traits/decay.hpp>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -58,6 +48,17 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/fail_point.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/type_traits/decay.hpp>
 
 namespace mongo {
 
@@ -197,7 +198,7 @@ public:
     boost::optional<MultikeyPaths> getMultikeyPaths() const;
 
     std::string getSideWritesTableIdent() const {
-        return _sideWritesTable->rs()->getIdent();
+        return std::string{_sideWritesTable->rs()->getIdent()};
     }
 
     boost::optional<std::string> getDuplicateKeyTrackerTableIdent() const {

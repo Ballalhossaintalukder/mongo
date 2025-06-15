@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <functional>
-#include <list>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/record_id.h"
 #include "mongo/platform/atomic_word.h"
@@ -45,6 +36,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/with_lock.h"
 #include "mongo/util/string_map.h"
+
+#include <cstdint>
+#include <functional>
+#include <list>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 class OperationContext;
@@ -198,7 +199,7 @@ public:
      * Returns a pointer to the uncommitted writes for the given ident. The pointer is only valid
      * for the duration of this storage snapshot.
      */
-    UncommittedRecords* getUncommitedRecordsFor(const std::string& ident);
+    UncommittedRecords* getUncommitedRecordsFor(StringData ident);
 
 private:
     // This maps ident names to the uncommitted records for that collection.

@@ -27,19 +27,6 @@
  *    it in the license file.
  */
 
-#include <benchmark/benchmark.h>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -86,6 +73,8 @@
 #include "mongo/db/repl/storage_interface_impl.h"
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/collection_sharding_state_factory_shard.h"
+#include "mongo/db/s/database_sharding_state_factory_shard.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_entry_point_shard_role.h"
@@ -98,7 +87,6 @@
 #include "mongo/logv2/log_component_settings.h"
 #include "mongo/logv2/log_manager.h"
 #include "mongo/logv2/log_severity.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/util/assert_util.h"
@@ -112,6 +100,19 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <benchmark/benchmark.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -176,9 +177,6 @@ public:
         repl::ReplicationCoordinator::set(
             _svcCtx, std::unique_ptr<repl::ReplicationCoordinator>(_replCoord));
 
-        // Disable fast shutdown so that WT can free memory.
-        globalFailPointRegistry().find("WTDisableFastShutDown")->setMode(FailPoint::alwaysOn);
-
         catalog::startUpStorageEngineAndCollectionCatalog(
             _svcCtx,
             &cc(),
@@ -197,6 +195,8 @@ public:
         ShardingState::create(_svcCtx);
         CollectionShardingStateFactory::set(
             _svcCtx, std::make_unique<CollectionShardingStateFactoryShard>(_svcCtx));
+        DatabaseShardingStateFactory::set(_svcCtx,
+                                          std::make_unique<DatabaseShardingStateFactoryShard>());
 
         MongoDSessionCatalog::set(
             _svcCtx,
@@ -247,8 +247,9 @@ public:
         auto databaseHolder = DatabaseHolder::get(opCtx);
         databaseHolder->closeAll(opCtx);
 
-        // Shut down storage engine.
-        catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(_svcCtx);
+        // Shut down storage engine and free memory.
+        catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(_svcCtx,
+                                                                        false /* memLeakAllowed */);
     }
 
     // Shut down the storage engine, clear the dbpath, and restart the storage engine with empty

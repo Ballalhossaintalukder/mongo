@@ -35,11 +35,6 @@
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <exception>
-#include <mutex>
-#include <string>
-#include <utility>
-
 #include "mongo/base/shim.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -69,6 +64,11 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/timer.h"
+
+#include <exception>
+#include <mutex>
+#include <string>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -273,7 +273,7 @@ int runQueryWithReadCommands(DBClientBase* conn,
         invariant(findCommand->getNamespaceOrUUID().isNamespaceString());
         GetMoreCommandRequest getMoreRequest(
             cursorResponse.getCursorId(),
-            findCommand->getNamespaceOrUUID().nss().coll().toString());
+            std::string{findCommand->getNamespaceOrUUID().nss().coll()});
         getMoreRequest.setBatchSize(findCommand->getBatchSize());
         BSONObj getMoreCommandResult;
         runCommandWithSession(conn,
@@ -317,7 +317,7 @@ Timestamp getLatestClusterTime(DBClientBase* conn) {
     const BSONElement tsElem = oplogResult["ts"];
     uassert(ErrorCodes::BadValue,
             str::stream() << "Expects oplog entry to have a valid 'ts' field: " << oplogResult,
-            !tsElem.eoo() || tsElem.type() == bsonTimestamp);
+            !tsElem.eoo() || tsElem.type() == BSONType::timestamp);
     return tsElem.timestamp();
 }
 
@@ -434,7 +434,7 @@ BenchRunOp opFromBson(const BSONObj& op) {
                     str::stream() << "Field 'doc' only valid for insert op type. Type is "
                                   << opType,
                     (opType == "insert"));
-            myOp.isDocAnArray = arg.type() == Array;
+            myOp.isDocAnArray = arg.type() == BSONType::array;
             myOp.doc = arg.Obj();
         } else if (name == "expected") {
             uassert(34380,
@@ -492,20 +492,20 @@ BenchRunOp opFromBson(const BSONObj& op) {
             uassert(34385,
                     str::stream() << "Field 'ns' should be a string, instead it's of type: "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             myOp.ns = arg.String();
         } else if (name == "tenantId") {
             uassert(
                 7056701,
                 str::stream() << "Field 'tenantId' should be an ObjectId, instead it's of type: "
                               << typeName(arg.type()),
-                arg.type() == jstOID);
+                arg.type() == BSONType::oid);
             myOp.tenantId = TenantId{arg.OID()};
         } else if (name == "op") {
             uassert(ErrorCodes::BadValue,
                     str::stream() << "Field 'op' is not a string, instead it's of type: "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             auto type = arg.valueStringData();
             if (type == "nop") {
                 myOp.op = OpType::NOP;
@@ -571,7 +571,7 @@ BenchRunOp opFromBson(const BSONObj& op) {
                     (opType == "findOne") || (opType == "query") || (opType == "find"));
             uassert(ErrorCodes::BadValue,
                     "Expected sort to be an object",
-                    arg.type() == BSONType::Object);
+                    arg.type() == BSONType::object);
             myOp.sort = arg.Obj();
         } else if (name == "showError") {
             myOp.showError = arg.trueValue();
@@ -579,7 +579,7 @@ BenchRunOp opFromBson(const BSONObj& op) {
             uassert(ErrorCodes::BadValue,
                     str::stream() << "Field 'target' should be a string. It's type: "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             myOp.target = arg.String();
         } else if (name == "throwGLE") {
             myOp.throwGLE = arg.trueValue();
@@ -656,7 +656,7 @@ BenchRunOp opFromBson(const BSONObj& op) {
             uassert(ErrorCodes::BadValue,
                     str::stream() << "Field 'readPrefMode' should be a string, instead it's type: "
                                   << typeName(arg.type()),
-                    arg.type() == BSONType::String);
+                    arg.type() == BSONType::string);
 
             ReadPreference mode;
             try {
@@ -702,25 +702,25 @@ void BenchRunConfig::initializeFromBson(const BSONObj& args) {
             uassert(34404,
                     str::stream() << "Field '" << name << "' should be a string. . Type is "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             host = arg.String();
         } else if (name == "db") {
             uassert(34405,
                     str::stream() << "Field '" << name << "' should be a string. . Type is "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             db = arg.String();
         } else if (name == "username") {
             uassert(34406,
                     str::stream() << "Field '" << name << "' should be a string. . Type is "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             username = arg.String();
         } else if (name == "password") {
             uassert(34407,
                     str::stream() << "Field '" << name << "' should be a string. . Type is "
                                   << typeName(arg.type()),
-                    arg.type() == String);
+                    arg.type() == BSONType::string);
             password = arg.String();
         } else if (name == "parallel") {
             uassert(34409,
@@ -1133,8 +1133,8 @@ void BenchRunOp::executeOnce(DBClientBase* conn,
                 auto cursorResponse = uassertStatusOK(CursorResponse::parseFromBSON(result));
                 int count = cursorResponse.getBatch().size();
                 while (cursorResponse.getCursorId() != 0) {
-                    GetMoreCommandRequest getMoreRequest(cursorResponse.getCursorId(),
-                                                         cursorResponse.getNSS().coll().toString());
+                    GetMoreCommandRequest getMoreRequest(
+                        cursorResponse.getCursorId(), std::string{cursorResponse.getNSS().coll()});
                     BSONObj getMoreCommandResult;
                     runCommandWithSession(
                         conn,

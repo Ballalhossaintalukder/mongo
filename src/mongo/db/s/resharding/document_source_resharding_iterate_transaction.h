@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <set>
-#include <stack>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/timestamp.h"
@@ -54,6 +46,14 @@
 #include "mongo/db/repl/oplog_entry.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/session/logical_session_id.h"
+
+#include <memory>
+#include <set>
+#include <stack>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -73,7 +73,7 @@ namespace mongo {
  * {clusterTime: <transaction commit timestamp>, ts: <applyOps optime.ts>}. For all other documents,
  * this will be {clusterTime: <optime.ts>, ts: <optime.ts>}.
  */
-class DocumentSourceReshardingIterateTransaction : public DocumentSource {
+class DocumentSourceReshardingIterateTransaction : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalReshardingIterateTransaction"_sd;
     static constexpr StringData kIncludeCommitTransactionTimestampFieldName =
@@ -99,7 +99,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return DocumentSourceReshardingIterateTransaction::kStageName.rawData();
+        return DocumentSourceReshardingIterateTransaction::kStageName.data();
     }
 
     static const Id& id;

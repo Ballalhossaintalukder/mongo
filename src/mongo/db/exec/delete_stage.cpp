@@ -28,18 +28,12 @@
  */
 
 
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/exec/delete_stage.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
-#include "mongo/db/concurrency/exception_util.h"
-#include "mongo/db/exec/delete_stage.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/write_stage_common.h"
 #include "mongo/db/namespace_string.h"
@@ -49,6 +43,7 @@
 #include "mongo/db/record_id.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/shard_role.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/s/shard_version.h"
@@ -56,6 +51,12 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -85,7 +86,7 @@ DeleteStage::DeleteStage(ExpressionContext* expCtx,
                          WorkingSet* ws,
                          CollectionAcquisition collection,
                          PlanStage* child)
-    : DeleteStage(kStageType.rawData(), expCtx, std::move(params), ws, collection, child) {}
+    : DeleteStage(kStageType.data(), expCtx, std::move(params), ws, collection, child) {}
 
 DeleteStage::DeleteStage(const char* stageType,
                          ExpressionContext* expCtx,

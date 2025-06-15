@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <initializer_list>
-#include <memory>
-
 #include "mongo/base/data_range.h"
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/crypto/sha1_block.h"
@@ -38,12 +34,17 @@
 #include "mongo/crypto/sha512_block.h"
 #include "mongo/util/assert_util.h"
 
+#include <algorithm>
+#include <initializer_list>
+#include <memory>
+
 #ifndef MONGO_CONFIG_SSL
 #error This file should only be included in SSL-enabled builds
 #endif
 
 #include <cstdint>
 #include <cstring>
+
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/opensslv.h>
@@ -75,11 +76,6 @@ HMAC_CTX* HMAC_CTX_new() {
         memset(ctx, 0, sizeof(HMAC_CTX));
     }
     return static_cast<HMAC_CTX*>(ctx);
-}
-
-int HMAC_CTX_reset(HMAC_CTX* ctx) {
-    HMAC_CTX_init(ctx);
-    return 1;
 }
 
 void HMAC_CTX_free(HMAC_CTX* ctx) {
@@ -200,7 +196,6 @@ void computeHmacImpl(const EVP_MD* md,
                      std::initializer_list<ConstDataRange> input,
                      HashType* const output) {
     std::unique_ptr<HMAC_CTX, decltype(&HMAC_CTX_free)> digestCtx(HMAC_CTX_new(), HMAC_CTX_free);
-    HMAC_CTX_reset(digestCtx.get());
     computeHmacImplWithCtx<HashType>(digestCtx.get(), md, key, keyLen, input, output);
 }
 
@@ -234,8 +229,6 @@ void SHA1BlockTraits::computeHmacWithCtx(HmacContext* ctx,
                                          size_t keyLen,
                                          std::initializer_list<ConstDataRange> input,
                                          HashType* const output) {
-    auto ret = ctx->reset();
-    uassert(10180000, "Issue computing HMAC, Context object could not be reset", ret == 1);
     return computeHmacImplWithCtx<SHA1BlockTraits::HashType>(
         ctx->get(), getOpenSSLHashLoader().getSHA1(), key, keyLen, input, output);
 }
@@ -253,7 +246,6 @@ void SHA256BlockTraits::computeHmacWithCtx(HmacContext* ctx,
                                            size_t keyLen,
                                            std::initializer_list<ConstDataRange> input,
                                            HashType* const output) {
-    ctx->reset();
     return computeHmacImplWithCtx<SHA256BlockTraits::HashType>(
         ctx->get(), getOpenSSLHashLoader().getSHA256(), key, keyLen, input, output);
 }
@@ -271,7 +263,6 @@ void SHA512BlockTraits::computeHmacWithCtx(HmacContext* ctx,
                                            size_t keyLen,
                                            std::initializer_list<ConstDataRange> input,
                                            HashType* const output) {
-    ctx->reset();
     return computeHmacImplWithCtx<SHA512BlockTraits::HashType>(
         ctx->get(), getOpenSSLHashLoader().getSHA512(), key, keyLen, input, output);
 }

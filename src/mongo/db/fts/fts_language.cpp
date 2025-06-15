@@ -29,14 +29,6 @@
 
 #include "mongo/db/fts/fts_language.h"
 
-#include <algorithm>
-#include <fmt/format.h>
-#include <functional>
-#include <map>
-#include <memory>
-#include <string>
-#include <type_traits>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/fts/fts_basic_tokenizer.h"
@@ -44,6 +36,15 @@
 #include "mongo/db/fts/fts_unicode_tokenizer.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/ctype.h"
+
+#include <algorithm>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <type_traits>
+
+#include <fmt/format.h>
 
 namespace mongo::fts {
 
@@ -126,9 +127,9 @@ public:
 
     void add(StringData name, StringData alias = {}) {
         auto p = std::make_shared<const LanguageType>(std::string{name});
-        _map[name.toString()] = p;
+        _map[std::string{name}] = p;
         if (!alias.empty()) {
-            _map[alias.toString()] = p;
+            _map[std::string{alias}] = p;
         }
     }
 

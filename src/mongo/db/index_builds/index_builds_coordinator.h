@@ -29,20 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <map>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -84,6 +70,21 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -258,9 +259,8 @@ public:
      * Waits for all index builds to stop.
      *
      * This should only be called when certain the server will not start any new index builds --
-     * i.e. after a call to setNewIndexBuildsBlocked -- and potentially after aborting all index
-     * builds that can be aborted -- i.e. using abortAllIndexBuildsWithReason -- to avoid an
-     * excessively long wait.
+     * potentially after aborting all index builds that can be aborted -- i.e. using
+     * abortAllIndexBuildsWithReason -- to avoid an excessively long wait.
      */
     void waitForAllIndexBuildsToStop(OperationContext* opCtx);
 
@@ -350,17 +350,9 @@ public:
      *
      * Does not require holding locks.
      *
-     * Does not stop new index builds from starting. If required, caller must make that guarantee
-     * with a call to setNewIndexBuildsBlocked.
+     * Does not stop new index builds from starting.
      */
     void abortAllIndexBuildsWithReason(OperationContext* opCtx, const std::string& reason);
-
-    /**
-     * Blocks or unblocks new index builds from starting. When blocking is enabled, new index builds
-     * will not immediately start and instead wait until a call to unblock is made. Concurrent calls
-     * to this function are not supported.
-     */
-    void setNewIndexBuildsBlocked(bool newValue, boost::optional<std::string> reason = boost::none);
 
     /**
      * Returns true if there is an index builder building the given index names on a collection.
@@ -482,10 +474,9 @@ public:
     void appendBuildInfo(const UUID& buildUUID, BSONObjBuilder* builder) const;
 
     /**
-     * Returns an Action for the DiskSpaceMonitor that kills all index builds when the disk space
-     * drops below a certain threshold.
+     * Registers kill index build action with the input DiskSpaceMonitor.
      */
-    std::unique_ptr<DiskSpaceMonitor::Action> makeKillIndexBuildOnLowDiskSpaceAction();
+    void registerKillIndexBuildAction(DiskSpaceMonitor& diskMonitor);
 
     //
     // Helper functions for creating indexes that do not have to be managed by the
@@ -573,11 +564,6 @@ private:
                                         const std::string& reason);
 
 protected:
-    void _waitIfNewIndexBuildsBlocked(OperationContext* opCtx,
-                                      const UUID& collectionUUID,
-                                      const std::vector<BSONObj>& specs,
-                                      const UUID& buildUUID);
-
     /**
      * Acquire the collection MODE_X lock (and other locks up the hierarchy) as usual, with a
      * timeout. On timeout, all locks are released. If 'retry' is true, keeps retrying until
@@ -777,9 +763,6 @@ protected:
      */
     void _insertKeysFromSideTablesWithoutBlockingWrites(
         OperationContext* opCtx, std::shared_ptr<ReplIndexBuildState> replState);
-    void _insertKeysFromSideTablesBlockingWrites(OperationContext* opCtx,
-                                                 std::shared_ptr<ReplIndexBuildState> replState,
-                                                 const IndexBuildOptions& indexBuildOptions);
 
     /**
      * Reads the commit ready members list for index build UUID in 'replState' from
@@ -920,21 +903,11 @@ protected:
 
     // The thread spawned during step-up to verify the builds.
     stdx::thread _stepUpThread;
-
-    // Manages _newIndexBuildsBlocked.
-    mutable stdx::mutex _newIndexBuildsBlockedMutex;
-    // Condition signalled to indicate new index builds are unblocked.
-    stdx::condition_variable _newIndexBuildsBlockedCV;
-    // Protected by _newIndexBuildsBlockedMutex.
-    bool _newIndexBuildsBlocked = false;
-    // Reason for blocking new index builds.
-    boost::optional<std::string> _blockReason;
 };
 
 // These fail points are used to control index build progress. Declared here to be shared
 // temporarily between createIndexes command and IndexBuildsCoordinator.
 extern FailPoint hangAfterIndexBuildFirstDrain;
-extern FailPoint hangAfterIndexBuildSecondDrain;
 extern FailPoint hangAfterIndexBuildDumpsInsertsFromBulk;
 
 }  // namespace mongo

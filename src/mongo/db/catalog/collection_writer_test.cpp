@@ -27,17 +27,6 @@
  *    it in the license file.
  */
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <mutex>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/catalog_test_fixture.h"
@@ -56,6 +45,17 @@
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/barrier.h"
 #include "mongo/unittest/unittest.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -351,68 +351,6 @@ TEST_F(CollectionWriterTest, AutoGetOplogFastPathkWriteObjectStabilityConcurrent
 TEST_F(CollectionWriterTest, AutoGetOplogFastPathkLogOpObjectStabilityConcurrentDDL) {
     runAutoGetOplogFastPathObjectStabilityConcurrentDDL(
         getServiceContext(), operationContext(), OplogAccessMode::kLogOp);
-}
-
-/**
- * This test uses a catalog with a large number of collections to make it slow to copy. The idea
- * is to trigger the batching behavior when multiple threads want to perform catalog writes
- * concurrently. The batching works correctly if the threads all observe the same catalog
- * instance when they write. If this test is flaky, try to increase the number of collections in
- * the catalog setup.
- */
-class CatalogReadCopyUpdateTest : public CatalogTestFixture {
-public:
-    // Number of collection instances in the catalog. We want to have a large number to make the
-    // CollectionCatalog copy constructor slow enough to trigger the batching behavior. All threads
-    // need to enter CollectionCatalog::write() to be batched before the first thread finishes its
-    // write.
-    static constexpr size_t NumCollections = 50000;
-
-    void setUp() override {
-        CatalogTestFixture::setUp();
-        Lock::GlobalWrite lk(operationContext());
-
-        CollectionCatalog::write(getServiceContext(), [&](CollectionCatalog& catalog) {
-            for (size_t i = 0; i < NumCollections; ++i) {
-                catalog.registerCollection(
-                    operationContext(),
-                    std::make_shared<CollectionMock>(NamespaceString::createNamespaceString_forTest(
-                        "many", fmt::format("coll{}", i))),
-                    /*ts=*/boost::none);
-            }
-        });
-    }
-};
-
-TEST_F(CatalogReadCopyUpdateTest, ConcurrentCatalogWriteBatchingMayThrow) {
-    // Start threads and perform write that will throw at the same time
-    constexpr int32_t NumThreads = 4;
-
-    unittest::Barrier barrier(NumThreads);
-    AtomicWord<int32_t> threadIndex{0};
-    auto job = [&]() {
-        auto index = threadIndex.fetchAndAdd(1);
-        barrier.countDownAndWait();
-
-        try {
-            CollectionCatalog::write(getServiceContext(),
-                                     [&](CollectionCatalog& writableCatalog) { throw index; });
-            // Should not reach this assert
-            ASSERT(false);
-        } catch (int32_t ex) {
-            // Verify that we received the correct exception even if our write job executed on a
-            // different thread
-            ASSERT_EQ(ex, index);
-        }
-    };
-
-    std::array<stdx::thread, NumThreads> threads;
-    for (auto&& thread : threads) {
-        thread = stdx::thread(job);
-    }
-    for (auto&& thread : threads) {
-        thread.join();
-    }
 }
 
 }  // namespace

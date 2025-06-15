@@ -27,8 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-
+#include "mongo/s/commands/query_cmd/cluster_explain.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -46,10 +45,11 @@
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
-#include "mongo/s/commands/query_cmd/cluster_explain.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <memory>
 
 namespace mongo {
 
@@ -190,7 +190,7 @@ void ClusterExplain::validateShardResponses(
         uassert(ErrorCodes::OperationFailed,
                 str::stream() << "Explain command on shard " << response.shardId
                               << " failed, caused by: " << responseData,
-                responseData["queryPlanner"].type() == Object);
+                responseData["queryPlanner"].type() == BSONType::object);
 
         if (responseData.hasField("executionStats")) {
             numShardsExecStats++;

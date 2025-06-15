@@ -29,10 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_coll_stats.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -48,6 +44,10 @@
 #include "mongo/util/net/socket_utils.h"
 #include "mongo/util/serialization_context.h"
 #include "mongo/util/time_support.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 using boost::intrusive_ptr;
 
@@ -70,14 +70,14 @@ void DocumentSourceCollStats::LiteParsed::assertPermittedInAPIVersion(
 }
 
 const char* DocumentSourceCollStats::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 intrusive_ptr<DocumentSource> DocumentSourceCollStats::createFromBson(
     BSONElement specElem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
     uassert(40166,
             str::stream() << "$collStats must take a nested object but found: " << specElem,
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
 
     const auto tenantId = pExpCtx->getNamespaceString().tenantId();
     const auto vts = tenantId
@@ -129,7 +129,7 @@ BSONObj DocumentSourceCollStats::makeStatsForNs(
 
     builder.append(
         "host", prettyHostNameAndPort(expCtx->getOperationContext()->getClient()->getLocalPort()));
-    builder.appendDate("localTime", jsTime());
+    builder.appendDate("localTime", Date_t::now());
 
     if (spec.getOperationStats()) {
         // operationStats is only allowed when featureFlagCursorBasedTop is enabled.

@@ -29,14 +29,6 @@
 
 #include "mongo/db/query/projection_parser.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/exact_cast.h"
 #include "mongo/base/status.h"
@@ -51,6 +43,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace projection_ast {
@@ -136,11 +136,11 @@ ProjectType computeProjectionType(bool hasFindSlice,
  */
 bool isInclusionOrExclusionType(BSONType type) {
     switch (type) {
-        case BSONType::Bool:
-        case BSONType::NumberInt:
-        case BSONType::NumberLong:
-        case BSONType::NumberDouble:
-        case BSONType::NumberDecimal:
+        case BSONType::boolean:
+        case BSONType::numberInt:
+        case BSONType::numberLong:
+        case BSONType::numberDouble:
+        case BSONType::numberDecimal:
             return true;
         default:
             return false;
@@ -184,14 +184,14 @@ void addNodeAtPathHelper(ProjectionPathASTNode* root,
     if (path.getPathLength() == componentIndex + 1) {
         uassert(31250, str::stream() << "Path collision at " << path.fullPath(), !child);
 
-        root->addChild(nextComponent.toString(), std::move(newChild));
+        root->addChild(std::string{nextComponent}, std::move(newChild));
         return;
     }
 
     if (!child) {
         auto newInternalChild = std::make_unique<ProjectionPathASTNode>();
         auto rawInternalChild = newInternalChild.get();
-        root->addChild(nextComponent.toString(), std::move(newInternalChild));
+        root->addChild(std::string{nextComponent}, std::move(newInternalChild));
         addNodeAtPathHelper(rawInternalChild, path, componentIndex + 1, std::move(newChild));
         return;
     }
@@ -207,7 +207,7 @@ void addNodeAtPathHelper(ProjectionPathASTNode* root,
 }
 
 bool hasPositionalOperator(StringData path) {
-    return path.endsWith(".$");
+    return path.ends_with(".$");
 }
 
 bool isPrefixOf(StringData first, StringData second) {
@@ -215,7 +215,7 @@ bool isPrefixOf(StringData first, StringData second) {
         return false;
     }
 
-    return second.startsWith(first) && second[first.size()] == '.';
+    return second.starts_with(first) && second[first.size()] == '.';
 }
 
 struct ParseContext {
@@ -252,7 +252,7 @@ void attemptToParseFindSlice(ParseContext* parseCtx,
                       path,
                       std::make_unique<ProjectionSliceASTNode>(
                           boost::none, subObj.firstElement().safeNumberInt()));
-    } else if (subObj.firstElementType() == BSONType::Array) {
+    } else if (subObj.firstElementType() == BSONType::array) {
         BSONObj arr = subObj.firstElement().embeddedObject();
         uassert(31272, "$slice array argument should be of form [skip, limit]", arr.nFields() == 2);
 
@@ -355,7 +355,7 @@ bool parseSubObjectAsExpression(ParseContext* parseCtx,
             uassert(31274,
                     str::stream() << "elemMatch: Invalid argument, object required, but got "
                                   << subObj.firstElementType(),
-                    subObj.firstElementType() == BSONType::Object);
+                    subObj.firstElementType() == BSONType::object);
 
             uassert(31255,
                     "Cannot specify positional operator and $elemMatch.",
@@ -393,10 +393,7 @@ bool parseSubObjectAsExpression(ParseContext* parseCtx,
 /**
  * Treats the given element as an inclusion projection, and update the tree as necessary.
  */
-void parseInclusion(ParseContext* ctx,
-                    BSONElement elem,
-                    ProjectionPathASTNode* parent,
-                    boost::optional<FieldPath> fullPathToParent) {
+void parseInclusion(ParseContext* ctx, BSONElement elem, ProjectionPathASTNode* parent) {
     // There are special rules about _id being included. _id may be included in both inclusion and
     // exclusion projections.
     const bool isTopLevelIdProjection = elem.fieldNameStringData() == "_id" && parent->isRoot();
@@ -466,7 +463,7 @@ void parseInclusion(ParseContext* ctx,
 }
 
 /**
- * Treates the given element as an exclusion projection and updates the tree as necessary.
+ * Treats the given element as an exclusion projection and updates the tree as necessary.
  */
 void parseExclusion(ParseContext* ctx, BSONElement elem, ProjectionPathASTNode* parent) {
     invariant(!elem.trueValue());
@@ -509,7 +506,7 @@ void parseLiteral(ParseContext* ctx, BSONElement elem, ProjectionPathASTNode* pa
 // Mutually recursive with parseSubObject().
 void parseElement(ParseContext* ctx,
                   BSONElement elem,
-                  boost::optional<FieldPath> fullPathToParent,
+                  const boost::optional<FieldPath>& fullPathToParent,
                   ProjectionPathASTNode* parent);
 
 /**
@@ -519,7 +516,7 @@ void parseElement(ParseContext* ctx,
  */
 void parseSubObject(ParseContext* ctx,
                     StringData objFieldName,
-                    boost::optional<FieldPath> fullPathToParent,
+                    const boost::optional<FieldPath>& fullPathToParent,
                     const BSONObj& obj,
                     ProjectionPathASTNode* parent) {
     uassert(
@@ -551,7 +548,7 @@ void parseSubObject(ParseContext* ctx,
         } catch (const DBException&) {
             uasserted(31325,
                       str::stream()
-                          << "Unknown expression " << obj.firstElementFieldNameStringData());
+                          << Expression::getErrorMessage(obj.firstElementFieldNameStringData()));
         }
     }
 
@@ -562,9 +559,15 @@ void parseSubObject(ParseContext* ctx,
         addNodeAtPath(parent, path, std::move(ownedChild));
     }
 
-    const FieldPath fullPathToNewParent = fullPathToParent ? fullPathToParent->concat(path) : path;
-    for (auto&& elem : obj) {
-        parseElement(ctx, elem, fullPathToNewParent, newParent);
+    auto parseObjectElements = [&](FieldPath path) {
+        for (auto&& elem : obj) {
+            parseElement(ctx, elem, path, newParent);
+        }
+    };
+    if (fullPathToParent) {
+        parseObjectElements(fullPathToParent->concat(path));
+    } else {
+        parseObjectElements(path);
     }
 }
 
@@ -574,7 +577,7 @@ void parseSubObject(ParseContext* ctx,
  */
 void parseElement(ParseContext* ctx,
                   BSONElement elem,
-                  boost::optional<FieldPath> fullPathToParent,
+                  const boost::optional<FieldPath>& fullPathToParent,
                   ProjectionPathASTNode* parent) {
     const bool hasPositional = hasPositionalOperator(elem.fieldNameStringData());
 
@@ -592,7 +595,7 @@ void parseElement(ParseContext* ctx,
             "results will be equivalent.",
             !str::contains(elem.fieldNameStringData(), ".$."));
 
-    if (elem.type() == BSONType::Object) {
+    if (elem.type() == BSONType::object) {
         BSONObj subObj = elem.embeddedObject();
         // Uninitialized 'ctx->type' is default treated as ProjectType::kInclusion.
         if (!ctx->type || *ctx->type != ProjectType::kAddition || !subObj.isEmpty()) {
@@ -614,7 +617,7 @@ void parseElement(ParseContext* ctx,
                    ProjectionPolicies::ComputedFieldsPolicy::kOnlyComputedFields &&
                isInclusionOrExclusionType(elem.type())) {
         if (elem.trueValue()) {
-            parseInclusion(ctx, elem, parent, fullPathToParent);
+            parseInclusion(ctx, elem, parent);
         } else {
             uassert(31395, "positional projection cannot be used with exclusion", !hasPositional);
             parseExclusion(ctx, elem, parent);
@@ -640,7 +643,7 @@ Projection parseAndAnalyze(boost::intrusive_ptr<ExpressionContext> expCtx,
 
     ProjectionPathASTNode root;
 
-    ParseContext ctx{expCtx, query, queryObj, obj, policies};
+    ParseContext ctx{std::move(expCtx), query, queryObj, obj, policies};
 
     // $addFields is treated as a projection that has only computed fields.
     if (policies.computedFieldsPolicy ==
@@ -651,7 +654,7 @@ Projection parseAndAnalyze(boost::intrusive_ptr<ExpressionContext> expCtx,
     for (auto&& elem : obj) {
         if (elem.fieldNameStringData().starts_with("_")) {
             ctx.idSpecified |= elem.fieldNameStringData() == "_id" ||
-                elem.fieldNameStringData().startsWith("_id.");
+                elem.fieldNameStringData().starts_with("_id.");
         }
 
         parseElement(&ctx, elem, boost::none, &root);

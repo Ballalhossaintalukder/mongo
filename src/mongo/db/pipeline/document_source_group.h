@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
@@ -42,6 +37,12 @@
 #include "mongo/db/pipeline/document_source_sort.h"
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_context.h"
+
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -69,6 +70,7 @@ public:
         const boost::intrusive_ptr<ExpressionContext>& expCtx,
         const boost::intrusive_ptr<Expression>& groupByExpression,
         std::vector<AccumulationStatement> accumulationStatements,
+        bool willBeMerged,
         boost::optional<int64_t> maxMemoryUsageBytes = boost::none);
 
     /**

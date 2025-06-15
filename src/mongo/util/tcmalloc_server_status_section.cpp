@@ -28,10 +28,6 @@
  */
 
 
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <optional>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -40,6 +36,11 @@
 #include "mongo/db/commands/server_status.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/util/itoa.h"
+
+#include <cstddef>
+#include <optional>
+
+#include <boost/optional/optional.hpp>
 
 #ifdef MONGO_CONFIG_TCMALLOC_GOOGLE
 #include <tcmalloc/cpu_cache.h>
@@ -258,7 +259,7 @@ public:
 
     boost::optional<long long> getNumericProperty(StringData propertyName) const override {
         size_t value;
-        if (MallocExtension::instance()->GetNumericProperty(propertyName.rawData(), &value)) {
+        if (MallocExtension::instance()->GetNumericProperty(propertyName.data(), &value)) {
             return static_cast<long long>(value);
         }
 

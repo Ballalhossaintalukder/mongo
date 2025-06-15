@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <exception>
-#include <memory>
-#include <set>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -61,13 +49,26 @@
 #include "mongo/logv2/log_attr.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <cstdint>
+#include <exception>
+#include <memory>
+#include <set>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * The $bucketAuto stage takes a user-specified number of buckets and automatically determines
  * boundaries such that the values are approximately equally distributed between those buckets.
  */
-class DocumentSourceBucketAuto final : public DocumentSource {
+class DocumentSourceBucketAuto final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$bucketAuto"_sd;
     Value serialize(const SerializationOptions& opts = SerializationOptions{}) const final;

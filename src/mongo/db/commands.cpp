@@ -29,16 +29,6 @@
 
 #include "mongo/db/commands.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_extra_info.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
@@ -78,6 +68,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -295,7 +296,7 @@ void CommandHelpers::auditLogAuthEvent(OperationContext* opCtx,
                 _name = _invocation->definition()->getName();
             } else {
                 _nss = NamespaceString(request.parseDbName());
-                _name = request.getCommandName().toString();
+                _name = std::string{request.getCommandName()};
             }
         }
 
@@ -354,7 +355,7 @@ std::string CommandHelpers::parseNsFullyQualified(const BSONObj& cmdObj) {
     uassert(ErrorCodes::InvalidNamespace,
             str::stream() << "Invalid namespace specified '" << ns << "'",
             NamespaceString::isValid(ns));
-    return ns.toString();
+    return std::string{ns};
 }
 
 NamespaceString CommandHelpers::parseNsCollectionRequired(const DatabaseName& dbName,
@@ -370,7 +371,7 @@ NamespaceString CommandHelpers::parseNsCollectionRequired(const DatabaseName& db
 NamespaceStringOrUUID CommandHelpers::parseNsOrUUID(const DatabaseName& dbName,
                                                     const BSONObj& cmdObj) {
     BSONElement first = cmdObj.firstElement();
-    if (first.type() == BinData && first.binDataType() == BinDataType::newUUID) {
+    if (first.type() == BSONType::binData && first.binDataType() == BinDataType::newUUID) {
         return {dbName, uassertStatusOK(UUID::parse(first))};
     } else {
         const NamespaceString nss(parseNsCollectionRequired(dbName, cmdObj));
@@ -390,7 +391,7 @@ void CommandHelpers::ensureValidCollectionName(const NamespaceString& nss) {
 NamespaceString CommandHelpers::parseNsFromCommand(const DatabaseName& dbName,
                                                    const BSONObj& cmdObj) {
     BSONElement first = cmdObj.firstElement();
-    if (first.type() != mongo::String)
+    if (first.type() != BSONType::string)
         return NamespaceString(dbName);
     return NamespaceStringUtil::deserialize(dbName, cmdObj.firstElement().valueStringData());
 }
@@ -703,6 +704,15 @@ bool CommandHelpers::shouldActivateFailCommandFailPoint(const BSONObj& data,
         return false;
     }
 
+    if (client->isInDirectClient()) {
+        bool failDirectClientCommands = data.hasField("failDirectClientCommands")
+            ? data.getBoolField("failDirectClientCommands")
+            : true;
+        if (!failDirectClientCommands) {
+            return false;
+        }
+    }
+
     if (data.hasField("failAllCommands")) {
         LOGV2(6348500,
               "Activating 'failCommand' failpoint for all commands",
@@ -716,7 +726,8 @@ bool CommandHelpers::shouldActivateFailCommandFailPoint(const BSONObj& data,
     }
 
     for (auto&& failCommand : data.getObjectField("failCommands")) {
-        if (failCommand.type() == String && cmd->hasAlias(failCommand.valueStringData())) {
+        if (failCommand.type() == BSONType::string &&
+            cmd->hasAlias(failCommand.valueStringData())) {
             LOGV2(4898500,
                   "Activating 'failCommand' failpoint",
                   "data"_attr = data,
@@ -748,7 +759,7 @@ void CommandHelpers::evaluateFailCommandFailPoint(OperationContext* opCtx,
             rpc::RewriteStateChangeErrors::onActiveFailCommand(opCtx, data);
 
             if (data.hasField(kErrorLabelsFieldName) &&
-                data[kErrorLabelsFieldName].type() == Array) {
+                data[kErrorLabelsFieldName].type() == BSONType::array) {
                 // Propagate error labels specified in the failCommand failpoint to the
                 // OperationContext decoration to override getErrorLabels() behaviors.
                 invariant(!errorLabelsOverride(opCtx));
@@ -813,7 +824,7 @@ void CommandHelpers::evaluateFailCommandFailPoint(OperationContext* opCtx,
 
             auto errorExtraInfo = [&]() -> boost::optional<BSONObj> {
                 BSONElement e;
-                Status st = bsonExtractTypedField(data, "errorExtraInfo", BSONType::Object, &e);
+                Status st = bsonExtractTypedField(data, "errorExtraInfo", BSONType::object, &e);
                 if (st == ErrorCodes::NoSuchKey)
                     return {};  // It's optional. Missing is allowed. Other errors aren't.
                 uassertStatusOK(st);
@@ -1088,7 +1099,7 @@ std::unique_ptr<CommandInvocation> BasicCommandWithReplyBuilderInterface::parse(
 }
 
 Command::Command(StringData name, std::vector<StringData> aliases)
-    : _name(name.toString()), _aliases(std::move(aliases)) {}
+    : _name(std::string{name}), _aliases(std::move(aliases)) {}
 
 void Command::initializeClusterRole(ClusterRole role) {
     for (auto&& [ptr, stat] : {
@@ -1231,10 +1242,8 @@ void CommandConstructionPlan::execute(CommandRegistry* registry,
             LOGV2_DEBUG(8043401, 3, "Skipping test-only command", "entry"_attr = *entry);
             continue;
         }
-        // (Ignore FCV check): Skip only if the flag is disabled. (see requiresFeatureFlag
-        // documentation).
-        if (!entry->featureFlag.isEnabled(
-                [](auto& fcvGatedFlag) { return fcvGatedFlag.isEnabledAndIgnoreFCVUnsafe(); })) {
+        // Do not register feature-gated commands that cannot become enabled at runtime.
+        if (entry->featureFlag && !entry->featureFlag->canBeEnabled()) {
             LOGV2_DEBUG(8043402, 3, "Skipping FeatureFlag gated command", "entry"_attr = *entry);
             continue;
         }

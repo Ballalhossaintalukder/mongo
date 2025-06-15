@@ -27,28 +27,47 @@
  *    it in the license file.
  */
 
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_set_window_fields.h"
 
 #include "mongo/base/error_codes.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/json.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_mock.h"
-#include "mongo/db/pipeline/document_source_set_window_fields.h"
+#include "mongo/db/pipeline/spilling/spilling_test_process_interface.h"
+#include "mongo/db/query/plan_summary_stats_visitor.h"
+#include "mongo/db/service_context_d_test_fixture.h"
+#include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <vector>
 
 namespace mongo {
 namespace {
 
-// This provides access to getExpCtx(), but we'll use a different name for this test suite.
+/**
+ * Fixture that provides expression context.
+ */
 using DocumentSourceSetWindowFieldsTest = AggregationContextFixture;
+
+/**
+ * Fixture that also provides storage engine for spilling.
+ */
+class DocumentSourceSetWindowFieldsSpillingTest : public AggregationContextFixture {
+public:
+    DocumentSourceSetWindowFieldsSpillingTest()
+        : AggregationContextFixture(std::make_unique<MongoDScopedGlobalServiceContextForTest>(
+              MongoDScopedGlobalServiceContextForTest::Options{}, shouldSetupTL)) {
+        getExpCtx()->setMongoProcessInterface(
+            std::make_shared<SpillingTestMongoProcessInterface>());
+    }
+};
 
 TEST_F(DocumentSourceSetWindowFieldsTest, FailsToParseInvalidArgumentTypes) {
     auto spec = BSON("$_internalSetWindowFields" << "invalid");
@@ -129,10 +148,11 @@ TEST_F(DocumentSourceSetWindowFieldsTest, HandlesEmptyInputCorrectly) {
         {$sum: '$pop', window: {documents: ["unbounded", 0]}}}}})");
     auto parsedStage =
         DocumentSourceInternalSetWindowFields::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(parsedStage);
     const auto mock = DocumentSourceMock::createForTest(getExpCtx());
-    parsedStage->setSource(mock.get());
+    stage->setSource(mock.get());
     ASSERT_EQ((int)DocumentSource::GetNextResult::ReturnStatus::kEOF,
-              (int)parsedStage->getNext().getStatus());
+              (int)stage->getNext().getStatus());
 }
 
 TEST_F(DocumentSourceSetWindowFieldsTest, HandlesDependencyWithArrayExpression) {
@@ -260,7 +280,7 @@ TEST_F(DocumentSourceSetWindowFieldsTest, RedactionOnShiftOperator) {
 TEST_F(DocumentSourceSetWindowFieldsTest, PartitionOutputIsCorrect) {
     auto spec = fromjson(  // NOLINT
         R"({
-            "$setWindowFields": { 
+            "$setWindowFields": {
                 "sortBy": { "num": 1 },
                 "output": {
                     "sum": {
@@ -276,27 +296,28 @@ TEST_F(DocumentSourceSetWindowFieldsTest, PartitionOutputIsCorrect) {
 
     auto parsedStage =
         DocumentSourceInternalSetWindowFields::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(parsedStage);
     std::vector<Document> docs;
     docs.push_back(DOC("num" << 3 << "val" << 25 << "part" << 1));
     docs.push_back(DOC("num" << 15 << "val" << 12 << "part" << 1));
     docs.push_back(DOC("num" << 2 << "val" << 1 << "part" << 2));
     docs.push_back(DOC("num" << 4 << "val" << 3 << "part" << 2));
     auto source = DocumentSourceMock::createForTest(docs, getExpCtx());
-    parsedStage->setSource(source.get());
+    stage->setSource(source.get());
 
-    auto next = parsedStage->getNext();
+    auto next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(), "{num: 3, val: 25, part: 1, sum: 37}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(), "{num: 15, val: 12, part: 1, sum: 37}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(), "{num: 2, val: 1, part: 2, sum: 4}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(), "{num: 4, val: 3, part: 2, sum: 4}");
 }
@@ -309,7 +330,7 @@ TEST_F(DocumentSourceSetWindowFieldsTest, OptimizationRemovesRedundantSortStage)
         DocumentSourceInternalSetWindowFields::createFromBson(swfSpec.firstElement(), getExpCtx());
     auto sortSpec = fromjson(R"({$sort: {y: 1}})");
     auto sortStage = DocumentSourceSort::createFromBson(sortSpec.firstElement(), getExpCtx());
-    swfStage->setSource(sortStage.get());
+    exec::agg::buildStage(swfStage)->setSource(exec::agg::buildStage(sortStage.get()).get());
     auto prevSortStage = DocumentSourceSort::createFromBson(sortSpec.firstElement(), getExpCtx());
     Pipeline::SourceContainer pipeline = {prevSortStage, swfStage, sortStage};
 
@@ -326,7 +347,24 @@ TEST_F(DocumentSourceSetWindowFieldsTest, OptimizationRemovesRedundantSortStage)
     ASSERT_EQ(std::string(pipeline.back()->getSourceName()), "$_internalSetWindowFields"_sd);
 }
 
-TEST_F(DocumentSourceSetWindowFieldsTest, FailIfCannotSpillAndExceedMemoryLimit) {
+PlanSummaryStats collectPipelineStats(
+    const std::list<boost::intrusive_ptr<DocumentSource>>& pipelineStages) {
+    PlanSummaryStats stats;
+    PlanSummaryStatsVisitor visitor{stats};
+    for (const auto& stage : pipelineStages) {
+        const auto* stageStats = exec::agg::buildStage(stage)->getSpecificStats();
+        if (stageStats != nullptr) {
+            stageStats->acceptVisitor(&visitor);
+        }
+    }
+    return stats;
+}
+
+TEST_F(DocumentSourceSetWindowFieldsSpillingTest,
+       CanSpillAndFailIfCannotSpillAndExceedMemoryLimit) {
+    RAIIServerParameterControllerForTest maxMemoryBytes(
+        "internalDocumentSourceSetWindowFieldsMaxMemoryBytes", 3000);
+
     auto wfSpec = fromjson(R"({
             $setWindowFields: {
                 sortBy: {val: 1},
@@ -343,23 +381,102 @@ TEST_F(DocumentSourceSetWindowFieldsTest, FailIfCannotSpillAndExceedMemoryLimit)
                 }
             }
         })");
-    getExpCtx()->setAllowDiskUse(false);
-    internalDocumentSourceSetWindowFieldsMaxMemoryBytes.store(50);
-    auto pipelineStages =
-        document_source_set_window_fields::createFromBson(wfSpec.firstElement(), getExpCtx());
-    std::vector<Document> docs;
 
-    // Create 100 documents. This should overflow our 50 byte limit and fail.
+    std::vector<Document> docs;
     for (int i = 0; i < 100; ++i) {
         docs.push_back(DOC("val" << i));
     }
+
+    for (bool allowDiskUse : {false, true}) {
+        getExpCtx()->setAllowDiskUse(allowDiskUse);
+
+        auto pipelineStages =
+            document_source_set_window_fields::createFromBson(wfSpec.firstElement(), getExpCtx());
+        auto source = DocumentSourceMock::createForTest(docs, getExpCtx());
+        pipelineStages.push_front(source);
+        auto pipeline = Pipeline::create(pipelineStages, getExpCtx());
+        auto execPipeline =
+            exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+
+        auto exhaustPipeline = [&]() {
+            while (execPipeline->getNext().has_value()) {
+            }
+        };
+
+        if (allowDiskUse) {
+            exhaustPipeline();
+
+            auto planSummaryStats = collectPipelineStats(pipelineStages);
+            const auto& spillingStats =
+                planSummaryStats
+                    .spillingStatsPerStage[PlanSummaryStats::SpillingStage::SET_WINDOW_FIELDS];
+            // Exact numbers of spills and bytes might differ on different platforms.
+            ASSERT_GTE(spillingStats.getSpills(), 1);
+            ASSERT_GTE(spillingStats.getSpilledRecords(), 90);
+            ASSERT_GTE(spillingStats.getSpilledBytes(), 5000);
+        } else {
+            ASSERT_THROWS_CODE(exhaustPipeline(), DBException, 5643011);
+        }
+    }
+}
+
+TEST_F(DocumentSourceSetWindowFieldsSpillingTest, CanForceSpill) {
+    auto wfSpec = fromjson(R"({
+            $setWindowFields: {
+                sortBy: {val: 1},
+                output: {
+                    sum: {
+                        $sum: "$val",
+                        "window": {
+                            "documents": [
+                                -1000,
+                                +1000
+                            ]
+                        }
+                    }
+                }
+            }
+        })");
+
+    std::vector<Document> docs;
+    for (int i = 0; i < 100; ++i) {
+        docs.push_back(DOC("val" << i));
+    }
+
+    getExpCtx()->setAllowDiskUse(true);
+
+    auto pipelineStages =
+        document_source_set_window_fields::createFromBson(wfSpec.firstElement(), getExpCtx());
     auto source = DocumentSourceMock::createForTest(docs, getExpCtx());
     pipelineStages.push_front(source);
     auto pipeline = Pipeline::create(pipelineStages, getExpCtx());
-    ASSERT_THROWS_CODE(pipeline->getNext(), DBException, 5643011);
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
 
-    // Reset to default for future tests.
-    internalDocumentSourceSetWindowFieldsMaxMemoryBytes.store(100 * 1024 * 1024);
+    int nextDocIndex = 0;
+    auto assertNextDocument = [&](const boost::optional<Document>& doc) {
+        ASSERT_TRUE(doc.has_value());
+        ASSERT_EQ(doc->getField("val").coerceToInt(), nextDocIndex++);
+        ASSERT_EQ(doc->getField("sum").coerceToInt(), 4950);
+    };
+
+    for (int i = 0; i < 20; ++i) {
+        assertNextDocument(execPipeline->getNext());
+    }
+
+    pipeline->forceSpill();
+
+    while (auto next = execPipeline->getNext()) {
+        assertNextDocument(next);
+    };
+    ASSERT_EQ(nextDocIndex, docs.size());
+
+    SpillingStats spillingStats =
+        collectPipelineStats(pipelineStages)
+            .spillingStatsPerStage[PlanSummaryStats::SpillingStage::SET_WINDOW_FIELDS];
+    ASSERT_EQ(spillingStats.getSpills(), 1);
+    ASSERT_EQ(spillingStats.getSpilledRecords(), 80);
+    // Exact number of bytes might differ on different platforms.
+    ASSERT_GTE(spillingStats.getSpilledBytes(), 5000);
 }
 
 TEST_F(DocumentSourceSetWindowFieldsTest, outputFieldsIsDeterministic) {
@@ -369,7 +486,7 @@ TEST_F(DocumentSourceSetWindowFieldsTest, outputFieldsIsDeterministic) {
 
     auto spec = fromjson(  // NOLINT
         R"({
-            $setWindowFields: { 
+            $setWindowFields: {
                 sortBy: { "obj.num": 1 },
                 output: {
                     "obj.str": {
@@ -386,32 +503,33 @@ TEST_F(DocumentSourceSetWindowFieldsTest, outputFieldsIsDeterministic) {
         })");
     auto parsedStage =
         DocumentSourceInternalSetWindowFields::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(parsedStage);
     const auto mock = DocumentSourceMock::createForTest(getExpCtx());
     auto source = DocumentSourceMock::createForTest(
         {"{b: 6}", "{b: 5000}", "{b: 50}", "{b: 88}", "{b: 100}"}, getExpCtx());
-    parsedStage->setSource(source.get());
+    stage->setSource(source.get());
 
-    auto next = parsedStage->getNext();
+    auto next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(),
               "{b: 6, obj: {str: \"\", obj: {date: 2012-10-17T20:46:22.000Z}, totalB: 5244}}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(),
               "{b: 5000, obj: {str: \"\", obj: {date: 2012-10-17T20:46:22.000Z}, totalB: 5244}}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(),
               "{b: 50, obj: {str: \"\", obj: {date: 2012-10-17T20:46:22.000Z}, totalB: 5244}}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(),
               "{b: 88, obj: {str: \"\", obj: {date: 2012-10-17T20:46:22.000Z}, totalB: 5244}}");
 
-    next = parsedStage->getNext();
+    next = stage->getNext();
     ASSERT(next.isAdvanced());
     ASSERT_EQ(next.getDocument().toString(),
               "{b: 100, obj: {str: \"\", obj: {date: 2012-10-17T20:46:22.000Z}, totalB: 5244}}");

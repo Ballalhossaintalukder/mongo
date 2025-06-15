@@ -48,14 +48,12 @@ const allCommands = {
     _configsvrCommitChunksMerge: {skip: isAnInternalCommand},
     _configsvrCommitChunkMigration: {skip: isAnInternalCommand},
     _configsvrCommitChunkSplit: {skip: isAnInternalCommand},
-    _configsvrCommitIndex: {skip: isAnInternalCommand},
     _configsvrCommitMergeAllChunksOnShard: {skip: isAnInternalCommand},
     _configsvrCommitMovePrimary: {skip: isAnInternalCommand},
     _configsvrCommitRefineCollectionShardKey: {skip: isAnInternalCommand},
     _configsvrCommitReshardCollection: {skip: isAnInternalCommand},
     _configsvrConfigureCollectionBalancing: {skip: isAnInternalCommand},
     _configsvrCreateDatabase: {skip: isAnInternalCommand},
-    _configsvrDropIndexCatalogEntry: {skip: isAnInternalCommand},
     _configsvrEnsureChunkVersionIsGreaterThan: {skip: isAnInternalCommand},
     _configsvrGetHistoricalPlacement: {skip: isAnInternalCommand},
     _configsvrHelloMe: {skip: isAnInternalCommand},
@@ -103,18 +101,15 @@ const allCommands = {
     _shardsvrCloneCatalogData: {skip: isAnInternalCommand},
     _shardsvrCompactStructuredEncryptionData: {skip: isAnInternalCommand},
     _shardsvrConvertToCapped: {skip: isAnInternalCommand},
-    _shardsvrRegisterIndex: {skip: isAnInternalCommand},
     _shardsvrRunSearchIndexCommand: {skip: isAnInternalCommand},
     _shardsvrResolveView: {skip: isAnInternalCommand},
     _shardsvrCommitCreateDatabaseMetadata: {skip: isAnInternalCommand},
     _shardsvrCommitDropDatabaseMetadata: {skip: isAnInternalCommand},
-    _shardsvrCommitIndexParticipant: {skip: isAnInternalCommand},
     _shardsvrCommitReshardCollection: {skip: isAnInternalCommand},
     _shardsvrDropCollection: {skip: isAnInternalCommand},
     _shardsvrCreateCollection: {skip: isAnInternalCommand},
     _shardsvrDropCollectionIfUUIDNotMatchingWithWriteConcern: {skip: isAnInternalCommand},
     _shardsvrDropCollectionParticipant: {skip: isAnInternalCommand},
-    _shardsvrDropIndexCatalogEntryParticipant: {skip: isAnInternalCommand},
     _shardsvrDropIndexes: {skip: isAnInternalCommand},
     _shardsvrCreateCollectionParticipant: {skip: isAnInternalCommand},
     _shardsvrCoordinateMultiUpdate: {skip: isAnInternalCommand},
@@ -144,7 +139,6 @@ const allCommands = {
     _shardsvrSetAllowMigrations: {skip: isAnInternalCommand},
     _shardsvrSetClusterParameter: {skip: isAnInternalCommand},
     _shardsvrSetUserWriteBlockMode: {skip: isAnInternalCommand},
-    _shardsvrUnregisterIndex: {skip: isAnInternalCommand},
     _shardsvrValidateShardKeyCandidate: {skip: isAnInternalCommand},
     _shardsvrCollMod: {skip: isAnInternalCommand},
     _shardsvrCollModParticipant: {skip: isAnInternalCommand},
@@ -855,6 +849,7 @@ const allCommands = {
         isShardedOnly: true,
         isAdminCommand: true,
     },
+    getTrafficRecordingStatus: {skip: isAnInternalCommand},
     godinsert: {
         setUp: function(conn) {
             assert.commandWorked(conn.getDB(dbName).runCommand({create: collName}));
@@ -1547,6 +1542,12 @@ const allCommands = {
     splitChunk: {skip: isAnInternalCommand},
     splitVector: {skip: isAnInternalCommand},
     startRecordingTraffic: {
+        skip: "Renamed to startTrafficRecording",
+    },
+    stopRecordingTraffic: {
+        skip: "Renamed to stopTrafficRecording",
+    },
+    startTrafficRecording: {
         // Skipping command because it requires an actual file path for recording traffic to.
         skip: "requires an actual file path to record traffic to",
     },
@@ -1557,7 +1558,7 @@ const allCommands = {
             assert.commandWorked(conn.adminCommand({endSessions: [res.id]}));
         }
     },
-    stopRecordingTraffic: {
+    stopTrafficRecording: {
         // Skipping command because it requires an actual file path for recording traffic to.
         skip: "requires an actual file path to record traffic to",
     },

@@ -27,13 +27,16 @@ mongo_cc_library(
         "index_hints_serialization.cpp",
         "query_framework_serialization.cpp",
         "query_settings_comment.cpp",
+        "query_settings_hash.cpp",
         ":query_settings_gen",
     ],
     hdrs = [
         "index_hints_serialization.h",
         "query_framework_serialization.h",
+        "query_settings_hash.h",
     ],
     deps = [
+        ":query_settings_service_dependencies",
         "//src/mongo/db:namespace_spec",
         "//src/mongo/db:server_base",
         "//src/mongo/db/query:index_hint",
@@ -54,17 +57,29 @@ idl_generator(
 )
 
 mongo_cc_library(
+    name = "query_settings_service_dependencies",
+    srcs = [
+        "query_settings_service_dependencies.cpp",
+    ],
+    hdrs = [
+        "query_settings_service_dependencies.h",
+    ],
+    deps = [
+        "//src/mongo/db:server_base",
+        "//src/mongo/db/commands:cluster_server_parameter_cmds_idl",
+    ],
+)
+
+mongo_cc_library(
     name = "query_settings_service",
     srcs = [
         "query_settings_cluster_parameter_impl.cpp",
-        "query_settings_hash.cpp",
         "query_settings_manager.cpp",
         "query_settings_manager.h",
         "query_settings_service.cpp",
         ":query_settings_cluster_parameter_gen",
     ],
     hdrs = [
-        "query_settings_hash.h",
         "query_settings_service.h",
     ],
     deps = [
@@ -82,7 +97,6 @@ mongo_cc_library(
         "//src/mongo/db/query:query_knobs",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db/query/query_shape",
         "//src/mongo/idl:cluster_server_parameter",  # TODO(SERVER-93876): Remove.
-        "//src/mongo/idl:cluster_server_parameter_refresher",
     ],
 )
 

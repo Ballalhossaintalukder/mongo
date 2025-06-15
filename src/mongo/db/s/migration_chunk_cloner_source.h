@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <deque>
-#include <functional>
-#include <list>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
@@ -57,7 +44,6 @@
 #include "mongo/db/record_id.h"
 #include "mongo/db/repl/oplog_entry.h"
 #include "mongo/db/repl/optime.h"
-#include "mongo/db/s/migration_chunk_cloner_source.h"
 #include "mongo/db/s/migration_session_id.h"
 #include "mongo/db/s/session_catalog_migration_source.h"
 #include "mongo/db/session/logical_session_id.h"
@@ -76,6 +62,20 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 

@@ -28,13 +28,7 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
 #include "mongo/util/net/ssl_manager.h"
-
-#include <boost/algorithm/string.hpp>
-#include <string>
-#include <vector>
 
 #include "mongo/base/data_view.h"
 #include "mongo/base/init.h"
@@ -57,6 +51,11 @@
 #include "mongo/util/str.h"
 #include "mongo/util/synchronized_value.h"
 #include "mongo/util/text.h"
+
+#include <string>
+#include <vector>
+
+#include <boost/algorithm/string.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -285,9 +284,9 @@ constexpr StringData kOID_O = "2.5.4.10"_sd;
 constexpr StringData kOID_OU = "2.5.4.11"_sd;
 
 static const stdx::unordered_set<std::string> defaultMatchingAttributes = {
-    kOID_DC.toString(),
-    kOID_O.toString(),
-    kOID_OU.toString(),
+    std::string{kOID_DC},
+    std::string{kOID_O},
+    std::string{kOID_OU},
 };
 
 synchronized_value<boost::optional<SSLX509Name>> clusterAuthDNOverride;
@@ -483,14 +482,14 @@ StatusWith<SSLX509Name> parseDN(StringData sd) try {
 #if MONGO_CONFIG_SSL_PROVIDER == MONGO_CONFIG_SSL_PROVIDER_OPENSSL
 // OpenSSL has a more complete library of OID to SN mappings.
 std::string x509OidToShortName(StringData name) {
-    const auto nid = OBJ_txt2nid(name.rawData());
+    const auto nid = OBJ_txt2nid(name.data());
     if (nid == 0) {
-        return name.toString();
+        return std::string{name};
     }
 
     const auto* sn = OBJ_nid2sn(nid);
     if (!sn) {
-        return name.toString();
+        return std::string{name};
     }
 
     return sn;
@@ -501,7 +500,7 @@ using UniqueASN1Object =
 
 boost::optional<std::string> x509ShortNameToOid(StringData name) {
     // Converts the OID to an ASN1_OBJECT
-    UniqueASN1Object obj(OBJ_txt2obj(name.rawData(), 0));
+    UniqueASN1Object obj(OBJ_txt2obj(name.data(), 0));
     if (!obj) {
         return boost::none;
     }
@@ -599,9 +598,9 @@ std::string x509OidToShortName(StringData oid) {
         [&](const std::pair<StringData, StringData>& entry) { return entry.first == oid; });
 
     if (it == kX509OidToShortNameMappings.end()) {
-        return oid.toString();
+        return std::string{oid};
     }
-    return it->second.toString();
+    return std::string{it->second};
 }
 
 boost::optional<std::string> x509ShortNameToOid(StringData name) {
@@ -616,11 +615,11 @@ boost::optional<std::string> x509ShortNameToOid(StringData name) {
                          kX509OidToShortNameMappings.end(),
                          [&](const auto& entry) { return entry.first == name; }) !=
             kX509OidToShortNameMappings.end()) {
-            return name.toString();
+            return std::string{name};
         }
         return boost::none;
     }
-    return it->first.toString();
+    return std::string{it->first};
 }
 #endif
 

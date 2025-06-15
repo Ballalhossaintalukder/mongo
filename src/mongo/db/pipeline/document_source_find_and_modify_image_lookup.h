@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <set>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -46,6 +40,13 @@
 #include "mongo/db/pipeline/stage_constraints.h"
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
+
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -59,7 +60,7 @@ namespace mongo {
  * the forged pre- or post-image oplog entry document for each 'applyOps' oplog entry document that
  * comes with a transaction commit timestamp will have the commit timestamp attached to it.
  */
-class DocumentSourceFindAndModifyImageLookup : public DocumentSource {
+class DocumentSourceFindAndModifyImageLookup : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalFindAndModifyImageLookup"_sd;
     static constexpr StringData kIncludeCommitTransactionTimestampFieldName =
@@ -87,7 +88,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return DocumentSourceFindAndModifyImageLookup::kStageName.rawData();
+        return DocumentSourceFindAndModifyImageLookup::kStageName.data();
     }
 
     static const Id& id;

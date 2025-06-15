@@ -28,19 +28,9 @@
  */
 
 
-#include <algorithm>
-#include <iterator>
-#include <list>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_unwind_transaction.h"
 
 #include "mongo/base/error_codes.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
@@ -54,7 +44,6 @@
 #include "mongo/db/pipeline/change_stream_rewrite_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream.h"
 #include "mongo/db/pipeline/document_source_change_stream_gen.h"
-#include "mongo/db/pipeline/document_source_change_stream_unwind_transaction.h"
 #include "mongo/db/pipeline/document_source_match.h"
 #include "mongo/db/query/query_feature_flags_gen.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
@@ -63,8 +52,19 @@
 #include "mongo/db/transaction/transaction_history_iterator.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <array>
+#include <iterator>
+#include <list>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -72,6 +72,8 @@ REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamUnwindTransaction,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamUnwindTransaction::createFromBson,
                                   true);
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamUnwindTransaction,
+                            DocumentSourceChangeStreamUnwindTransaction::id)
 
 namespace {
 const std::set<std::string> kUnwindExcludedFields = {"clusterTime", "lsid", "txnNumber"};
@@ -146,7 +148,7 @@ DocumentSourceChangeStreamUnwindTransaction::createFromBson(
     const BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5467605,
             str::stream() << "the '" << kStageName << "' stage spec must be an object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     auto parsedSpec = DocumentSourceChangeStreamUnwindTransactionSpec::parse(
         IDLParserContext("DocumentSourceChangeStreamUnwindTransactionSpec"), elem.Obj());
     return new DocumentSourceChangeStreamUnwindTransaction(parsedSpec.getFilter(), expCtx);
@@ -197,15 +199,15 @@ Value DocumentSourceChangeStreamUnwindTransaction::doSerialize(
 
 DepsTracker::State DocumentSourceChangeStreamUnwindTransaction::getDependencies(
     DepsTracker* deps) const {
-    deps->fields.insert(repl::OplogEntry::kOpTypeFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTimestampFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kObjectFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kSessionIdFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTermFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTxnNumberFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kWallClockTimeFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kMultiOpTypeFieldName.toString());
+    deps->fields.insert(std::string{repl::OplogEntry::kOpTypeFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTimestampFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kObjectFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kSessionIdFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTermFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTxnNumberFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kWallClockTimeFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kMultiOpTypeFieldName});
 
     return DepsTracker::State::SEE_NEXT;
 }
@@ -286,7 +288,7 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::TransactionO
 
     Value multiOpTypeValue = input[repl::OplogEntry::kMultiOpTypeFieldName];
     DocumentSourceChangeStream::checkValueTypeOrMissing(
-        multiOpTypeValue, repl::OplogEntry::kMultiOpTypeFieldName, BSONType::NumberInt);
+        multiOpTypeValue, repl::OplogEntry::kMultiOpTypeFieldName, BSONType::numberInt);
     const bool applyOpsAppliedSeparately = !multiOpTypeValue.missing() &&
         multiOpTypeValue.getInt() == int(repl::MultiOplogEntryType::kApplyOpsAppliedSeparately);
 
@@ -295,12 +297,12 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::TransactionO
     // a retryable write and not a multi-document transaction.
     if (!applyOpsAppliedSeparately) {
         Value lsidValue = input["lsid"];
-        DocumentSourceChangeStream::checkValueTypeOrMissing(lsidValue, "lsid", BSONType::Object);
+        DocumentSourceChangeStream::checkValueTypeOrMissing(lsidValue, "lsid", BSONType::object);
         _lsid =
             lsidValue.missing() ? boost::none : boost::optional<Document>(lsidValue.getDocument());
         Value txnNumberValue = input["txnNumber"];
         DocumentSourceChangeStream::checkValueTypeOrMissing(
-            txnNumberValue, "txnNumber", BSONType::NumberLong);
+            txnNumberValue, "txnNumber", BSONType::numberLong);
         _txnNumber = txnNumberValue.missing()
             ? boost::none
             : boost::optional<TxnNumber>(txnNumberValue.getLong());
@@ -315,7 +317,7 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::TransactionO
 
     Value wallTime = input[repl::OplogEntry::kWallClockTimeFieldName];
     DocumentSourceChangeStream::checkValueType(
-        wallTime, repl::OplogEntry::kWallClockTimeFieldName, BSONType::Date);
+        wallTime, repl::OplogEntry::kWallClockTimeFieldName, BSONType::date);
     _wallTime = wallTime.getDate();
 
     auto commandObj = input["o"].getDocument();
@@ -356,7 +358,7 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::TransactionO
     // If there's no previous optime, or if this applyOps is of the kApplyOpsAppliedSeparately
     // multiOptype, we don't need to collect other apply ops operations.
     if (!applyOpsAppliedSeparately &&
-        BSONType::Object ==
+        BSONType::object ==
             input[repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName].getType()) {
         // As with the 'txnOpTime' parsing above, we convert a portion of 'input' back to BSON
         // in order to parse an OpTime, this time from the "prevOpTime" field.
@@ -387,13 +389,13 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::TransactionO
 
         auto bsonOp = firstApplyOpsEntry.getOperationToApply();
         tassert(5543806,
-                str::stream() << "Expected 'applyOps' type " << BSONType::Array << ", found "
+                str::stream() << "Expected 'applyOps' type " << BSONType::array << ", found "
                               << bsonOp["applyOps"].type(),
-                BSONType::Array == bsonOp["applyOps"].type());
+                BSONType::array == bsonOp["applyOps"].type());
         _currentApplyOps = Value(bsonOp["applyOps"]);
     }
 
-    DocumentSourceChangeStream::checkValueType(_currentApplyOps, "applyOps", BSONType::Array);
+    DocumentSourceChangeStream::checkValueType(_currentApplyOps, "applyOps", BSONType::array);
 
     // Initialize iterators at the beginning of the transaction.
     _currentApplyOpsIt = _currentApplyOps.getArray().begin();
@@ -434,9 +436,9 @@ DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::getNextTrans
 
         auto bsonOp = applyOpsEntry.getOperationToApply();
         tassert(5543807,
-                str::stream() << "Expected 'applyOps' type " << BSONType::Array << ", found "
+                str::stream() << "Expected 'applyOps' type " << BSONType::array << ", found "
                               << bsonOp["applyOps"].type(),
-                BSONType::Array == bsonOp["applyOps"].type());
+                BSONType::array == bsonOp["applyOps"].type());
 
         _currentApplyOps = Value(bsonOp["applyOps"]);
         _currentApplyOpsTs = applyOpsEntry.getTimestamp();
@@ -451,7 +453,7 @@ void DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::
             str::stream() << "Unexpected format for entry within a transaction oplog entry: "
                              "'op' field was type "
                           << typeName(d["op"].getType()),
-            d["op"].getType() == BSONType::String);
+            d["op"].getType() == BSONType::string);
     tassert(5543809,
             str::stream() << "Unexpected noop entry within a transaction "
                           << redact(d["o"].toString()),
@@ -543,11 +545,11 @@ void DocumentSourceChangeStreamUnwindTransaction::TransactionOpIterator::_addAff
         return;
     }
 
-    static const std::vector<std::string> kCollectionField = {"create", "createIndexes"};
+    constexpr std::array<StringData, 2> kCollectionField = {"create"_sd, "createIndexes"_sd};
     const Document& object = doc["o"].getDocument();
     for (const auto& fieldName : kCollectionField) {
         const auto field = object[fieldName];
-        if (field.getType() == BSONType::String) {
+        if (field.getType() == BSONType::string) {
             _affectedNamespaces.insert(
                 NamespaceStringUtil::deserialize(dbCmdNs.dbName(), field.getStringData()));
             return;

@@ -28,16 +28,7 @@
  */
 
 
-#include <cstdint>
-#include <memory>
-#include <set>
-#include <sstream>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/commands/query_cmd/index_filter_commands.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -53,7 +44,6 @@
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/auth/resource_pattern.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/commands/query_cmd/index_filter_commands.h"
 #include "mongo/db/commands/query_cmd/plan_cache_commands.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/matcher/expression_parser.h"
@@ -70,6 +60,17 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -354,7 +355,7 @@ Status SetFilter::set(OperationContext* opCtx,
     if (indexesElt.eoo()) {
         return Status(ErrorCodes::BadValue, "required field indexes missing");
     }
-    if (indexesElt.type() != mongo::Array) {
+    if (indexesElt.type() != BSONType::array) {
         return Status(ErrorCodes::BadValue, "required field indexes must be an array");
     }
     vector<BSONElement> indexesEltArray = indexesElt.Array();
@@ -365,13 +366,13 @@ Status SetFilter::set(OperationContext* opCtx,
     BSONObjSet indexes = SimpleBSONObjComparator::kInstance.makeBSONObjSet();
     stdx::unordered_set<std::string> indexNames;
     for (const auto& elt : indexesEltArray) {
-        if (elt.type() == BSONType::Object) {
+        if (elt.type() == BSONType::object) {
             BSONObj obj = elt.Obj();
             if (obj.isEmpty()) {
                 return Status(ErrorCodes::BadValue, "index specification cannot be empty");
             }
             indexes.insert(obj.getOwned());
-        } else if (elt.type() == BSONType::String) {
+        } else if (elt.type() == BSONType::string) {
             indexNames.insert(elt.String());
         } else {
             return Status(ErrorCodes::BadValue, "each item in indexes must be an object or string");

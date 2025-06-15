@@ -28,18 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/commands/authentication_commands.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -60,7 +49,6 @@
 #include "mongo/db/auth/x509_protocol_gen.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/authentication_commands.h"
 #include "mongo/db/commands/authentication_commands_gen.h"
 #include "mongo/db/commands/test_commands_enabled.h"
 #include "mongo/db/database_name.h"
@@ -78,6 +66,19 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/sequence_util.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kAccessControl
 
@@ -202,14 +203,15 @@ void _authenticateX509(OperationContext* opCtx, AuthenticationSession* session) 
 
     UserName userName = ([&] {
         if (session->getUserName().empty()) {
-            auto user = UserName(clientName.toString(), session->getDatabase().toString());
+            auto user = UserName(clientName.toString(), std::string{session->getDatabase()});
             session->updateUserName(user, true /* isMechX509 */);
             return user;
         } else {
             uassert(ErrorCodes::AuthenticationFailed,
                     "There is no x.509 client certificate matching the user.",
                     session->getUserName() == clientName.toString());
-            return UserName(session->getUserName().toString(), session->getDatabase().toString());
+            return UserName(std::string{session->getUserName()},
+                            std::string{session->getDatabase()});
         }
     })();
 
@@ -334,7 +336,7 @@ AuthenticateReply authCommand(OperationContext* opCtx,
     // TODO SERVER-78809: remove
     if (!gFeatureFlagRearchitectUserAcquisition.isEnabled()) {
 
-        auto userStr = user.value_or("").toString();
+        std::string userStr{user.value_or("")};
 
         if (!serverGlobalParams.quiet.load()) {
             LOGV2_DEBUG(5315501,

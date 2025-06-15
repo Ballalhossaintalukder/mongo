@@ -27,17 +27,12 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source.h"
 
 #include "mongo/db/exec/document_value/value.h"
+#include "mongo/db/feature_flag.h"
 #include "mongo/db/matcher/expression_algo.h"
 #include "mongo/db/pipeline/change_stream_constants.h"
-#include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_group.h"
 #include "mongo/db/pipeline/document_source_match.h"
 #include "mongo/db/pipeline/document_source_redact.h"
@@ -49,6 +44,13 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/string_map.h"
 
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 
@@ -59,11 +61,9 @@ using boost::intrusive_ptr;
 StringMap<DocumentSource::ParserRegistration> DocumentSource::parserMap;
 
 DocumentSource::DocumentSource(StringData stageName, const intrusive_ptr<ExpressionContext>& pCtx)
-    : Stage(stageName, pCtx) {}
+    : _expCtx(pCtx) {}
 
-void DocumentSource::registerParser(std::string name,
-                                    Parser parser,
-                                    CheckableFeatureFlagRef featureFlag) {
+void DocumentSource::registerParser(std::string name, Parser parser, FeatureFlag* featureFlag) {
     auto it = parserMap.find(name);
     massert(28707,
             str::stream() << "Duplicate document source (" << name << ") registered.",
@@ -73,7 +73,7 @@ void DocumentSource::registerParser(std::string name,
 
 void DocumentSource::registerParser(std::string name,
                                     SimpleParser simpleParser,
-                                    CheckableFeatureFlagRef featureFlag) {
+                                    FeatureFlag* featureFlag) {
 
     Parser parser = [simpleParser = std::move(simpleParser)](
                         BSONElement stageSpec, const intrusive_ptr<ExpressionContext>& expCtx)
@@ -114,7 +114,9 @@ std::list<intrusive_ptr<DocumentSource>> DocumentSource::parse(
             it != parserMap.end());
 
     auto& entry = it->second;
-    expCtx->throwIfFeatureFlagIsNotEnabledOnFCV(stageName, entry.featureFlag);
+    if (entry.featureFlag) {
+        expCtx->ignoreFeatureInParserOrRejectAndThrow(stageName, *entry.featureFlag);
+    }
 
     return it->second.parser(stageSpec, expCtx);
 }
@@ -141,18 +143,47 @@ namespace {
  * ---->
  *   {$match: {x: {$exists: true}}
  *   {$group: {_id: "$x"}}
-
+ * However with a compound _id spec (something of the form {_id: {x: ..., y: ..., ...}}) existence
+ * predicates would be correct to push before as these preserve missing.
+ * Note: singular id specs can also be of the form {_id: {x: ...}}.
+ *
  * For $type, the $type operator can distinguish between values that compare equal in the $group
  * stage, meaning documents that are regarded unequally in the $match stage are equated in the
  * $group stage. This leads to varied results depending on the order of the $match and $group.
+ * Type predicates are incorrect to push ahead regardless of _id spec.
  */
 bool groupMatchSwapVerified(const DocumentSourceMatch& nextMatch,
                             const DocumentSourceGroup& thisGroup) {
+    // Construct a set of id fields.
+    stdx::unordered_set<std::string> idFields;
+    for (const auto& key : thisGroup.getIdFieldNames()) {
+        idFields.insert(std::string("_id.").append(key));
+    }
+
+    // getIdFieldsNames will be 0 if the spec is of the forms {_id: ...}.
+    if (idFields.empty()) {
+        idFields.insert("_id");
+    }
+
+    // If there's any type predicate we cannot swap.
+    if (expression::hasPredicateOnPaths(*(nextMatch.getMatchExpression()),
+                                        MatchExpression::MatchType::TYPE_OPERATOR,
+                                        idFields)) {
+        return false;
+    }
+
+    /**
+     * If there's a compound _id spec (e.g. {_id: {x: ..., y: ..., ...}}), we can swap regardless of
+     * existence predicate.
+     * getIdFields will be 1 if the spec is of the forms {_id: ...} or {_id: {x: ...}}.
+     */
     if (thisGroup.getIdFields().size() != 1) {
         return true;
     }
-    return !expression::hasExistenceOrTypePredicateOnPath(*(nextMatch.getMatchExpression()),
-                                                          "_id"_sd);
+
+    // If there's an existence predicate in a non-compound _id spec, we cannot swap.
+    return !expression::hasPredicateOnPaths(
+        *(nextMatch.getMatchExpression()), MatchExpression::MatchType::EXISTS, idFields);
 }
 
 /**

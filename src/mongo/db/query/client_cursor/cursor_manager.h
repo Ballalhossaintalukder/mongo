@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/db/catalog/util/partitioned.h"
@@ -62,6 +53,16 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -148,6 +149,7 @@ public:
     StatusWith<ClientCursorPin> pinCursor(
         OperationContext* opCtx,
         CursorId id,
+        StringData commandName,
         const std::function<void(const ClientCursor&)>& checkPinAllowed = {},
         AuthCheck checkSessionAuth = kCheckSession);
 
@@ -193,12 +195,13 @@ public:
     /*
      * Returns a list of all open cursors for the given session.
      */
-    stdx::unordered_set<CursorId> getCursorsForSession(LogicalSessionId lsid) const;
+    stdx::unordered_set<CursorId> getCursorsForSession(const LogicalSessionId& lsid) const;
 
     /*
      * Returns a list of all open cursors for the given set of OperationKeys.
      */
-    stdx::unordered_set<CursorId> getCursorsForOpKeys(std::vector<OperationKey>) const;
+    stdx::unordered_set<CursorId> getCursorsForOpKeys(
+        const std::vector<OperationKey>& opKeys) const;
 
     /**
      * Returns the number of ClientCursors currently registered.

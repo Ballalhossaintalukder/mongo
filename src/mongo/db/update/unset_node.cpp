@@ -28,13 +28,14 @@
  */
 
 
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/unset_node.h"
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/update/storage_validation.h"
-#include "mongo/db/update/unset_node.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -49,7 +50,7 @@ ModifierNode::ModifyResult UnsetNode::updateExistingElement(mutablebson::Element
     auto parent = element->parent();
 
     invariant(parent.ok());
-    if (!parent.isType(BSONType::Array)) {
+    if (!parent.isType(BSONType::array)) {
         invariant(element->remove());
     } else {
         // Special case: An $unset on an array element sets it to null instead of removing it from
@@ -106,7 +107,7 @@ void UnsetNode::logUpdate(LogBuilderInterface* logBuilder,
 
     if (pathTaken.types().back() == RuntimeUpdatePath::ComponentType::kArrayIndex) {
         // If $unset is applied to an array index, the value was set to null.
-        invariant(element.getType() == BSONType::jstNULL);
+        invariant(element.getType() == BSONType::null);
         uassertStatusOK(logBuilder->logUpdatedField(pathTaken, element));
     } else {
         uassertStatusOK(logBuilder->logDeletedField(pathTaken));

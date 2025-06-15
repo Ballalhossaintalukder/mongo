@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <functional>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/string_data.h"
@@ -55,6 +47,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <functional>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -70,7 +70,7 @@ namespace mongo {
                                        factory,                       \
                                        AllowedWithApiStrict::kAlways, \
                                        AllowedWithClientType::kAny,   \
-                                       kDoesNotRequireFeatureFlag,    \
+                                       nullptr, /* featureFlag */     \
                                        true)
 
 /**
@@ -78,33 +78,25 @@ namespace mongo {
  * enabled. We store featureFlag in the parseMap, so that it can be checked at runtime
  * to correctly enable/disable the accumulator.
  */
-#define REGISTER_ACCUMULATOR_WITH_FEATURE_FLAG(key, factory, featureFlag)                         \
-    REGISTER_ACCUMULATOR_CONDITIONALLY(                                                           \
-        key,                                                                                      \
-        factory,                                                                                  \
-        AllowedWithApiStrict::kAlways,                                                            \
-        AllowedWithClientType::kAny,                                                              \
-        featureFlag,                                                                              \
-        CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {                   \
-            return fcvGatedFlag.isEnabledUseLatestFCVWhenUninitialized(                           \
-                kNoVersionContext, serverGlobalParams.featureCompatibility.acquireFCVSnapshot()); \
-        }))
+#define REGISTER_ACCUMULATOR_WITH_FEATURE_FLAG(key, factory, featureFlag) \
+    REGISTER_ACCUMULATOR_CONDITIONALLY(key,                               \
+                                       factory,                           \
+                                       AllowedWithApiStrict::kAlways,     \
+                                       AllowedWithClientType::kAny,       \
+                                       featureFlag,                       \
+                                       true)
 
 /**
  * Like REGISTER_ACCUMULATOR_WITH_FEATURE_FLAG, except the accumulator will be set with
  * AllowedWithApiStrict::kNeverInVersion1 to exclude the accumulator from the stable API.
  */
-#define REGISTER_UNSTABLE_ACCUMULATOR_WITH_FEATURE_FLAG(key, factory, featureFlag)                \
-    REGISTER_ACCUMULATOR_CONDITIONALLY(                                                           \
-        key,                                                                                      \
-        factory,                                                                                  \
-        AllowedWithApiStrict::kNeverInVersion1,                                                   \
-        AllowedWithClientType::kAny,                                                              \
-        featureFlag,                                                                              \
-        CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {                   \
-            return fcvGatedFlag.isEnabledUseLatestFCVWhenUninitialized(                           \
-                kNoVersionContext, serverGlobalParams.featureCompatibility.acquireFCVSnapshot()); \
-        }))
+#define REGISTER_UNSTABLE_ACCUMULATOR_WITH_FEATURE_FLAG(key, factory, featureFlag) \
+    REGISTER_ACCUMULATOR_CONDITIONALLY(key,                                        \
+                                       factory,                                    \
+                                       AllowedWithApiStrict::kNeverInVersion1,     \
+                                       AllowedWithClientType::kAny,                \
+                                       featureFlag,                                \
+                                       true)
 
 /**
  * You can specify a condition, evaluated during startup,
@@ -118,17 +110,22 @@ namespace mongo {
  *
  * This is the most general REGISTER_ACCUMULATOR* macro, which all others should delegate to.
  */
-#define REGISTER_ACCUMULATOR_CONDITIONALLY(                                                   \
-    key, factory, allowedWithApiStrict, allowedClientType, featureFlag, ...)                  \
-    MONGO_INITIALIZER_GENERAL(addToAccumulatorFactoryMap_##key,                               \
-                              ("BeginAccumulatorRegistration"),                               \
-                              ("EndAccumulatorRegistration"))                                 \
-    (InitializerContext*) {                                                                   \
-        if (!(__VA_ARGS__)) {                                                                 \
-            return;                                                                           \
-        }                                                                                     \
-        AccumulationStatement::registerAccumulator(                                           \
-            "$" #key, (factory), (allowedWithApiStrict), (allowedClientType), (featureFlag)); \
+#define REGISTER_ACCUMULATOR_CONDITIONALLY(                                                     \
+    key, factory, allowedWithApiStrict, allowedClientType, featureFlag, ...)                    \
+    MONGO_INITIALIZER_GENERAL(addToAccumulatorFactoryMap_##key,                                 \
+                              ("BeginAccumulatorRegistration"),                                 \
+                              ("EndAccumulatorRegistration"))                                   \
+    (InitializerContext*) {                                                                     \
+        /* Require 'featureFlag' to be a constexpr. */                                          \
+        constexpr FeatureFlag* constFeatureFlag{featureFlag};                                   \
+        /* This non-constexpr variable works around a bug in GCC when 'featureFlag' is null. */ \
+        FeatureFlag* featureFlagValue{constFeatureFlag};                                        \
+        bool evaluatedCondition{__VA_ARGS__};                                                   \
+        if (!evaluatedCondition || (featureFlagValue && !featureFlagValue->canBeEnabled())) {   \
+            return;                                                                             \
+        }                                                                                       \
+        AccumulationStatement::registerAccumulator(                                             \
+            "$" #key, (factory), (allowedWithApiStrict), (allowedClientType), (featureFlag));   \
     }
 
 /**
@@ -237,7 +234,7 @@ inline AccumulationExpression parseCountAccumulator(ExpressionContext* const exp
                                                     VariablesParseState vps) {
     uassert(ErrorCodes::TypeMismatch,
             "$count takes no arguments, i.e. $count:{}",
-            elem.type() == BSONType::Object && elem.Obj().isEmpty());
+            elem.type() == BSONType::object && elem.Obj().isEmpty());
     auto initializer = ExpressionConstant::create(expCtx, Value(BSONNULL));
     const Value constantAddend = Value(1);
     auto argument = ExpressionConstant::create(expCtx, constantAddend);
@@ -284,7 +281,7 @@ public:
      * API Version and feature flag.
      */
     using ParserRegistration =
-        std::tuple<Parser, AllowedWithApiStrict, AllowedWithClientType, CheckableFeatureFlagRef>;
+        std::tuple<Parser, AllowedWithApiStrict, AllowedWithClientType, FeatureFlag*>;
 
     AccumulationStatement(std::string fieldName, AccumulationExpression expr)
         : fieldName(std::move(fieldName)), expr(std::move(expr)) {}
@@ -313,7 +310,7 @@ public:
                                     Parser parser,
                                     AllowedWithApiStrict allowedWithApiStrict,
                                     AllowedWithClientType allowedWithClientType,
-                                    CheckableFeatureFlagRef featureFlag);
+                                    FeatureFlag* featureFlag);
 
     /**
      * Retrieves the Parser for the accumulator specified by the given name, and raises an error if

@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <set>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/pipeline/document_path_support.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -40,10 +35,14 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/field_ref.h"
-#include "mongo/db/pipeline/document_path_support.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace document_path_support {
@@ -66,7 +65,7 @@ void invokeCallbackOnTrailingValue(const Value& value, std::function<void(const 
     }
 }
 
-void visitAllValuesAtPathHelper(Document doc,
+void visitAllValuesAtPathHelper(const Document& doc,
                                 const FieldPath& path,
                                 size_t fieldPathIndex,
                                 std::function<void(const Value&)> callback) {
@@ -111,11 +110,11 @@ void visitAllValuesAtPathHelper(Document doc,
         // Note we do not expand arrays within arrays this way. For example, {a: [[{b: 1}]]} has no
         // values on the path "a.b", but {a: [{b: 1}]} does.
         for (auto&& subValue : nextValue.getArray()) {
-            if (subValue.getType() == BSONType::Object) {
+            if (subValue.getType() == BSONType::object) {
                 visitAllValuesAtPathHelper(subValue.getDocument(), path, fieldPathIndex, callback);
             }
         }
-    } else if (nextValue.getType() == BSONType::Object) {
+    } else if (nextValue.getType() == BSONType::object) {
         visitAllValuesAtPathHelper(nextValue.getDocument(), path, fieldPathIndex, callback);
     }
 }
@@ -126,37 +125,6 @@ void visitAllValuesAtPath(const Document& doc,
                           const FieldPath& path,
                           std::function<void(const Value&)> callback) {
     visitAllValuesAtPathHelper(doc, path, 0, callback);
-}
-
-StatusWith<Value> extractElementAlongNonArrayPath(const Document& doc, const FieldPath& path) {
-    invariant(path.getPathLength() > 0);
-    Value curValue = doc.getField(path.getFieldName(0));
-    if (curValue.getType() == BSONType::Array) {
-        return {ErrorCodes::InternalError, "array along path"};
-    }
-
-    for (size_t i = 1; i < path.getPathLength(); i++) {
-        curValue = curValue[path.getFieldName(i)];
-        if (curValue.getType() == BSONType::Array) {
-            return {ErrorCodes::InternalError, "array along path"};
-        }
-    }
-
-    return curValue;
-}
-
-void documentToBsonWithPaths(const Document& input,
-                             const OrderedPathSet& paths,
-                             BSONObjBuilder* builder) {
-    for (auto&& path : paths) {
-        // getNestedField does not handle dotted paths correctly, so instead of retrieving the
-        // entire path, we just extract the first element of the path.
-        const auto prefix = FieldPath::extractFirstFieldFromDottedPath(path);
-        if (!builder->hasField(prefix)) {
-            // Avoid adding the same prefix twice.
-            input.getField(prefix).addToBsonObj(builder, prefix);
-        }
-    }
 }
 
 }  // namespace document_path_support

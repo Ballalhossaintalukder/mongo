@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/simple_bsonobj_comparator.h"
@@ -61,6 +52,16 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -196,11 +197,6 @@ public:
     // to a subset of operations to special internal collections. This helps
     // improve performance. Avoid using 'kAll' as much as possible.
     virtual NamespaceFilters getNamespaceFilters() const = 0;
-
-    virtual void onModifyCollectionShardingIndexCatalog(OperationContext* opCtx,
-                                                        const NamespaceString& nss,
-                                                        const UUID& uuid,
-                                                        BSONObj indexDoc) = 0;
 
     virtual void onCreateIndex(OperationContext* opCtx,
                                const NamespaceString& nss,
@@ -680,6 +676,20 @@ public:
      * Called when the authoritative DSS needs to be updated with a dropDatabase operation.
      */
     virtual void onDropDatabaseMetadata(OperationContext* opCtx, const repl::OplogEntry& op) = 0;
+
+    /**
+     * Called when the sharded cluster enters the transitional state of the two step replicaset to
+     * shard promotion process.
+     */
+    virtual void onBeginPromotionToShardedCluster(OperationContext* opCtx,
+                                                  const repl::OplogEntry& op) = 0;
+
+    /**
+     * Called when the sharded cluster leaves the transitional state of the two step replicaset to
+     * shard promotion process.
+     */
+    virtual void onCompletePromotionToShardedCluster(OperationContext* opCtx,
+                                                     const repl::OplogEntry& op) = 0;
 
     struct Times;
 

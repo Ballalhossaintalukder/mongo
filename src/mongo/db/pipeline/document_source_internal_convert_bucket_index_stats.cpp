@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_internal_convert_bucket_index_stats.h"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -39,7 +35,6 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/list_indexes_gen.h"
-#include "mongo/db/pipeline/document_source_internal_convert_bucket_index_stats.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/query/allowed_contexts.h"
@@ -49,6 +44,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -121,24 +122,26 @@ ALLOCATE_DOCUMENT_SOURCE_ID(_internalConvertBucketIndexStats,
 DocumentSourceInternalConvertBucketIndexStats::DocumentSourceInternalConvertBucketIndexStats(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     TimeseriesConversionOptions timeseriesOptions)
-    : DocumentSource(kStageName, expCtx), _timeseriesOptions(std::move(timeseriesOptions)) {}
+    : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
+      _timeseriesOptions(std::move(timeseriesOptions)) {}
 
 boost::intrusive_ptr<DocumentSource> DocumentSourceInternalConvertBucketIndexStats::createFromBson(
     BSONElement specElem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5480000,
             "$_internalConvertBucketIndexStats specification must be an object",
-            specElem.type() == Object);
+            specElem.type() == BSONType::object);
 
     TimeseriesConversionOptions timeseriesOptions;
     for (auto&& elem : specElem.embeddedObject()) {
         auto fieldName = elem.fieldNameStringData();
         if (fieldName == timeseries::kTimeFieldName) {
-            uassert(5480001, "timeField field must be a string", elem.type() == BSONType::String);
+            uassert(5480001, "timeField field must be a string", elem.type() == BSONType::string);
             timeseriesOptions.timeField = elem.str();
         } else if (fieldName == timeseries::kMetaFieldName) {
             uassert(5480002,
                     str::stream() << "metaField field must be a string, got: " << elem.type(),
-                    elem.type() == BSONType::String);
+                    elem.type() == BSONType::string);
             timeseriesOptions.metaField = elem.str();
         } else {
             uasserted(5480003,

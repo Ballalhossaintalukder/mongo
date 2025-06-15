@@ -29,11 +29,11 @@
 
 #pragma once
 
-#include "mongo/db/query/stage_types.h"
-#include <algorithm>
-
 #include "mongo/db/query/plan_explainer_factory.h"
 #include "mongo/db/query/plan_ranker.h"
+#include "mongo/db/query/stage_types.h"
+
+#include <algorithm>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -231,6 +231,7 @@ StatusWith<std::unique_ptr<PlanRankingDecision>> pickBestPlan(
 
     // Get stat trees from each plan.
     std::vector<std::unique_ptr<PlanStageStats>> statTrees;
+    statTrees.reserve(candidates.size());
     for (size_t i = 0; i < candidates.size(); ++i) {
         statTrees.push_back(candidates[i].root->getStats());
     }

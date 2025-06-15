@@ -29,19 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <iostream>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -80,6 +67,20 @@
 #include "mongo/util/future_impl.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -367,7 +368,7 @@ public:
          */
         bool transactionIsOpen() const {
             return o().txnState.isOpen();
-        };
+        }
 
         bool transactionIsCommitted() const {
             return o().txnState.isCommitted();
@@ -391,6 +392,10 @@ public:
 
         bool transactionIsInRetryableWriteMode() const {
             return o().txnState.isInRetryableWriteMode();
+        }
+
+        std::string transactionStateDescriptor() const {
+            return o().txnState.toString();
         }
 
         const absl::flat_hash_set<NamespaceString>& affectedNamespaces() const {

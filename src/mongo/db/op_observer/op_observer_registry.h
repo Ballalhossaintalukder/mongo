@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
@@ -58,6 +48,17 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -128,15 +129,6 @@ public:
             default:
                 break;
         }
-    }
-
-    void onModifyCollectionShardingIndexCatalog(OperationContext* opCtx,
-                                                const NamespaceString& nss,
-                                                const UUID& uuid,
-                                                BSONObj indexDoc) override {
-        ReservedTimes times{opCtx};
-        for (auto& o : _observers)
-            o->onModifyCollectionShardingIndexCatalog(opCtx, nss, uuid, indexDoc);
     }
 
     void onCreateIndex(OperationContext* const opCtx,
@@ -563,6 +555,18 @@ public:
     void onDropDatabaseMetadata(OperationContext* opCtx, const repl::OplogEntry& op) override {
         for (auto& o : _observers)
             o->onDropDatabaseMetadata(opCtx, op);
+    }
+
+    void onBeginPromotionToShardedCluster(OperationContext* opCtx,
+                                          const repl::OplogEntry& op) override {
+        for (auto& o : _observers)
+            o->onBeginPromotionToShardedCluster(opCtx, op);
+    }
+
+    void onCompletePromotionToShardedCluster(OperationContext* opCtx,
+                                             const repl::OplogEntry& op) override {
+        for (auto& o : _observers)
+            o->onCompletePromotionToShardedCluster(opCtx, op);
     }
 
 private:

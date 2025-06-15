@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -69,6 +59,17 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/future.h"
 #include "mongo/util/hierarchical_acquisition.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 namespace executor {
@@ -168,7 +169,7 @@ public:
         ASSERT_OK(cmdStatus);
         const auto shards = res.data["shards"].Array();
         ASSERT_FALSE(shards.empty());
-        return shards.front().embeddedObject().getStringField("host").toString();
+        return std::string{shards.front().embeddedObject().getStringField("host")};
     }
 
 protected:

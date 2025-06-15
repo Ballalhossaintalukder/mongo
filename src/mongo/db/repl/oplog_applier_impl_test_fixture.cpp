@@ -29,13 +29,6 @@
 
 #include "mongo/db/repl/oplog_applier_impl_test_fixture.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/catalog/database.h"
@@ -78,6 +71,13 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
 #include "mongo/util/version/releases.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace repl {
@@ -442,9 +442,15 @@ void checkTxnTable(OperationContext* opCtx,
 }
 
 CollectionReader::CollectionReader(OperationContext* opCtx, const NamespaceString& nss)
-    : _collToScan(opCtx, nss),
+    : _collToScan(
+          acquireCollection(opCtx,
+                            CollectionAcquisitionRequest(nss,
+                                                         PlacementConcern::kPretendUnsharded,
+                                                         repl::ReadConcernArgs::get(opCtx),
+                                                         AcquisitionPrerequisites::kRead),
+                            MODE_IS)),
       _exec(InternalPlanner::collectionScan(opCtx,
-                                            &_collToScan.getCollection(),
+                                            _collToScan,
                                             PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY,
                                             InternalPlanner::FORWARD)) {}
 
@@ -455,7 +461,7 @@ StatusWith<BSONObj> CollectionReader::next() {
     if (state == PlanExecutor::IS_EOF) {
         return {ErrorCodes::CollectionIsEmpty,
                 str::stream() << "no more documents in "
-                              << _collToScan.getNss().toStringForErrorMsg()};
+                              << _collToScan.nss().toStringForErrorMsg()};
     }
 
     // PlanExecutors that do not yield should only return ADVANCED or EOF.
@@ -534,11 +540,10 @@ void createCollection(OperationContext* opCtx,
                       const NamespaceString& nss,
                       const CollectionOptions& options) {
     writeConflictRetry(opCtx, "createCollection", nss, [&] {
-        Lock::DBLock dbLk(opCtx, nss.dbName(), MODE_IX);
+        AutoGetDb autodb(opCtx, nss.dbName(), MODE_IX);
         Lock::CollectionLock collLk(opCtx, nss, MODE_X);
 
-        OldClientContext ctx(opCtx, nss);
-        auto db = ctx.db();
+        auto db = autodb.ensureDbExists(opCtx);
         ASSERT_TRUE(db);
 
         mongo::WriteUnitOfWork wuow(opCtx);
@@ -566,7 +571,11 @@ void createDatabase(OperationContext* opCtx, StringData dbName) {
 }
 
 bool collectionExists(OperationContext* opCtx, const NamespaceString& nss) {
-    return static_cast<bool>(AutoGetCollectionForRead(opCtx, nss).getCollection());
+    const auto coll = acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest::fromOpCtx(opCtx, nss, AcquisitionPrerequisites::kRead),
+        MODE_IS);
+    return coll.exists();
 }
 
 void createIndex(OperationContext* opCtx,

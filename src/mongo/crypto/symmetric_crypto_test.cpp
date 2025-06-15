@@ -28,6 +28,19 @@
  */
 
 
+#include "mongo/crypto/symmetric_crypto.h"
+
+#include "mongo/base/data_range.h"
+#include "mongo/base/data_range_cursor.h"
+#include "mongo/base/secure_allocator.h"
+#include "mongo/base/status_with.h"
+#include "mongo/base/string_data.h"
+#include "mongo/crypto/block_packer.h"
+#include "mongo/crypto/symmetric_key.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/hex.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -43,18 +56,6 @@
 #include <vector>
 
 #include <boost/move/utility_core.hpp>
-
-#include "mongo/base/data_range.h"
-#include "mongo/base/data_range_cursor.h"
-#include "mongo/base/secure_allocator.h"
-#include "mongo/base/status_with.h"
-#include "mongo/base/string_data.h"
-#include "mongo/crypto/block_packer.h"
-#include "mongo/crypto/symmetric_crypto.h"
-#include "mongo/crypto/symmetric_key.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/hex.h"
 
 namespace mongo {
 namespace crypto {
@@ -338,7 +339,7 @@ TEST(SymmetricEncryptor, InsufficientOutputBuffer) {
     // Validate that encryption with zero output buffer does not succeed
     DataRange zeroOutputBuffer(cryptoBuffer.data(), 0);
     ASSERT_NOT_OK(
-        encryptor->update({plaintextMessage.rawData(), plaintextMessage.size()}, zeroOutputBuffer));
+        encryptor->update({plaintextMessage.data(), plaintextMessage.size()}, zeroOutputBuffer));
 
     auto swSize = encryptor->update(encodedPlaintext, cryptoCursor);
     ASSERT_OK(swSize);
@@ -467,7 +468,7 @@ SymmetricKey aesGeneratePredictableKey256(StringData stringKey, StringData keyId
     SecureVector<uint8_t> key(keySize);
     std::copy(stringKey.begin(), stringKey.end(), key->begin());
 
-    return SymmetricKey(std::move(key), crypto::aesAlgorithm, keyId.toString());
+    return SymmetricKey(std::move(key), crypto::aesAlgorithm, std::string{keyId});
 }
 
 // Convenience wrappers to avoid line-wraps later.
@@ -494,7 +495,7 @@ void GCMAdditionalAuthenticatedDataHelper(bool succeed) {
     auto encryptor = uassertStatusOK(crypto::SymmetricEncryptor::create(key, mode, iv));
 
     constexpr auto kAAD = "Hello World"_sd;
-    ASSERT_OK(encryptor->addAuthenticatedData({kAAD.rawData(), kAAD.size()}));
+    ASSERT_OK(encryptor->addAuthenticatedData({kAAD.data(), kAAD.size()}));
 
     constexpr auto kPlaintextMessage = "01234567012345670123456701234567"_sd;
     constexpr auto kBufferSize = kPlaintextMessage.size() + (2 * crypto::aesBlockSize);
@@ -503,7 +504,7 @@ void GCMAdditionalAuthenticatedDataHelper(bool succeed) {
     {
         DataRangeCursor cipherTextCursor(cipherText);
         cipherLen = uassertStatusOK(encryptor->update(
-            {kPlaintextMessage.rawData(), kPlaintextMessage.size()}, cipherTextCursor));
+            {kPlaintextMessage.data(), kPlaintextMessage.size()}, cipherTextCursor));
         cipherTextCursor.advance(cipherLen);
         cipherLen += uassertStatusOK(encryptor->finalize(cipherTextCursor));
     }
@@ -520,7 +521,7 @@ void GCMAdditionalAuthenticatedDataHelper(bool succeed) {
     ASSERT_EQ(StringData(asChar(tag.data()), taglen), kExpectedTag);
 
     auto decryptor = uassertStatusOK(crypto::SymmetricDecryptor::create(key, mode, iv));
-    ASSERT_OK(decryptor->addAuthenticatedData({kAAD.rawData(), kAAD.size()}));
+    ASSERT_OK(decryptor->addAuthenticatedData({kAAD.data(), kAAD.size()}));
 
     std::array<std::uint8_t, kBufferSize> plainText;
     auto plainLen = uassertStatusOK(decryptor->update({cipherText.data(), cipherLen}, plainText));

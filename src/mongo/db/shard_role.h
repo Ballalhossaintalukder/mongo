@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/inlined_vector.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/collection_type.h"
@@ -56,6 +45,18 @@
 #include "mongo/db/views/view.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -295,7 +296,9 @@ public:
     }
 
     const CollectionAcquisition& getCollection() const {
-        invariant(isCollection());
+        tassert(10566700,
+                "Called getCollection() on a CollectionOrViewAcquisition containing a view",
+                isCollection());
         return get<CollectionAcquisition>(_collectionOrViewAcquisition);
     }
 
@@ -308,7 +311,9 @@ public:
     }
 
     const ViewAcquisition& getView() const {
-        invariant(isView());
+        tassert(10566701,
+                "Called getView on a CollectionOrViewAcquisition containing a collection",
+                isView());
         return get<ViewAcquisition>(_collectionOrViewAcquisition);
     }
 
@@ -650,4 +655,23 @@ void checkShardingAndLocalCatalogCollectionUUIDMatch(
     const CollectionPtr& collectionPtr);
 
 }  // namespace shard_role_details
+
+/*
+ * Anything under this namespace does not have any knowledge of sharding and doesn't take locks
+ */
+namespace shard_role_nocheck {
+
+/*
+Resolve the collection namespace without acquiring a collection. These helpers do not lock the
+namespace or provide shard version checks. They only make sense to run quick prechecks
+before executing code that will eventually acquire the collections.
+**/
+NamespaceString resolveNssWithoutAcquisition(OperationContext* opCtx,
+                                             const DatabaseName& dbName,
+                                             const UUID& uuid);
+
+boost::optional<NamespaceString> lookupNssWithoutAcquisition(OperationContext* opCtx,
+                                                             const UUID& uuid);
+
+}  // namespace shard_role_nocheck
 }  // namespace mongo

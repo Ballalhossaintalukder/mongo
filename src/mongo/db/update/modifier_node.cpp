@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <cstddef>
-#include <memory>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/update/modifier_node.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -43,11 +37,18 @@
 #include "mongo/bson/dotted_path/dotted_path_support.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/field_ref_set.h"
-#include "mongo/db/update/modifier_node.h"
 #include "mongo/db/update/path_support.h"
 #include "mongo/db/update/storage_validation.h"
 #include "mongo/db/update/update_executor.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -103,7 +104,7 @@ void checkImmutablePathsNotModifiedFromOriginal(mutablebson::Element element,
                             << "After applying the update to the document, the immutable field '"
                             << (*immutablePath)->dottedField()
                             << "' was found to be an array or array descendant.",
-                        newElem.getType() != BSONType::Array);
+                        newElem.getType() != BSONType::array);
                 newElem = newElem[(*immutablePath)->getPart(i)];
                 if (!newElem.ok()) {
                     break;
@@ -301,7 +302,7 @@ UpdateExecutor::ApplyResult ModifierNode::applyToNonexistentElement(
             fullPathFr =
                 updateNodeApplyParams.pathTaken->fieldRef() + *updateNodeApplyParams.pathToCreate;
             fullPathTypes = updateNodeApplyParams.pathTaken->types();
-            const bool isCreatingArrayElem = applyParams.element.getType() == BSONType::Array;
+            const bool isCreatingArrayElem = applyParams.element.getType() == BSONType::array;
 
             fullPathTypes.push_back(isCreatingArrayElem
                                         ? RuntimeUpdatePath::ComponentType::kArrayIndex

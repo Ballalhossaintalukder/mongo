@@ -33,15 +33,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <chrono>
-#include <cstdint>
-#include <future>
-#include <memory>
-#include <mutex>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -79,6 +70,15 @@
 #include "mongo/util/system_clock_source.h"
 #include "mongo/util/time_support.h"
 
+#include <chrono>
+#include <cstdint>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <system_error>
+#include <utility>
+#include <vector>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 
@@ -95,7 +95,7 @@ const NamespaceString testNSS =
 
 const StringData testAppName = "curop_exhaust_cursor_test";
 std::unique_ptr<DBClientBase> connect(StringData appName = testAppName) {
-    auto swConn = unittest::getFixtureConnectionString().connect(appName.toString());
+    auto swConn = unittest::getFixtureConnectionString().connect(std::string{appName});
     uassertStatusOK(swConn.getStatus());
     return std::move(swConn.getValue());
 }

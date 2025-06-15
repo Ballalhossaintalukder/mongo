@@ -28,12 +28,7 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/s/resharding/document_source_resharding_iterate_transaction.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -42,12 +37,18 @@
 #include "mongo/db/commands/txn_cmds_gen.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
-#include "mongo/db/s/resharding/document_source_resharding_iterate_transaction.h"
 #include "mongo/db/transaction/transaction_history_iterator.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -59,9 +60,8 @@ namespace {
 // be {clusterTime: <optime>, ts: <optime>}.
 Document appendReshardingId(Document inputDoc, boost::optional<Timestamp> txnCommitTime) {
     auto eventTime = inputDoc.getField(repl::OplogEntry::kTimestampFieldName);
-    tassert(5730308,
-            "'ts' field is not a BSON Timestamp",
-            eventTime.getType() == BSONType::bsonTimestamp);
+    tassert(
+        5730308, "'ts' field is not a BSON Timestamp", eventTime.getType() == BSONType::timestamp);
     MutableDocument doc{inputDoc};
     doc.setField("_id",
                  Value{Document{{"clusterTime", txnCommitTime.value_or(eventTime.getTimestamp())},
@@ -89,7 +89,7 @@ DocumentSourceReshardingIterateTransaction::createFromBson(
     const BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5730300,
             str::stream() << "the '" << kStageName << "' spec must be an object",
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     bool _includeCommitTransactionTimestamp = false;
     for (auto&& subElem : elem.Obj()) {
@@ -98,7 +98,7 @@ DocumentSourceReshardingIterateTransaction::createFromBson(
                     str::stream() << "expected a boolean for the "
                                   << kIncludeCommitTransactionTimestampFieldName << " option to "
                                   << kStageName << " stage, got " << typeName(subElem.type()),
-                    subElem.type() == Bool);
+                    subElem.type() == BSONType::boolean);
             _includeCommitTransactionTimestamp = subElem.Bool();
         } else {
             uasserted(6387809,
@@ -114,6 +114,7 @@ DocumentSourceReshardingIterateTransaction::createFromBson(
 DocumentSourceReshardingIterateTransaction::DocumentSourceReshardingIterateTransaction(
     const boost::intrusive_ptr<ExpressionContext>& expCtx, bool includeCommitTransactionTimestamp)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _includeCommitTransactionTimestamp(includeCommitTransactionTimestamp) {}
 
 StageConstraints DocumentSourceReshardingIterateTransaction::constraints(
@@ -139,13 +140,13 @@ Value DocumentSourceReshardingIterateTransaction::serialize(
 
 DepsTracker::State DocumentSourceReshardingIterateTransaction::getDependencies(
     DepsTracker* deps) const {
-    deps->fields.insert(repl::OplogEntry::kOpTypeFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTimestampFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kObjectFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kSessionIdFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTermFieldName.toString());
-    deps->fields.insert(repl::OplogEntry::kTxnNumberFieldName.toString());
+    deps->fields.insert(std::string{repl::OplogEntry::kOpTypeFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTimestampFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kObjectFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kSessionIdFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTermFieldName});
+    deps->fields.insert(std::string{repl::OplogEntry::kTxnNumberFieldName});
 
     return DepsTracker::State::SEE_NEXT;
 }
@@ -212,7 +213,7 @@ bool DocumentSourceReshardingIterateTransaction::_isTransactionOplogEntry(const 
     auto opType = repl::OpType_parse(ctx, op.getStringData());
     auto commandVal = doc["o"];
     repl::MultiOplogEntryType multiOpType = repl::MultiOplogEntryType::kLegacyMultiOpType;
-    if (doc["multiOpType"].getType() == NumberInt)
+    if (doc["multiOpType"].getType() == BSONType::numberInt)
         multiOpType = repl::MultiOplogEntryType_parse(ctx, doc["multiOpType"].getInt());
 
     if (opType != repl::OpTypeEnum::kCommand || doc["txnNumber"].missing() ||
@@ -232,13 +233,13 @@ DocumentSourceReshardingIterateTransaction::TransactionOpIterator::TransactionOp
     : _mongoProcessInterface(mongoProcessInterface),
       _includeCommitTransactionTimestamp(includeCommitTransactionTimestamp) {
     Value lsidValue = input["lsid"];
-    tassert(5730306, "oplog entry with non-object lsid", lsidValue.getType() == BSONType::Object);
+    tassert(5730306, "oplog entry with non-object lsid", lsidValue.getType() == BSONType::object);
     _lsid = lsidValue.getDocument();
 
     Value txnNumberValue = input["txnNumber"];
     tassert(5730307,
             "oplog entry with non-long txnNumber",
-            txnNumberValue.getType() == BSONType::NumberLong);
+            txnNumberValue.getType() == BSONType::numberLong);
     _txnNumber = txnNumberValue.getLong();
 
     // We want to parse the OpTime out of this document using the BSON OpTime parser. Instead of
@@ -271,7 +272,7 @@ DocumentSourceReshardingIterateTransaction::TransactionOpIterator::TransactionOp
                 !commandObj["commitTransaction"].missing());
     }
 
-    if (BSONType::Object ==
+    if (BSONType::object ==
         input[repl::OplogEntry::kPrevWriteOpTimeInTransactionFieldName].getType()) {
         // As with the 'txnOpTime' parsing above, we convert a portion of 'input' back to BSON
         // in order to parse an OpTime, this time from the "prevOpTime" field.

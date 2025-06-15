@@ -29,26 +29,13 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-
-#include "mongo/s/chunk_manager.h"
-#include "mongo/s/routing_context.h"
-#include "mongo/s/write_ops/unified_write_executor/write_op.h"
+#include "mongo/db/commands/query_cmd/bulk_write_gen.h"
+#include "mongo/db/operation_context.h"
 
 namespace mongo {
 namespace unified_write_executor {
-enum BatchType { kSingleShard, kMultiShard };
 
-struct Analysis {
-    BatchType type;
-    std::vector<ShardEndpoint> shardsAffected;
-};
-
-/**
- * Analyzes the given write op to determine which shards it would affect, and if it could be
- * combined into a batch with other writes.
- */
-Analysis analyze(OperationContext* opCtx, const RoutingContext& routingCtx, const WriteOp& op);
+BulkWriteCommandReply bulkWrite(OperationContext* opCtx, const BulkWriteCommandRequest& request);
 
 }  // namespace unified_write_executor
 }  // namespace mongo

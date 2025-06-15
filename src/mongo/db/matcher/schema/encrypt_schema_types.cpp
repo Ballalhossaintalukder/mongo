@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/matcher/schema/encrypt_schema_types.h"
+
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/util/str.h"
@@ -35,13 +36,13 @@
 namespace mongo {
 
 EncryptSchemaKeyId EncryptSchemaKeyId::parseFromBSON(const BSONElement& element) {
-    if (element.type() == BSONType::String) {
+    if (element.type() == BSONType::string) {
         return EncryptSchemaKeyId(element.String());
-    } else if (element.type() == BSONType::Array) {
+    } else if (element.type() == BSONType::array) {
         std::vector<UUID> keys;
 
         for (auto&& arrayElement : element.embeddedObject()) {
-            if (arrayElement.type() != BSONType::BinData) {
+            if (arrayElement.type() != BSONType::binData) {
                 uasserted(51088,
                           str::stream() << "Encryption schema 'keyId' array elements must "
                                         << "have type BinData, found " << arrayElement.type());

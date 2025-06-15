@@ -92,7 +92,7 @@ boost::intrusive_ptr<Expression> ExpressionLet::parse(ExpressionContext* const e
                                                       const VariablesParseState& vpsIn) {
     MONGO_verify(expr.fieldNameStringData() == "$let");
 
-    uassert(16874, "$let only supports an object as its argument", expr.type() == Object);
+    uassert(16874, "$let only supports an object as its argument", expr.type() == BSONType::object);
     const BSONObj args = expr.embeddedObject();
 
     // varsElem must be parsed before inElem regardless of BSON order.
@@ -137,6 +137,7 @@ boost::intrusive_ptr<Expression> ExpressionLet::create(
     VariablesParseState vpsSub(vpsIn);  // vpsSub gets our vars, vpsIn doesn't.
     VariableMap vars;
     std::vector<boost::intrusive_ptr<Expression>> children;
+    children.reserve(letVariables.size());
     for (auto&& [varName, expr] : letVariables) {
         children.push_back(std::move(expr));
     }

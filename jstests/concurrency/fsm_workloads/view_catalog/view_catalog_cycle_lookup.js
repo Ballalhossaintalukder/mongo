@@ -5,10 +5,8 @@
  * views against other eachother and the underlying collection. We are looking to expose situations
  * where a $lookup or $graphLookup view that forms a cycle is created successfully.
  *
- * TODO SERVER-90385 Enable this test in embedded router suites
  * @tags: [
  *     requires_fcv_51,
- *     temp_disabled_embedded_router_uncategorized,
  * ]
  */
 
@@ -95,10 +93,10 @@ export const $config = (function() {
             const toName = this.getRandomView(this.viewList);
             const res = db.runCommand(
                 {collMod: fromName, viewOn: toName, pipeline: this.getRandomViewPipeline()});
-            assert(res.ok === 1 ||
-                       [ErrorCodes.GraphContainsCycle, ErrorCodes.ConflictingOperationInProgress]
-                           .includes(res.code),
-                   tojson(res));
+            assert.commandWorkedOrFailedWithCode(res, [
+                ErrorCodes.GraphContainsCycle,
+                ErrorCodes.ConflictingOperationInProgress,
+            ]);
         }
 
         /**
@@ -117,10 +115,10 @@ export const $config = (function() {
             const fromName = this.getRandomView(this.viewList);
             const res = db.runCommand(
                 {collMod: fromName, viewOn: collName, pipeline: this.getRandomViewPipeline()});
-            assert(res.ok === 1 ||
-                       [ErrorCodes.GraphContainsCycle, ErrorCodes.ConflictingOperationInProgress]
-                           .includes(res.code),
-                   tojson(res));
+            assert.commandWorkedOrFailedWithCode(res, [
+                ErrorCodes.GraphContainsCycle,
+                ErrorCodes.ConflictingOperationInProgress,
+            ]);
         }
 
         function readFromView(db, collName) {
@@ -134,12 +132,6 @@ export const $config = (function() {
             const viewName = this.getRandomView(this.viewList);
             const res = db.runCommand({find: viewName});
 
-            // If we encountered some transaction failure propagate this upwards so it gets
-            // automatically retried.
-            if (TxnUtil.isTransientTransactionError(res)) {
-                throw res;
-            }
-
             // When initializing an aggregation on a view, the server briefly releases its
             // collection lock before creating and iterating the cursor on the underlying namespace.
             // In this short window of time, it's possible that that namespace has been dropped and
@@ -147,14 +139,15 @@ export const $config = (function() {
             //
             // TODO (SERVER-35635): It would be more appropriate for the server to return
             // OperationFailed, as CommandNotSupportedOnView is misleading.
-            // TODO SERVER-XXXXX: The mergeCursors sent by mongos to mongod might get killed during
-            // a remapping and return a somewhat misleading CursorNotFound error. Ideally it should
-            // be remapped to an OperationFailed error.
-            assert(res.ok === 1 || res.code === ErrorCodes.CommandNotSupportedOnView ||
-                       res.code === ErrorCodes.CursorNotFound ||
-                       res.code === ErrorCodes.CommandOnShardedViewNotSupportedOnMongod ||
-                       res.code === ErrorCodes.QueryPlanKilled,
-                   () => tojson(res));
+            // TODO (SERVER-105785): The mergeCursors sent by mongos to mongod might get killed
+            // during a remapping and return a somewhat misleading CursorNotFound error. Ideally it
+            // should be remapped to an OperationFailed error.
+            assert.commandWorkedOrFailedWithCode(res, [
+                ErrorCodes.CommandNotSupportedOnView,
+                ErrorCodes.CursorNotFound,
+                ErrorCodes.CommandOnShardedViewNotSupportedOnMongod,
+                ErrorCodes.QueryPlanKilled
+            ]);
         }
 
         return {

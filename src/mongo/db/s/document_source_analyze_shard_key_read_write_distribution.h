@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -66,10 +57,21 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 namespace analyze_shard_key {
 
-class DocumentSourceAnalyzeShardKeyReadWriteDistribution final : public DocumentSource {
+class DocumentSourceAnalyzeShardKeyReadWriteDistribution final : public DocumentSource,
+                                                                 public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_analyzeShardKeyReadWriteDistribution"_sd;
 
@@ -109,7 +111,9 @@ public:
     DocumentSourceAnalyzeShardKeyReadWriteDistribution(
         const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
         DocumentSourceAnalyzeShardKeyReadWriteDistributionSpec spec)
-        : DocumentSource(kStageName, pExpCtx), _spec(std::move(spec)) {}
+        : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
+          _spec(std::move(spec)) {}
 
     ~DocumentSourceAnalyzeShardKeyReadWriteDistribution() override = default;
 
@@ -133,7 +137,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -152,7 +156,7 @@ public:
 private:
     DocumentSourceAnalyzeShardKeyReadWriteDistribution(
         const boost::intrusive_ptr<ExpressionContext>& expCtx)
-        : DocumentSource(kStageName, expCtx) {}
+        : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {}
 
     GetNextResult doGetNext() final;
 

@@ -157,12 +157,22 @@
  */
 #define MONGO_COMPILER_ALWAYS_INLINE MONGO_COMPILER_ALWAYS_INLINE_
 #if defined(_MSC_VER)
-#define MONGO_COMPILER_ALWAYS_INLINE_ __forceinline
+#define MONGO_COMPILER_ALWAYS_INLINE_ [[msvc::forceinline]]
 #elif MONGO_COMPILER_HAS_ATTRIBUTE(gnu::always_inline)
 #define MONGO_COMPILER_ALWAYS_INLINE_ [[gnu::always_inline]]
 #else
 #define MONGO_COMPILER_ALWAYS_INLINE_
 #endif
+
+/**
+ * Force a function to be inlined as a temporary measure to buy-back performance regressions
+ * downstream of the switch to using the v5 toolchain.
+ * TODO(SERVER-105707): Reevaluate each use of this macro once we have enabled LTO/PGO and
+ * other post-compilation optimizations; for each, either delete the use or change it to use
+ * MONGO_COMPILER_ALWAYS_INLINE, committing the forced inlining choice permanently. Then delete
+ * this macro definition.
+ */
+#define MONGO_COMPILER_ALWAYS_INLINE_GCC14 MONGO_COMPILER_ALWAYS_INLINE
 
 /**
  * Tells the compiler that it can assume that this line will never execute.
@@ -315,14 +325,6 @@
     MONGO_COMPILER_IF_GCC14(MONGO_COMPILER_DIAGNOSTIC_IGNORED(w))
 
 /**
- * We selectively ignore `-Wstringop-overread` on GCC 14 due to a known bug
- * affecting `boost::container::small_vector`:
- * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=108197.
- */
-#define MONGO_COMPILER_DIAGNOSTIC_WORKAROUND_BOOST_SMALL_VECTOR \
-    MONGO_COMPILER_IF_GCC14(MONGO_COMPILER_DIAGNOSTIC_IGNORED("-Wstringop-overread"))
-
-/**
  * We selectively ignore `-Wstringop-overflow` on GCC 14 due to strong suspicion
  * that they are false-positives. They involve an atomic read overflowing the
  * destination, likely due to the compiler incorrectly believing they might be
@@ -339,12 +341,3 @@
  */
 #define MONGO_COMPILER_DIAGNOSTIC_WORKAROUND_ATOMIC_WRITE \
     MONGO_COMPILER_IF_GCC14(MONGO_COMPILER_DIAGNOSTIC_IGNORED("-Wstringop-overflow"))
-
-/**
- * We selectively ignore `-Wuninitialized` on GCC 14 due to a known bug affecting
- * `boost::optional`. The fix is available upstream:
- * https://github.com/boostorg/optional/commit/e31cf6f2a8be437330f4547561df5ee8a62e4187.
- * TODO(SERVER-70000): Once we've upgraded boost to include the fix, remove this suppression.
- */
-#define MONGO_COMPILER_DIAGNOSTIC_WORKAROUND_BOOST_OPTIONAL_UNINITIALIZED \
-    MONGO_COMPILER_IF_GCC14(MONGO_COMPILER_DIAGNOSTIC_IGNORED("-Wuninitialized"))

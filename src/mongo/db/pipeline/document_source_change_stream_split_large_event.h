@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <queue>
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/util/builder.h"
@@ -52,9 +43,18 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <cstddef>
+#include <queue>
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceChangeStreamSplitLargeEvent : public DocumentSource {
+class DocumentSourceChangeStreamSplitLargeEvent : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$changeStreamSplitLargeEvent"_sd;
     static constexpr size_t kBSONObjMaxChangeEventSize = BSONObjMaxInternalSize - (8 * 1024);
@@ -84,7 +84,7 @@ public:
     }
 
     const char* getSourceName() const final {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

@@ -29,13 +29,6 @@
 
 #include "mongo/db/query/write_ops/insert.h"
 
-#include <boost/move/utility_core.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_depth.h"
@@ -56,6 +49,14 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace {
 
@@ -69,7 +70,7 @@ Status validateDepth(const BSONObj& obj) {
 
     while (!frames.empty()) {
         const auto elem = frames.back().next();
-        if (elem.type() == BSONType::Object || elem.type() == BSONType::Array) {
+        if (elem.type() == BSONType::object || elem.type() == BSONType::array) {
             auto subObj = elem.embeddedObject();
             // Empty subdocuments do not count toward the depth of a document.
             if (MONGO_unlikely(frames.size() == BSONDepth::getMaxDepthForUserStorage() &&
@@ -139,7 +140,7 @@ StatusWith<BSONObj> fixDocumentForInsert(OperationContext* opCtx,
             }
 
             if (!validationDisabled) {
-                if (!bypassEmptyTsReplacement && e.type() == bsonTimestamp &&
+                if (!bypassEmptyTsReplacement && e.type() == BSONType::timestamp &&
                     e.timestampValue() == 0) {
                     // we replace Timestamp(0,0) at the top level with a correct value
                     // in the fast pass, we just mark that we want to swap
@@ -177,7 +178,7 @@ StatusWith<BSONObj> fixDocumentForInsert(OperationContext* opCtx,
         i.next();
     } else {
         BSONElement e = doc["_id"];
-        if (e.type()) {
+        if (stdx::to_underlying(e.type())) {
             b.append(e);
         } else {
             b.appendOID("_id", nullptr, true);
@@ -188,7 +189,7 @@ StatusWith<BSONObj> fixDocumentForInsert(OperationContext* opCtx,
         BSONElement e = i.next();
         if (hadId && e.fieldNameStringData() == "_id") {
             // no-op
-        } else if (!bypassEmptyTsReplacement && e.type() == bsonTimestamp &&
+        } else if (!bypassEmptyTsReplacement && e.type() == BSONType::timestamp &&
                    e.timestampValue() == 0) {
             auto nextTime = VectorClockMutable::get(opCtx)->tickClusterTime(1);
             b.append(e.fieldName(), nextTime.asTimestamp());

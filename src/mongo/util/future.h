@@ -29,11 +29,8 @@
 
 #pragma once
 
-// Keeping this first to ensure it compiles by itself
 #include "mongo/util/future_impl.h"
-
-#include <boost/intrusive_ptr.hpp>
-#include <type_traits>
+// Keeping this first to ensure it compiles by itself
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -44,6 +41,10 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/modules.h"
 #include "mongo/util/out_of_line_executor.h"
+
+#include <type_traits>
+
+#include <boost/intrusive_ptr.hpp>
 
 namespace MONGO_MOD_PUB mongo {
 

@@ -27,20 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <bitset>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/pipeline.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
@@ -73,7 +60,6 @@
 #include "mongo/db/pipeline/document_source_sort.h"
 #include "mongo/db/pipeline/document_source_test_optimizations.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/pipeline/pipeline.h"
 #include "mongo/db/pipeline/pipeline_test_util.h"
 #include "mongo/db/pipeline/process_interface/common_process_interface.h"
 #include "mongo/db/pipeline/process_interface/stub_mongo_process_interface.h"
@@ -85,15 +71,30 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/logv2/log_util.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <bitset>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -175,10 +176,10 @@ protected:
         const BSONObj inputBson = pipelineFromJsonArray(inputPipeJson);
         const BSONObj outputPipeExpected = pipelineFromJsonArray(outputPipeJson);
 
-        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::Array);
+        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::array);
         std::vector<BSONObj> rawPipeline;
         for (auto&& stageElem : inputBson["pipeline"].Array()) {
-            ASSERT_EQUALS(stageElem.type(), BSONType::Object);
+            ASSERT_EQUALS(stageElem.type(), BSONType::object);
             rawPipeline.push_back(stageElem.embeddedObject());
         }
         AggregateCommandRequest request(aggNss, rawPipeline);
@@ -2009,6 +2010,8 @@ TEST_F(PipelineOptimizationTest, GroupShouldSwapWithMatchIfFilteringOnID) {
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
 
+/* ----- GROUP & MATCH ----- */
+/* ----- GROUP & MATCH : Nonexistence/nontype queries ----- */
 TEST_F(PipelineOptimizationTest, GroupShouldSwapWithMatchOnExprIfFilteringOnID) {
     std::string inputPipe =
         "[{$group: {_id: '$a'}}, "
@@ -2037,6 +2040,20 @@ TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchOnExprIfNotFiltering
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
 
+TEST_F(PipelineOptimizationTest, GroupShouldSwapWithCompoundMatchIfFilteringOnID) {
+    std::string inputPipe =
+        "[{$group : {_id:'$x'}}, "
+        " {$match: {$or : [ {_id : {$lte : 50}}, {_id : {$gt : 70}}]}}]";
+    std::string outputPipe =
+        "[{$match: {$or : [  {x : {$lte : 50}}, {x : {$gt : 70}}]}},"
+        "{$group : {_id:'$x', $willBeMerged: false}}]";
+    std::string serializedPipe =
+        "[{$match: {$or : [  {x : {$lte : 50}}, {x : {$gt : 70}}]}},"
+        "{$group : {_id:'$x', $willBeMerged: false}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
 TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfNotFilteringOnID) {
     std::string inputPipe =
         "[{$group : {_id:'$a'}}, "
@@ -2047,6 +2064,35 @@ TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfNotFilteringOnID) 
     std::string serializedPipe =
         "[{$group : {_id:'$a', $willBeMerged: false}}, "
         " {$match: {b : 4}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
+/* ----- GROUP & MATCH : Exsistence queries ----- */
+TEST_F(PipelineOptimizationTest, GroupShouldntSwapWithMatchIfFilteringByExistenceOnSemiCompoundID) {
+    std::string inputPipe =
+        "[{$group : {_id: {a: '$a'}}}, "
+        " {$match: {'_id.a': {$exists: true}}}]";
+    std::string outputPipe =
+        "[{$group : {_id: {a: '$a'}, $willBeMerged: false}}, "
+        " {$match: {'_id.a': {$exists: true}}}]";
+    std::string serializedPipe =
+        "[{$group : {_id: {a: '$a'}, $willBeMerged: false}}, "
+        " {$match: {'_id.a': {$exists: true}}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
+TEST_F(PipelineOptimizationTest, GroupShouldSwapWithMatchIfFilteringByExistenceOnCompoundID) {
+    std::string inputPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}}}, "
+        " {$match: {'_id.b': {$exists: true}}}]";
+    std::string outputPipe =
+        "[{$match: {'b': {$exists: true}}}, "
+        " {$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}]";
+    std::string serializedPipe =
+        "[{$match: {'b': {$exists: true}}}, "
+        " {$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}]";
 
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
@@ -2065,20 +2111,6 @@ TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfExistsPredicateOnI
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
 
-TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfTypePredicateOnID) {
-    std::string inputPipe =
-        "[{$group : {_id:'$x'}}, "
-        " {$match: {_id : {$type: [1]}}}]";
-    std::string outputPipe =
-        "[{$group : {_id:'$x', $willBeMerged: false}}, "
-        " {$match: {_id : {$type: [1]}}}]";
-    std::string serializedPipe =
-        "[{$group : {_id:'$x', $willBeMerged: false}}, "
-        " {$match: {_id : {$type: [1]}}}]";
-
-    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
-}
-
 TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithCompoundMatchIfExistsPredicateOnID) {
     std::string inputPipe =
         "[{$group : {_id:'$x'}}, "
@@ -2093,6 +2125,49 @@ TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithCompoundMatchIfExistsPred
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
 
+/* ----- GROUP & MATCH : Type queries ----- */
+TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfFilteringByTypeOnCompoundID) {
+    std::string inputPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}}}, "
+        " {$match: {$or: [{'_id.a' : 4}, {'_id.b': {$type: [5]}}]}}]";
+    std::string outputPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}, "
+        " {$match: {$or: [{'_id.a' : {$eq: 4}}, {'_id.b': {$type: [5]}}]}}]";
+    std::string serializedPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}, "
+        " {$match: {$or: [{'_id.a' : 4}, {'_id.b': {$type: [5]}}]}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
+TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfFilteringByTypeOnCompoundIDSimple) {
+    std::string inputPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}}}, "
+        " {$match: {'_id.b': {$type: [5]}}}]";
+    std::string outputPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}, "
+        " {$match: {'_id.b': {$type: [5]}}}]";
+    std::string serializedPipe =
+        "[{$group : {_id: {a: '$a', b: '$b'}, $willBeMerged: false}}, "
+        " {$match: {'_id.b': {$type: [5]}}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
+TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithMatchIfTypePredicateOnID) {
+    std::string inputPipe =
+        "[{$group : {_id:'$x'}}, "
+        " {$match: {_id : {$type: [1]}}}]";
+    std::string outputPipe =
+        "[{$group : {_id:'$x', $willBeMerged: false}}, "
+        " {$match: {_id : {$type: [1]}}}]";
+    std::string serializedPipe =
+        "[{$group : {_id:'$x', $willBeMerged: false}}, "
+        " {$match: {_id : {$type: [1]}}}]";
+
+    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
+}
+
 TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithCompoundMatchIfTypePredicateOnID) {
     std::string inputPipe =
         "[{$group : {_id:'$x'}}, "
@@ -2103,20 +2178,6 @@ TEST_F(PipelineOptimizationTest, GroupShouldNotSwapWithCompoundMatchIfTypePredic
     std::string serializedPipe =
         "[{$group : {_id:'$x', $willBeMerged: false}}, "
         " {$match: {$or : [ {_id : {$type: [18]}}, {_id : {$gt : 70}}]}}]";
-
-    assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
-}
-
-TEST_F(PipelineOptimizationTest, GroupShouldSwapWithCompoundMatchIfFilteringOnID) {
-    std::string inputPipe =
-        "[{$group : {_id:'$x'}}, "
-        " {$match: {$or : [ {_id : {$lte : 50}}, {_id : {$gt : 70}}]}}]";
-    std::string outputPipe =
-        "[{$match: {$or : [  {x : {$lte : 50}}, {x : {$gt : 70}}]}},"
-        "{$group : {_id:'$x', $willBeMerged: false}}]";
-    std::string serializedPipe =
-        "[{$match: {$or : [  {x : {$lte : 50}}, {x : {$gt : 70}}]}},"
-        "{$group : {_id:'$x', $willBeMerged: false}}]";
 
     assertPipelineOptimizesAndSerializesTo(inputPipe, outputPipe, serializedPipe);
 }
@@ -3584,7 +3645,7 @@ private:
 TEST_F(ChangeStreamPipelineOptimizationTest, ChangeStreamLookUpSize) {
     auto pipeline = makePipeline(
         {changestreamStage("{fullDocument: 'updateLookup', showExpandedEvents: true}")});
-    ASSERT_EQ(pipeline->getSources().size(), getChangeStreamStageSize());
+    ASSERT_EQ(pipeline->size(), getChangeStreamStageSize());
 
     // Make sure the change lookup is at the end.
     assertStageAtPos<DocumentSourceChangeStreamAddPostImage>(pipeline->getSources(), -1 /* pos */);
@@ -3619,7 +3680,7 @@ TEST_F(ChangeStreamPipelineOptimizationTest, FullDocumentBeforeChangeLookupSize)
     // filters out newly added events.
     auto pipeline = makePipeline(
         {changestreamStage("{fullDocumentBeforeChange: 'required', showExpandedEvents: true}")});
-    ASSERT_EQ(pipeline->getSources().size(), getChangeStreamStageSize());
+    ASSERT_EQ(pipeline->size(), getChangeStreamStageSize());
 
     // Make sure the pre-image lookup is at the end.
     assertStageAtPos<DocumentSourceChangeStreamAddPreImage>(pipeline->getSources(), -1 /* pos */);
@@ -4345,10 +4406,10 @@ std::unique_ptr<Pipeline, PipelineDeleter> getOptimizedPipeline(const BSONObj in
     QueryTestServiceContext testServiceContext;
     auto opCtx = testServiceContext.makeOperationContext();
 
-    ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::Array);
+    ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::array);
     std::vector<BSONObj> rawPipeline;
     for (auto&& stageElem : inputBson["pipeline"].Array()) {
-        ASSERT_EQUALS(stageElem.type(), BSONType::Object);
+        ASSERT_EQUALS(stageElem.type(), BSONType::object);
         rawPipeline.push_back(stageElem.embeddedObject());
     }
     AggregateCommandRequest request(kTestNss, rawPipeline);
@@ -4680,10 +4741,10 @@ public:
         const BSONObj shardPipeExpected = pipelineFromJsonArray(shardPipeJson);
         const BSONObj mergePipeExpected = pipelineFromJsonArray(mergePipeJson);
 
-        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::Array);
+        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::array);
         std::vector<BSONObj> rawPipeline;
         for (auto&& stageElem : inputBson["pipeline"].Array()) {
-            ASSERT_EQUALS(stageElem.type(), BSONType::Object);
+            ASSERT_EQUALS(stageElem.type(), BSONType::object);
             rawPipeline.push_back(stageElem.embeddedObject());
         }
         AggregateCommandRequest request(kTestNss, rawPipeline);
@@ -6393,7 +6454,7 @@ TEST_F(PipelineRenameTracking, ReportsNewNameAcrossMultipleRenames) {
         // Tracking backwards.
         auto pipeline =
             makePipeline({mockStage(), RenamesAToB::create(expCtx), RenamesBToC::create(expCtx)});
-        auto stages = pipeline->getSources();
+        const auto& stages = pipeline->getSources();
         auto renames = semantic_analysis::renamedPaths(stages.crbegin(), stages.crend(), {"c"});
         ASSERT(static_cast<bool>(renames));
         auto nameMap = *renames;
@@ -6404,7 +6465,7 @@ TEST_F(PipelineRenameTracking, ReportsNewNameAcrossMultipleRenames) {
         // Tracking forwards.
         auto pipeline =
             makePipeline({mockStage(), RenamesAToB::create(expCtx), RenamesBToC::create(expCtx)});
-        auto stages = pipeline->getSources();
+        const auto& stages = pipeline->getSources();
         auto renames = semantic_analysis::renamedPaths(stages.cbegin(), stages.cend(), {"a"});
         ASSERT(static_cast<bool>(renames));
         auto nameMap = *renames;

@@ -31,14 +31,16 @@
 #include "mongo/transport/asio/asio_session_impl.h"
 
 #include "mongo/base/checked_cast.h"
+#include "mongo/base/counter.h"
 #include "mongo/config.h"
+#include "mongo/db/auth/auth_options_gen.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/connection_health_metrics_parameter_gen.h"
-#include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/logv2/log.h"
 #include "mongo/transport/asio/asio_session_manager.h"
 #include "mongo/transport/asio/asio_utils.h"
+#include "mongo/transport/ingress_handshake_metrics.h"
 #include "mongo/transport/proxy_protocol_header_parser.h"
 #include "mongo/transport/session_util.h"
 #include "mongo/util/assert_util.h"
@@ -56,6 +58,7 @@ MONGO_FAIL_POINT_DEFINE(asioTransportLayerBlockBeforeOpportunisticRead);
 MONGO_FAIL_POINT_DEFINE(asioTransportLayerBlockBeforeAddSession);
 MONGO_FAIL_POINT_DEFINE(clientIsConnectedToLoadBalancerPort);
 MONGO_FAIL_POINT_DEFINE(clientIsLoadBalancedPeer);
+MONGO_FAIL_POINT_DEFINE(asioTransportLayer1sProxyTimeout);
 
 namespace {
 
@@ -494,15 +497,27 @@ auto CommonAsioSession::getSocket() -> GenericSocket& {
 ExecutorFuture<void> CommonAsioSession::parseProxyProtocolHeader(const ReactorHandle& reactor) {
     invariant(_isIngressSession);
     invariant(reactor);
+    const Backoff kExponentialBackoff(Milliseconds(2), Milliseconds::max());
+    const Seconds proxyHeaderTimeout =
+        MONGO_unlikely(asioTransportLayer1sProxyTimeout.shouldFail()) ? Seconds(1) : Seconds(120);
+    const Date_t deadline = reactor->now() + proxyHeaderTimeout;
+
     auto buffer = std::make_shared<std::array<char, kProxyProtocolHeaderSizeUpperBound>>();
     return AsyncTry([this, buffer] {
                const auto bytesRead = peekASIOStream(
                    _socket, asio::buffer(buffer->data(), kProxyProtocolHeaderSizeUpperBound));
                return transport::parseProxyProtocolHeader(StringData(buffer->data(), bytesRead));
            })
-        .until([](StatusWith<boost::optional<ParserResults>> sw) {
+        .until([deadline, proxyHeaderTimeout, reactor](
+                   StatusWith<boost::optional<ParserResults>> sw) {
+            uassert(10382800,
+                    fmt::format("Did not receive proxy protocol header within the time limit: {}",
+                                proxyHeaderTimeout),
+                    reactor->now() < deadline);
+
             return !sw.isOK() || sw.getValue();
         })
+        .withBackoffBetweenIterations(kExponentialBackoff)
         .on(reactor, CancellationToken::uncancelable())
         .then([this, buffer](const boost::optional<ParserResults>& results) mutable {
             invariant(results);
@@ -517,6 +532,15 @@ ExecutorFuture<void> CommonAsioSession::parseProxyProtocolHeader(const ReactorHa
                 const auto& dstEndpointAddr = results->endpoints->destinationAddress;
                 _proxiedDstEndpoint =
                     HostAndPort(dstEndpointAddr.getAddr(), dstEndpointAddr.getPort());
+
+                // If the server has been configured to apply authentication restrictions against
+                // origin client IP addresses, then the session's auth restriction environment
+                // should be reset to apply against the source address advertised in the proxy
+                // protocol header.
+                if (clientSourceAuthenticationRestrictionMode == "origin"_sd) {
+                    _restrictionEnvironment =
+                        RestrictionEnvironment(_proxiedSrcRemoteAddr.value(), _localAddr);
+                }
             } else {
                 _proxiedSrcRemoteAddr = {};
                 _proxiedSrcEndpoint = {};
@@ -835,6 +859,7 @@ Future<bool> CommonAsioSession::maybeHandshakeSSLForIngress(const MutableBufferS
                 LOGV2_DEBUG(4908001, 2, "Client connected without SNI extension");
             }
             const auto handshakeDurationMillis = durationCount<Milliseconds>(startTimer.elapsed());
+            IngressHandshakeMetrics::get(*this).onTLSHandshakeCompleted();
             if (gEnableDetailedConnectionHealthMetricLogLines.load()) {
                 LOGV2(6723804,
                       "Ingress TLS handshake complete",
@@ -882,9 +907,9 @@ bool CommonAsioSession::checkForHTTPRequest(const Buffer& buffers) {
     return (bufferAsStr == "GET "_sd);
 }
 
-bool CommonAsioSession::shouldOverrideMaxConns(
+bool CommonAsioSession::isExemptedByCIDRList(
     const std::vector<std::variant<CIDR, std::string>>& exemptions) const {
-    return transport::util::shouldOverrideMaxConns(
+    return transport::util::isExemptedByCIDRList(
         getProxiedSrcRemoteAddr(), localAddr(), exemptions);
 }
 

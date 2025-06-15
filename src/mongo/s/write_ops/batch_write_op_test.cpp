@@ -28,15 +28,11 @@
  */
 
 #include "mongo/db/timeseries/bucket_catalog/bucket_state_registry.h"
+
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <cstddef>
-#include <cstdint>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -60,7 +56,6 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/database_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/mock_ns_targeter.h"
 #include "mongo/s/session_catalog_router.h"
 #include "mongo/s/shard_cannot_refresh_due_to_locks_held_exception.h"
@@ -74,6 +69,11 @@
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/fail_point.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
 
 namespace mongo {
 namespace {
@@ -166,9 +166,8 @@ const ShardEndpoint& getFirstTargetedWriteEndpoint(
 
 TEST_F(BatchWriteOpTest, SingleOp) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -200,9 +199,8 @@ TEST_F(BatchWriteOpTest, SingleOp) {
 
 TEST_F(BatchWriteOpTest, SingleError) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -240,9 +238,8 @@ TEST_F(BatchWriteOpTest, SingleError) {
 
 TEST_F(BatchWriteOpTest, SingleTargetError) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterHalfRange(nss, endpoint);
 
@@ -276,9 +273,8 @@ TEST_F(BatchWriteOpTest, SingleTargetError) {
 // concern error if one occurs.
 TEST_F(BatchWriteOpTest, SingleWriteConcernErrorOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -319,9 +315,8 @@ TEST_F(BatchWriteOpTest, SingleWriteConcernErrorOrdered) {
 // Single-op stale version test. We should retry the same batch until we're not stale.
 TEST_F(BatchWriteOpTest, SingleStaleError) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -342,14 +337,12 @@ TEST_F(BatchWriteOpTest, SingleStaleError) {
     Timestamp timestamp{1, 0};
     response.addToErrDetails(write_ops::WriteError(
         0,
-        Status{StaleConfigInfo(
-                   nss,
-                   ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {101, 200}),
-                                             boost::optional<CollectionIndexes>(boost::none)),
-                   ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {105, 200}),
-                                             boost::optional<CollectionIndexes>(boost::none)),
-                   ShardId("shard")),
-               "mock stale error"}));
+        Status{
+            StaleConfigInfo(nss,
+                            ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {101, 200})),
+                            ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {105, 200})),
+                            ShardId("shard")),
+            "mock stale error"}));
 
     // First stale response comes back, we should retry
     batchOp.noteBatchResponse(*targeted.begin()->second, response, nullptr);
@@ -395,9 +388,8 @@ TEST_F(BatchWriteOpTest, SingleStaleError) {
 // Multi-op targeting test (ordered)
 TEST_F(BatchWriteOpTest, MultiOpSameShardOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -433,9 +425,8 @@ TEST_F(BatchWriteOpTest, MultiOpSameShardOrdered) {
 // Multi-op targeting test (unordered)
 TEST_F(BatchWriteOpTest, MultiOpSameShardUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -477,12 +468,10 @@ TEST_F(BatchWriteOpTest, MultiOpSameShardUnordered) {
 // (one to each shard, one-by-one)
 TEST_F(BatchWriteOpTest, MultiOpTwoShardsOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -537,7 +526,7 @@ void verifyTargetedBatches(std::map<ShardId, size_t> expected,
     for (auto it = targeted.begin(); it != targeted.end(); ++it) {
         ASSERT_EQUALS(expected[getFirstTargetedWriteEndpoint(it->second).shardName],
                       it->second->getWrites().size());
-        ASSERT_EQUALS(ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
+        ASSERT_EQUALS(ShardVersionFactory::make(ChunkVersion::IGNORED()),
                       *getFirstTargetedWriteEndpoint(it->second).shardVersion);
         expected.erase(expected.find(getFirstTargetedWriteEndpoint(it->second).shardName));
     }
@@ -548,12 +537,10 @@ void verifyTargetedBatches(std::map<ShardId, size_t> expected,
 // to each shard).
 TEST_F(BatchWriteOpTest, MultiOpTwoShardsUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -597,12 +584,10 @@ TEST_F(BatchWriteOpTest, MultiOpTwoShardsUnordered) {
 // two batches to each shard (two for each delete op).
 TEST_F(BatchWriteOpTest, MultiOpTwoShardsEachOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -656,12 +641,10 @@ TEST_F(BatchWriteOpTest, MultiOpTwoShardsEachOrdered) {
 // of two batches to each shard (containing writes for both ops).
 TEST_F(BatchWriteOpTest, MultiOpTwoShardsEachUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -707,12 +690,10 @@ TEST_F(BatchWriteOpTest, MultiOpTwoShardsEachUnordered) {
 // ops should be batched together.
 TEST_F(BatchWriteOpTest, MultiOpOneOrTwoShardsOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -805,12 +786,10 @@ TEST_F(BatchWriteOpTest, MultiOpOneOrTwoShardsOrdered) {
 // shards. Should batch all the ops together into two batches of four ops for each shard.
 TEST_F(BatchWriteOpTest, MultiOpOneOrTwoShardsUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -871,18 +850,16 @@ TEST_F(BatchWriteOpTest, MultiOpOneOrTwoShardsUnorderedWithDifferentEndpoints) {
     ShardId shardIdB("shardB");
     ShardEndpoint endpointA(
         shardIdA,
-        ShardVersionFactory::make(ChunkVersion({OID::gen(), Timestamp(2)}, {10, 11}),
-                                  boost::optional<CollectionIndexes>(boost::none)),
+        ShardVersionFactory::make(ChunkVersion({OID::gen(), Timestamp(2)}, {10, 11})),
         boost::none);
     ShardEndpoint endpointB(
         shardIdB,
-        ShardVersionFactory::make(ChunkVersion({OID::gen(), Timestamp(2)}, {10, 11}),
-                                  boost::optional<CollectionIndexes>(boost::none)),
+        ShardVersionFactory::make(ChunkVersion({OID::gen(), Timestamp(2)}, {10, 11})),
         boost::none);
     ShardEndpoint endpointAVersionIgnored(
-        shardIdA, ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none), boost::none);
+        shardIdA, ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
     ShardEndpoint endpointBVersionIgnored(
-        shardIdB, ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none), boost::none);
+        shardIdB, ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -934,12 +911,10 @@ TEST_F(BatchWriteOpTest, MultiOpOneOrTwoShardsUnorderedWithDifferentEndpoints) {
 // one shard. There should be one set of two batches to each shard and an error reported.
 TEST_F(BatchWriteOpTest, MultiOpSingleShardErrorUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -998,12 +973,10 @@ TEST_F(BatchWriteOpTest, MultiOpSingleShardErrorUnordered) {
 // on each shard. There should be one set of two batches to each shard and and two errors reported.
 TEST_F(BatchWriteOpTest, MultiOpTwoShardErrorsUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1059,12 +1032,10 @@ TEST_F(BatchWriteOpTest, MultiOpTwoShardErrorsUnordered) {
 // shard. There should be one set of two batches to each shard and an error reported.
 TEST_F(BatchWriteOpTest, MultiOpPartialSingleShardErrorUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1125,12 +1096,10 @@ TEST_F(BatchWriteOpTest, MultiOpPartialSingleShardErrorUnordered) {
 // should not get run.
 TEST_F(BatchWriteOpTest, MultiOpPartialSingleShardErrorOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1188,9 +1157,8 @@ TEST_F(BatchWriteOpTest, MultiOpPartialSingleShardErrorOrdered) {
 // Multi-op (unordered) error and write concern error test.
 TEST_F(BatchWriteOpTest, MultiOpErrorAndWriteConcernErrorUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -1232,12 +1200,10 @@ TEST_F(BatchWriteOpTest, MultiOpErrorAndWriteConcernErrorUnordered) {
 // Single-op (ordered) error and write concern error test.
 TEST_F(BatchWriteOpTest, SingleOpErrorAndWriteConcernErrorOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1291,9 +1257,8 @@ TEST_F(BatchWriteOpTest, SingleOpErrorAndWriteConcernErrorOrdered) {
 // Targeting failure on second op in batch op (ordered)
 TEST_F(BatchWriteOpTest, MultiOpFailedTargetOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterHalfRange(nss, endpoint);
 
@@ -1347,9 +1312,8 @@ TEST_F(BatchWriteOpTest, MultiOpFailedTargetOrdered) {
 // Targeting failure on second op in batch op (unordered)
 TEST_F(BatchWriteOpTest, MultiOpFailedTargetUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterHalfRange(nss, endpoint);
 
@@ -1402,12 +1366,10 @@ TEST_F(BatchWriteOpTest, MultiOpFailedTargetUnordered) {
 // into write errors for first affected write.
 TEST_F(BatchWriteOpTest, MultiOpFailedBatchOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1453,12 +1415,10 @@ TEST_F(BatchWriteOpTest, MultiOpFailedBatchOrdered) {
 // into write errors for all affected writes.
 TEST_F(BatchWriteOpTest, MultiOpFailedBatchUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1513,12 +1473,10 @@ TEST_F(BatchWriteOpTest, MultiOpFailedBatchUnordered) {
 // write.
 TEST_F(BatchWriteOpTest, MultiOpAbortOrdered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1560,12 +1518,10 @@ TEST_F(BatchWriteOpTest, MultiOpAbortOrdered) {
 // writes.
 TEST_F(BatchWriteOpTest, MultiOpAbortUnordered) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1604,12 +1560,10 @@ TEST_F(BatchWriteOpTest, MultiOpAbortUnordered) {
 // Multi-op targeting test where each op goes to both shards and both return a write concern error
 TEST_F(BatchWriteOpTest, MultiOpTwoWCErrors) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpointA(ShardId("shardA"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
-    ShardEndpoint endpointB(ShardId("shardB"),
-                            ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                            boost::none);
+    ShardEndpoint endpointA(
+        ShardId("shardA"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
+    ShardEndpoint endpointB(
+        ShardId("shardB"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterSplitRange(nss, endpointA, endpointB);
 
@@ -1656,14 +1610,12 @@ TEST_F(BatchWriteOpTest, MultiOpTwoWCErrors) {
 TEST_F(BatchWriteOpTest, MultiDeleteAndTargetedDeleteOrderedStaleConfig) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
     CollectionGeneration collGeneration = {OID::gen(), Timestamp(1000, 1)};
-    ShardEndpoint endpoint1(
-        ShardId("shard1"),
-        ShardVersionFactory::make(ChunkVersion(collGeneration, {1, 0}), boost::none),
-        boost::none);
-    ShardEndpoint endpoint2(
-        ShardId("shard2"),
-        ShardVersionFactory::make(ChunkVersion(collGeneration, {1, 1}), boost::none),
-        boost::none);
+    ShardEndpoint endpoint1(ShardId("shard1"),
+                            ShardVersionFactory::make(ChunkVersion(collGeneration, {1, 0})),
+                            boost::none);
+    ShardEndpoint endpoint2(ShardId("shard2"),
+                            ShardVersionFactory::make(ChunkVersion(collGeneration, {1, 1})),
+                            boost::none);
 
     // Note: Shard key is {x: 1}
     auto targeter = initTargeterSplitRange(nss, endpoint1, endpoint2);
@@ -1768,9 +1720,8 @@ TEST_F(BatchWriteOpTest, MultiDeleteAndTargetedDeleteOrderedStaleConfig) {
 
 TEST_F(BatchWriteOpTest, AttachingStmtIds) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
     auto targeter = initTargeterFullRange(nss, endpoint);
 
     const std::vector<StmtId> stmtIds{1, 2, 3};
@@ -1860,9 +1811,8 @@ using BatchWriteOpLimitTests = WriteOpTestFixture;
 // Big single operation test - should go through
 TEST_F(BatchWriteOpLimitTests, OneBigDoc) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -1897,9 +1847,8 @@ TEST_F(BatchWriteOpLimitTests, OneBigDoc) {
 // Big doc with smaller additional doc - should go through as two batches
 TEST_F(BatchWriteOpLimitTests, OneBigOneSmall) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterFullRange(nss, endpoint);
 
@@ -1968,9 +1917,8 @@ private:
 
 TEST_F(BatchWriteOpTransactionTest, ThrowTargetingErrorsInTransaction_Delete) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterHalfRange(nss, endpoint);
 
@@ -1997,9 +1945,8 @@ TEST_F(BatchWriteOpTransactionTest, ThrowTargetingErrorsInTransaction_Delete) {
 
 TEST_F(BatchWriteOpTransactionTest, ThrowTargetingErrorsInTransaction_Update) {
     NamespaceString nss = NamespaceString::createNamespaceString_forTest("foo.bar");
-    ShardEndpoint endpoint(ShardId("shard"),
-                           ShardVersionFactory::make(ChunkVersion::IGNORED(), boost::none),
-                           boost::none);
+    ShardEndpoint endpoint(
+        ShardId("shard"), ShardVersionFactory::make(ChunkVersion::IGNORED()), boost::none);
 
     auto targeter = initTargeterHalfRange(nss, endpoint);
 
@@ -2037,7 +1984,7 @@ public:
     OperationContext* getOpCtx() {
         return operationContext();
     }
-    CollectionRoutingInfoTargeter getCollectionRoutingInfoTargeter() const {
+    CollectionRoutingInfoTargeter& getCollectionRoutingInfoTargeter() {
         return *_criTargeter;
     }
 
@@ -2290,7 +2237,7 @@ public:
         return operationContext();
     }
 
-    CollectionRoutingInfoTargeter getCollectionRoutingInfoTargeter() const {
+    CollectionRoutingInfoTargeter& getCollectionRoutingInfoTargeter() {
         return *_criTargeter;
     }
 
@@ -2452,7 +2399,7 @@ public:
     OperationContext* getOpCtx() {
         return operationContext();
     }
-    CollectionRoutingInfoTargeter getCollectionRoutingInfoTargeter() const {
+    CollectionRoutingInfoTargeter& getCollectionRoutingInfoTargeter() {
         return *_criTargeter;
     }
 
@@ -2846,14 +2793,12 @@ TEST_F(WriteWithoutShardKeyWithIdFixture,
         BatchedCommandResponse firstShardResp;
         firstShardResp.addToErrDetails(write_ops::WriteError(
             0,
-            Status(StaleConfigInfo(
-                       kNss,
-                       ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0}),
-                                                 boost::optional<CollectionIndexes>(boost::none)),
-                       ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0}),
-                                                 boost::optional<CollectionIndexes>(boost::none)),
-                       ShardId("TestShard")),
-                   "Stale error")));
+            Status(
+                StaleConfigInfo(kNss,
+                                ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0})),
+                                ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0})),
+                                ShardId("TestShard")),
+                "Stale error")));
         firstShardResp.setStatus(Status::OK());
 
         auto iterator = targeted.begin();
@@ -2937,14 +2882,12 @@ TEST_F(WriteWithoutShardKeyWithIdFixture, UpdateOneAndDeleteOneBroadcastMatchWit
         BatchedCommandResponse firstShardResp;
         firstShardResp.addToErrDetails(write_ops::WriteError(
             0,
-            Status(StaleConfigInfo(
-                       kNss,
-                       ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0}),
-                                                 boost::optional<CollectionIndexes>(boost::none)),
-                       ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0}),
-                                                 boost::optional<CollectionIndexes>(boost::none)),
-                       ShardId("TestShard")),
-                   "Stale error")));
+            Status(
+                StaleConfigInfo(kNss,
+                                ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0})),
+                                ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0})),
+                                ShardId("TestShard")),
+                "Stale error")));
         firstShardResp.setStatus(Status::OK());
 
         auto iterator = targeted.begin();
@@ -3105,13 +3048,10 @@ TEST_F(WriteWithoutShardKeyWithIdFixture, UpdateRetriedAfterWCError) {
     secondShardResp.setStatus(Status::OK());
     secondShardResp.addToErrDetails(write_ops::WriteError(
         0,
-        Status(StaleConfigInfo(
-                   kNss,
-                   ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0}),
-                                             boost::optional<CollectionIndexes>(boost::none)),
-                   ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0}),
-                                             boost::optional<CollectionIndexes>(boost::none)),
-                   ShardId("TestShard")),
+        Status(StaleConfigInfo(kNss,
+                               ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 0})),
+                               ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {2, 0})),
+                               ShardId("TestShard")),
                "Stale error")));
 
     // Respond to second targeted batch.

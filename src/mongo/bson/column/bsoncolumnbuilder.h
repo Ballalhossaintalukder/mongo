@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonelementvalue.h"
 #include "mongo/bson/bsonobj.h"
@@ -47,13 +38,23 @@
 #include "mongo/bson/util/builder.h"
 #include "mongo/platform/int128.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 namespace bsoncolumn {
 /**
  * Deconstructed BSONElement without type and fieldname in the contigous buffer.
  */
 struct Element {
-    Element() : type(EOO), size(0) {}
+    Element() : type(BSONType::eoo), size(0) {}
     Element(BSONElement elem) : value(elem.value()), type(elem.type()), size(elem.valuesize()) {}
     Element(const BSONObj& obj, BSONType t) : value(obj.objdata()), type(t), size(obj.objsize()) {}
     Element(BSONType t, BSONElementValue v, int s) : value(v), type(t), size(s) {}
@@ -501,7 +502,7 @@ private:
             // Reference object that is used to match object hierarchy to encoding states. Appending
             // objects for sub-object compression need to check their hierarchy against this object.
             allocator_aware::SharedBuffer<Allocator> referenceSubObj;
-            BSONType referenceSubObjType = BSONType::EOO;
+            BSONType referenceSubObjType = BSONType::eoo;
 
             // Buffered BSONObj when determining reference object. Will be compressed when this is
             // complete and we transition into kSubObjAppending.

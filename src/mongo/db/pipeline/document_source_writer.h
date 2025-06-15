@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include "mongo/platform/basic.h"
-
-#include <fmt/format.h>
 
 #include "mongo/db/db_raii.h"
 #include "mongo/db/operation_context.h"
@@ -42,6 +39,8 @@
 #include "mongo/db/transaction_resources.h"
 #include "mongo/rpc/metadata/audit_metadata.h"
 #include "mongo/s/write_ops/batched_command_request.h"
+
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -103,7 +102,7 @@ public:
  * has been read, respectively.
  */
 template <typename B>
-class DocumentSourceWriter : public DocumentSource {
+class DocumentSourceWriter : public DocumentSource, public exec::agg::Stage {
 public:
     using BatchObject = B;
     using BatchedObjects = std::vector<BatchObject>;
@@ -112,6 +111,7 @@ public:
                          NamespaceString outputNs,
                          const boost::intrusive_ptr<ExpressionContext>& expCtx)
         : DocumentSource(stageName, expCtx),
+          exec::agg::Stage(stageName, expCtx),
           _writeSizeEstimator(expCtx->getMongoProcessInterface()->getWriteSizeEstimator(
               expCtx->getOperationContext(), outputNs)),
           _outputNs(std::move(outputNs)) {}

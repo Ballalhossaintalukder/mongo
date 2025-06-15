@@ -35,6 +35,7 @@
 #include "mongo/db/s/sharding_ddl_coordinator.h"
 #include "mongo/db/s/sharding_ddl_coordinator_service.h"
 #include "mongo/db/s/topology_change_helpers.h"
+#include "mongo/s/sharding_task_executor.h"
 
 namespace mongo {
 class AddShardCoordinator final
@@ -44,8 +45,7 @@ public:
     using StateDoc = AddShardCoordinatorDocument;
     using Phase = AddShardCoordinatorPhaseEnum;
 
-    AddShardCoordinator(ShardingDDLCoordinatorService* service, const BSONObj& initialState)
-        : RecoverableShardingDDLCoordinator(service, "AddShardCoordinator", initialState) {}
+    AddShardCoordinator(ShardingDDLCoordinatorService* service, const BSONObj& initialState);
 
     ~AddShardCoordinator() override = default;
 
@@ -72,15 +72,16 @@ private:
     ExecutorFuture<void> _runImpl(std::shared_ptr<executor::ScopedTaskExecutor> executor,
                                   const CancellationToken& token) noexcept override;
 
+    void _dropBlockFCVChangesCollection(OperationContext* opCtx,
+                                        std::shared_ptr<executor::TaskExecutor> executor);
+
     ExecutorFuture<void> _cleanupOnAbort(std::shared_ptr<executor::ScopedTaskExecutor> executor,
                                          const CancellationToken& token,
                                          const Status& status) noexcept override;
 
     void _verifyInput() const;
 
-    void _checkExistingDataOnShard(OperationContext* opCtx,
-                                   RemoteCommandTargeter& targeter,
-                                   std::shared_ptr<executor::TaskExecutor> executor) const;
+    bool _isPristineReplicaset(OperationContext* opCtx, RemoteCommandTargeter& targeter) const;
 
     RemoteCommandTargeter& _getTargeter(OperationContext* opCtx);
 
@@ -90,31 +91,40 @@ private:
 
     boost::optional<std::function<OperationSessionInfo(OperationContext*)>> _osiGenerator();
 
-    void _standardizeClusterParameters(OperationContext* opCt,
-                                       std::shared_ptr<executor::ScopedTaskExecutor> executor);
+    void _standardizeClusterParameters(OperationContext* opCt);
 
     bool _isFirstShard(OperationContext* opCtx);
 
     void _setFCVOnReplicaSet(OperationContext* opCtx,
-                             mongo::ServerGlobalParams::FCVSnapshot::FCV fcv,
-                             std::shared_ptr<executor::TaskExecutor> executor);
+                             mongo::ServerGlobalParams::FCVSnapshot::FCV fcv);
 
-    void _blockUserWrites(OperationContext* opCtx,
-                          std::shared_ptr<executor::TaskExecutor> executor);
+    void _blockUserWrites(OperationContext* opCtx);
 
-    void _restoreUserWrites(OperationContext* opCtx,
-                            std::shared_ptr<executor::TaskExecutor> executor);
+    void _restoreUserWrites(OperationContext* opCtx);
+
+    void _blockFCVChangesOnReplicaSet(OperationContext* opCtx,
+                                      std::shared_ptr<executor::TaskExecutor> executor);
+
+    void _unblockFCVChangesOnNewShard(OperationContext* opCtx,
+                                      std::shared_ptr<executor::TaskExecutor> executor);
 
     topology_change_helpers::UserWriteBlockingLevel _getUserWritesBlockFromReplicaSet(
-        OperationContext* opCtx, std::shared_ptr<executor::TaskExecutor> executor);
+        OperationContext* opCtx);
 
-    void _dropSessionsCollection(OperationContext* opCtx,
-                                 std::shared_ptr<executor::TaskExecutor> executor);
+    void _dropSessionsCollection(OperationContext* opCtx);
 
     // Set on successful completion of the coordinator.
     boost::optional<std::string> _result;
 
     std::unique_ptr<Shard> _shardConnection;
+
+    // We create a new executor without the gossiping protocol because we don't want to
+    // expose any cluster-related vector clock internals (e.g., cluster time, config time)
+    // before the replica set has officially joined the cluster.
+    // If the replica set were to receive vector clock values and then fail to join,
+    // it could potentially corrupt another cluster's vector clock during a subsequent attempt to
+    // join.
+    std::shared_ptr<executor::ShardingTaskExecutor> _executorWithoutGossip;
 };
 
 }  // namespace mongo

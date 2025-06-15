@@ -29,8 +29,6 @@
 
 #include "mongo/db/query/index_hint.h"
 
-#include <boost/container_hash/extensions.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -40,6 +38,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
+
+#include <boost/functional/hash.hpp>
 
 namespace mongo {
 namespace {
@@ -71,9 +71,9 @@ std::string toString(NaturalOrderHint::Direction dir) {
 }
 
 IndexHint IndexHint::parse(const BSONElement& element) {
-    if (element.type() == BSONType::String) {
+    if (element.type() == BSONType::string) {
         return IndexHint(element.String());
-    } else if (element.type() == BSONType::Object) {
+    } else if (element.type() == BSONType::object) {
         auto obj = element.Obj();
         if (obj.firstElementFieldName() == kNaturalFieldName) {
             uassert(ErrorCodes::FailedToParse,

@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/client/read_preference.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -41,11 +37,16 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
-#include "mongo/client/read_preference.h"
 #include "mongo/client/read_preference_gen.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -192,10 +193,10 @@ StatusWith<ReadPreferenceSetting> ReadPreferenceSetting::fromInnerBSON(const BSO
 }
 
 StatusWith<ReadPreferenceSetting> ReadPreferenceSetting::fromInnerBSON(const BSONElement& elem) {
-    if (elem.type() != mongo::Object) {
+    if (elem.type() != BSONType::object) {
         return Status(ErrorCodes::TypeMismatch,
                       str::stream() << "$readPreference has incorrect type: expected "
-                                    << mongo::Object << " but got " << elem.type());
+                                    << BSONType::object << " but got " << elem.type());
     }
     return fromInnerBSON(elem.Obj());
 }

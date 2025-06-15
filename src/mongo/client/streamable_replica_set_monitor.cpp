@@ -27,18 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/none.hpp>
-#include <limits>
-#include <map>
-#include <mutex>
-#include <ostream>
-#include <set>
-#include <tuple>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/client/streamable_replica_set_monitor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/timestamp.h"
@@ -51,7 +40,6 @@
 #include "mongo/client/sdam/server_description.h"
 #include "mongo/client/sdam/topology_description.h"
 #include "mongo/client/sdam/topology_manager.h"
-#include "mongo/client/streamable_replica_set_monitor.h"
 #include "mongo/client/streamable_replica_set_monitor_discovery_time_processor.h"
 #include "mongo/client/streamable_replica_set_monitor_query_processor.h"
 #include "mongo/db/service_context.h"
@@ -59,6 +47,19 @@
 #include "mongo/platform/atomic_word.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <limits>
+#include <map>
+#include <mutex>
+#include <ostream>
+#include <set>
+#include <tuple>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -492,11 +493,13 @@ void StreamableReplicaSetMonitor::_failedHost(const HostAndPort& host,
 
     _doErrorActions(
         host,
+        status.reason(),
         _errorHandler->computeErrorActions(host, status, stage, isApplicationOperation, bson));
 }
 
 void StreamableReplicaSetMonitor::_doErrorActions(
     const HostAndPort& host,
+    const StringData reason,
     const StreamableReplicaSetMonitorErrorHandler::ErrorActions& errorActions) const {
     {
         stdx::lock_guard lock(_mutex);
@@ -504,7 +507,8 @@ void StreamableReplicaSetMonitor::_doErrorActions(
             return;
 
         if (errorActions.dropConnections)
-            _connectionManager->dropConnections(host);
+            _connectionManager->dropConnections(
+                host, Status(ErrorCodes::PooledConnectionsDropped, reason));
 
         if (errorActions.requestImmediateCheck && _serverDiscoveryMonitor)
             _serverDiscoveryMonitor->requestImmediateCheck();

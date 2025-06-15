@@ -29,9 +29,17 @@
 
 #pragma once
 
-#include <boost/filesystem/path.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/bson/util/builder.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/query/query_shape/serialization_options.h"
+#include "mongo/db/sorter/sorter_checksum_calculator.h"
+#include "mongo/db/sorter/sorter_gen.h"
+#include "mongo/db/sorter/sorter_stats.h"
+#include "mongo/logv2/log_attr.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/bufreader.h"
+#include "mongo/util/shared_buffer_fragment.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <fstream>  // IWYU pragma: keep
@@ -45,16 +53,9 @@
 #include <utility>
 #include <vector>
 
-#include "mongo/bson/util/builder.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/query/query_shape/serialization_options.h"
-#include "mongo/db/sorter/sorter_checksum_calculator.h"
-#include "mongo/db/sorter/sorter_gen.h"
-#include "mongo/db/sorter/sorter_stats.h"
-#include "mongo/logv2/log_attr.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/bufreader.h"
-#include "mongo/util/shared_buffer_fragment.h"
+#include <boost/filesystem/path.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 /**
  * This is the public API for the Sorter (both in-memory and external)
@@ -132,7 +133,8 @@ struct SortOptions {
     // If set, allows us to observe Sorter file handle usage.
     SorterFileStats* sorterFileStats;
 
-    // If set, allows us to observe aggregate Sorter behaviors.
+    // If set, allows us to observe aggregate Sorter behaviors. The lifetime of this object must
+    // exceed that of the Sorter instance; otherwise, it will lead to a user-after-free error.
     SorterTracker* sorterTracker;
 
     // When set, this sorter will own a memory pool that callers should used to allocate memory for
@@ -304,6 +306,12 @@ protected:
 class SorterBase {
 public:
     SorterBase(SorterTracker* sorterTracker = nullptr) : _stats(sorterTracker) {}
+    ~SorterBase() {
+        // After the Sorter is destroyed all memory it holds is gone so we are
+        // setting the memory usage to zero to have it reflected on the sorterTracker
+        // if it was provided.
+        _stats.setMemUsage(0);
+    }
 
     const SorterStats& stats() const {
         return _stats;

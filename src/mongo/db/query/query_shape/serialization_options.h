@@ -28,16 +28,6 @@
  */
 
 #pragma once
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <functional>
-#include <ostream>
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -49,6 +39,17 @@
 #include "mongo/db/query/explain_options.h"
 #include "mongo/db/query/explain_verbosity_gen.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstddef>
+#include <functional>
+#include <ostream>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 /**
@@ -104,10 +105,10 @@ struct SerializationOptions {
         if (transformIdentifiers) {
             return transformIdentifiersCallback(str);
         }
-        return str.toString();
+        return std::string{str};
     }
 
-    std::string serializeFieldPath(FieldPath path) const {
+    std::string serializeFieldPath(const FieldPath& path) const {
         if (transformIdentifiers) {
             std::stringstream hmaced;
             for (size_t i = 0; i < path.getPathLength(); ++i) {
@@ -121,7 +122,7 @@ struct SerializationOptions {
         return path.fullPath();
     }
 
-    std::string serializeFieldPathWithPrefix(FieldPath path) const {
+    std::string serializeFieldPathWithPrefix(const FieldPath& path) const {
         return "$" + serializeFieldPath(path);
     }
 
@@ -139,13 +140,14 @@ struct SerializationOptions {
 
     // Helper functions for applying hmac to BSONObj. Does not take into account anything to do with
     // MQL semantics, removes all field names and literals in the passed in obj.
-    void addHmacedArrayToBuilder(BSONArrayBuilder* bab, std::vector<BSONElement> array) const {
+    void addHmacedArrayToBuilder(BSONArrayBuilder* bab,
+                                 const std::vector<BSONElement>& array) const {
         for (const auto& elem : array) {
-            if (elem.type() == BSONType::Object) {
+            if (elem.type() == BSONType::object) {
                 BSONObjBuilder subObj(bab->subobjStart());
                 addHmacedObjToBuilder(&subObj, elem.Obj());
                 subObj.done();
-            } else if (elem.type() == BSONType::Array) {
+            } else if (elem.type() == BSONType::array) {
                 BSONArrayBuilder subArr(bab->subarrayStart());
                 addHmacedArrayToBuilder(&subArr, elem.Array());
                 subArr.done();
@@ -155,14 +157,14 @@ struct SerializationOptions {
         }
     }
 
-    void addHmacedObjToBuilder(BSONObjBuilder* bob, BSONObj objToHmac) const {
+    void addHmacedObjToBuilder(BSONObjBuilder* bob, const BSONObj& objToHmac) const {
         for (const auto& elem : objToHmac) {
             auto fieldName = serializeFieldPath(elem.fieldName());
-            if (elem.type() == BSONType::Object) {
+            if (elem.type() == BSONType::object) {
                 BSONObjBuilder subObj(bob->subobjStart(fieldName));
                 addHmacedObjToBuilder(&subObj, elem.Obj());
                 subObj.done();
-            } else if (elem.type() == BSONType::Array) {
+            } else if (elem.type() == BSONType::array) {
                 BSONArrayBuilder subArr(bob->subarrayStart(fieldName));
                 addHmacedArrayToBuilder(&subArr, elem.Array());
                 subArr.done();

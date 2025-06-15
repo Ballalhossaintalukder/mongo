@@ -28,21 +28,7 @@
  */
 
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <map>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <variant>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/fle_crud.h"
 
 #include "mongo/base/data_range.h"
 #include "mongo/base/error_codes.h"
@@ -65,7 +51,6 @@
 #include "mongo/db/database_name.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/error_labels.h"
-#include "mongo/db/fle_crud.h"
 #include "mongo/db/generic_argument_util.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/multitenancy_gen.h"
@@ -102,6 +87,22 @@
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <variant>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -370,12 +371,23 @@ using VTS = auth::ValidatedTenancyScope;
  * Checks that all encrypted payloads correspond to an encrypted field,
  * and that the encryption keyId used was appropriate for that field.
  */
-void validateInsertUpdatePayloads(const std::vector<EncryptedField>& fields,
+void validateInsertUpdatePayloads(OperationContext* opCtx,
+                                  const std::vector<EncryptedField>& fields,
                                   const std::vector<EDCServerPayloadInfo>& payload) {
     std::map<StringData, UUID> pathToKeyIdMap;
     for (const auto& field : fields) {
         pathToKeyIdMap.insert({field.getPath(), field.getKeyId()});
     }
+
+    uassert(9783803,
+            "Cannot insert an encrypted field with text search query type unless "
+            "featureFlagQETextSearchPreview is enabled",
+            std::none_of(payload.cbegin(),
+                         payload.cend(),
+                         [](const EDCServerPayloadInfo& p) { return p.isTextSearchPayload(); }) ||
+                gFeatureFlagQETextSearchPreview.isEnabledUseLastLTSFCVWhenUninitialized(
+                    VersionContext::getDecoration(opCtx),
+                    serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
 
     for (const auto& field : payload) {
         auto& fieldPath = field.fieldPathName;
@@ -408,7 +420,7 @@ insertSingleDocument(OperationContext* opCtx,
     auto serverPayload = std::make_shared<std::vector<EDCServerPayloadInfo>>(
         EDCServerCollection::getEncryptedFieldInfo(document));
 
-    validateInsertUpdatePayloads(efc.getFields(), *serverPayload);
+    validateInsertUpdatePayloads(opCtx, efc.getFields(), *serverPayload);
 
     std::shared_ptr<txn_api::SyncTransactionWithRetries> trun = getTxns(opCtx);
 
@@ -798,12 +810,12 @@ FLEEdgePrfBlock toFLEEdgePrfBlock(const T& ts, const FLEEdgePrfBlock* prev = nul
     return blk;
 }
 
-void processFieldsForInsertV2(FLEQueryInterface* queryImpl,
-                              const NamespaceString& edcNss,
-                              std::vector<EDCServerPayloadInfo>& serverPayload,
-                              const EncryptedFieldConfig& efc,
-                              int32_t* pStmtId,
-                              bool bypassDocumentValidation) {
+void processFieldsForInsert(FLEQueryInterface* queryImpl,
+                            const NamespaceString& edcNss,
+                            std::vector<EDCServerPayloadInfo>& serverPayload,
+                            const EncryptedFieldConfig& efc,
+                            int32_t* pStmtId,
+                            bool bypassDocumentValidation) {
     if (serverPayload.empty()) {
         return;
     }
@@ -831,12 +843,6 @@ void processFieldsForInsertV2(FLEQueryInterface* queryImpl,
             }
             totalTokens += edgeTokenSet.size();
         } else if (payload.isTextSearchPayload()) {
-            uassert(9783803,
-                    "Cannot insert an encrypted field with text search query type unless "
-                    "featureFlagQETextSearchPreview is enabled",
-                    gFeatureFlagQETextSearchPreview.isEnabledUseLastLTSFCVWhenUninitialized(
-                        serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
-
             const auto& tsts = payload.payload.getTextSearchTokenSets().get();
 
             tokensSets.push_back({});
@@ -880,6 +886,8 @@ void processFieldsForInsertV2(FLEQueryInterface* queryImpl,
     std::vector<BSONObj> escDocuments;
     escDocuments.reserve(totalTokens);
 
+    HmacContext hmacCtx;
+
     for (size_t i = 0; i < countInfoSets.size(); i++) {
         auto& countInfos = countInfoSets[i];
 
@@ -896,7 +904,7 @@ void processFieldsForInsertV2(FLEQueryInterface* queryImpl,
             serverPayload[i].counts.push_back(count);
 
             escDocuments.push_back(ESCCollection::generateNonAnchorDocument(
-                ESCTwiceDerivedTagToken(countInfo.tagTokenData), count));
+                &hmacCtx, ESCTwiceDerivedTagToken(countInfo.tagTokenData), count));
         }
     }
 
@@ -944,16 +952,6 @@ void processFieldsForInsertV2(FLEQueryInterface* queryImpl,
     checkWriteErrors(ecocInsertReply);
 }
 
-void processFieldsForInsert(FLEQueryInterface* queryImpl,
-                            const NamespaceString& edcNss,
-                            std::vector<EDCServerPayloadInfo>& serverPayload,
-                            const EncryptedFieldConfig& efc,
-                            int32_t* pStmtId,
-                            bool bypassDocumentValidation) {
-    processFieldsForInsertV2(
-        queryImpl, edcNss, serverPayload, efc, pStmtId, bypassDocumentValidation);
-}
-
 template <typename ReplyType>
 std::shared_ptr<ReplyType> constructDefaultReply() {
     return std::make_shared<ReplyType>();
@@ -980,7 +978,8 @@ void addWriteConcernErrorInfoToReply(const WriteConcernErrorDetail& wce,
  * Extracts update payloads from a {findAndModify: nss, ...} request,
  * and proxies to `validateInsertUpdatePayload()`.
  */
-void validateFindAndModifyRequest(const write_ops::FindAndModifyCommandRequest& request) {
+void validateFindAndModifyRequest(OperationContext* opCtx,
+                                  const write_ops::FindAndModifyCommandRequest& request) {
     // Is this a delete?
     const bool isDelete = request.getRemove().value_or(false);
 
@@ -1020,7 +1019,7 @@ void validateFindAndModifyRequest(const write_ops::FindAndModifyCommandRequest& 
 
     if (!update.firstElement().eoo()) {
         auto serverPayload = EDCServerCollection::getEncryptedFieldInfo(update);
-        validateInsertUpdatePayloads(efc.getFields(), serverPayload);
+        validateInsertUpdatePayloads(opCtx, efc.getFields(), serverPayload);
     }
 }
 
@@ -1039,7 +1038,7 @@ StatusWith<std::pair<ReplyType, OpMsgRequest>> processFindAndModifyRequest(
         CurOp::get(opCtx)->setShouldOmitDiagnosticInformation(lk, true);
     }
 
-    validateFindAndModifyRequest(findAndModifyRequest);
+    validateFindAndModifyRequest(opCtx, findAndModifyRequest);
 
     std::shared_ptr<txn_api::SyncTransactionWithRetries> trun = getTxns(opCtx);
 
@@ -1239,7 +1238,7 @@ write_ops::UpdateCommandReply processUpdate(FLEQueryInterface* queryImpl,
         auto setObject = updateModifier.getObjectField("$set");
         EDCServerCollection::validateEncryptedFieldInfo(setObject, efc, bypassDocumentValidation);
         serverPayload = EDCServerCollection::getEncryptedFieldInfo(setObject);
-        validateInsertUpdatePayloads(efc.getFields(), serverPayload);
+        validateInsertUpdatePayloads(expCtx->getOperationContext(), efc.getFields(), serverPayload);
 
         processFieldsForInsert(
             queryImpl, edcNss, serverPayload, efc, &stmtId, bypassDocumentValidation);
@@ -1254,7 +1253,7 @@ write_ops::UpdateCommandReply processUpdate(FLEQueryInterface* queryImpl,
         EDCServerCollection::validateEncryptedFieldInfo(
             replacementDocument, efc, bypassDocumentValidation);
         serverPayload = EDCServerCollection::getEncryptedFieldInfo(replacementDocument);
-        validateInsertUpdatePayloads(efc.getFields(), serverPayload);
+        validateInsertUpdatePayloads(expCtx->getOperationContext(), efc.getFields(), serverPayload);
 
         processFieldsForInsert(
             queryImpl, edcNss, serverPayload, efc, &stmtId, bypassDocumentValidation);

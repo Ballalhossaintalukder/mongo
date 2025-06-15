@@ -28,9 +28,6 @@
  */
 
 
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -59,6 +56,9 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -159,7 +159,7 @@ public:
                                     kGlobalUserWritesNamespace);
                     } break;
                     default:
-                        MONGO_UNREACHABLE;
+                        MONGO_UNREACHABLE_TASSERT(10083527);
                 }
             } else {
                 switch (request.getPhase()) {
@@ -178,7 +178,7 @@ public:
                                     kGlobalUserWritesNamespace);
                         break;
                     default:
-                        MONGO_UNREACHABLE;
+                        MONGO_UNREACHABLE_TASSERT(10083528);
                 }
             }
         }

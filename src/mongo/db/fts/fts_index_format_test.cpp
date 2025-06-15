@@ -28,15 +28,12 @@
  */
 
 
-#include <fmt/format.h>
 #include <memory>
 #include <set>
 
-// IWYU pragma: no_include "boost/container/detail/flat_tree.hpp"
-#include <boost/container/flat_set.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/move/utility_core.hpp>
+#include <fmt/format.h>
 
+// IWYU pragma: no_include "boost/container/detail/flat_tree.hpp"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -50,6 +47,10 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/container/flat_set.hpp>
+#include <boost/container/vector.hpp>
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -76,7 +77,7 @@ TEST(FTSIndexFormat, Simple1) {
     for (auto& keyString : keys) {
         auto key = key_string::toBson(keyString, Ordering::make(BSONObj()));
         ASSERT_EQUALS(2, key.nFields());
-        ASSERT_EQUALS(String, key.firstElement().type());
+        ASSERT_EQUALS(BSONType::string, key.firstElement().type());
     }
 }
 
@@ -155,7 +156,7 @@ void assertEqualsIndexKeys(std::set<std::string>& expectedKeys, const KeyStringS
     for (auto& keyString : keys) {
         auto key = key_string::toBson(keyString, Ordering::make(BSONObj()));
         ASSERT_EQUALS(2, key.nFields());
-        ASSERT_EQUALS(String, key.firstElement().type());
+        ASSERT_EQUALS(BSONType::string, key.firstElement().type());
         string s = key.firstElement().String();
         std::set<string>::const_iterator j = expectedKeys.find(s);
         if (j == expectedKeys.end()) {

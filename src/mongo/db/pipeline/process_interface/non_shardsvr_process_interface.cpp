@@ -29,12 +29,6 @@
 
 #include "mongo/db/pipeline/process_interface/non_shardsvr_process_interface.h"
 
-#include <typeinfo>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -53,6 +47,7 @@
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/dbdirectclient.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
@@ -66,6 +61,12 @@
 #include "mongo/db/timeseries/write_ops/timeseries_write_ops.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/util/str.h"
+
+#include <typeinfo>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -365,7 +366,9 @@ BSONObj NonShardServerProcessInterface::preparePipelineAndExplain(
         auto pipelineWithCursor = attachCursorSourceToPipelineForLocalRead(ownedPipeline);
         // If we need execution stats, this runs the plan in order to gather the stats.
         if (verbosity >= ExplainOptions::Verbosity::kExecStats) {
-            while (pipelineWithCursor->getNext()) {
+            auto execPipelineWithCursor = exec::agg::buildPipeline(
+                pipelineWithCursor->getSources(), pipelineWithCursor->getContext());
+            while (execPipelineWithCursor->getNext()) {
             }
         }
         pipelineVec = pipelineWithCursor->writeExplainOps(opts);

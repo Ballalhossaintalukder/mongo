@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/json.h"
@@ -39,6 +36,9 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -135,7 +135,6 @@ TEST_F(InternalUnpackBucketSortReorderTest, OptimizeForMetaSortSkipLimit) {
     pipeline->optimizePipeline();
 
     auto serialized = pipeline->serializeToBson();
-    auto container = pipeline->getSources();
 
     ASSERT_EQ(5, serialized.size());
     ASSERT_BSONOBJ_EQ(fromjson("{$addFields: {t:'$meta.a'}}"), serialized[0]);
@@ -183,7 +182,6 @@ TEST_F(InternalUnpackBucketSortReorderTest, OptimizeForMetaLimitSortSkipLimit) {
     pipeline->optimizePipeline();
 
     auto serialized = pipeline->serializeToBson();
-    auto container = pipeline->getSources();
 
     ASSERT_EQ(7, serialized.size());
     ASSERT_BSONOBJ_EQ(fromjson("{$addFields: {t:'$meta.a'}}"), serialized[0]);

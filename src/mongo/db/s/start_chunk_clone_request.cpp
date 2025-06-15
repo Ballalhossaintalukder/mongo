@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/start_chunk_clone_request.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -40,9 +36,14 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/util/bson_extract.h"
-#include "mongo/db/s/start_chunk_clone_request.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -121,7 +122,7 @@ StatusWith<StartChunkCloneRequest> StartChunkCloneRequest::createFromCommand(Nam
 
     {
         BSONElement elem;
-        Status status = bsonExtractTypedField(obj, kChunkMinKey, BSONType::Object, &elem);
+        Status status = bsonExtractTypedField(obj, kChunkMinKey, BSONType::object, &elem);
         if (!status.isOK()) {
             return status;
         }
@@ -135,7 +136,7 @@ StatusWith<StartChunkCloneRequest> StartChunkCloneRequest::createFromCommand(Nam
 
     {
         BSONElement elem;
-        Status status = bsonExtractTypedField(obj, kChunkMaxKey, BSONType::Object, &elem);
+        Status status = bsonExtractTypedField(obj, kChunkMaxKey, BSONType::object, &elem);
         if (!status.isOK()) {
             return status;
         }
@@ -149,7 +150,7 @@ StatusWith<StartChunkCloneRequest> StartChunkCloneRequest::createFromCommand(Nam
 
     {
         BSONElement elem;
-        Status status = bsonExtractTypedField(obj, kShardKeyPattern, BSONType::Object, &elem);
+        Status status = bsonExtractTypedField(obj, kShardKeyPattern, BSONType::object, &elem);
         if (!status.isOK()) {
             return status;
         }

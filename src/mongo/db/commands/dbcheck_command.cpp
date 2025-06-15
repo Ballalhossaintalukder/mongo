@@ -28,20 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <chrono>
-#include <compare>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <ratio>
-#include <string>
-#include <utility>
-#include <vector>
+#include "mongo/db/commands/dbcheck_command.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -62,13 +49,11 @@
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/dbcheck_command.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/database_name.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/index/index_access_method.h"
@@ -99,6 +84,22 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/progress_meter.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <chrono>
+#include <compare>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <ratio>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 MONGO_FAIL_POINT_DEFINE(hangBeforeExtraIndexKeysCheck);
@@ -343,17 +344,19 @@ std::unique_ptr<DbCheckRun> singleCollectionRun(OperationContext* opCtx,
 
     boost::optional<UUID> uuid;
     try {
-        AutoGetCollectionForRead agc(opCtx, nss);
+        const auto coll = acquireCollection(
+            opCtx,
+            CollectionAcquisitionRequest::fromOpCtx(opCtx, nss, AcquisitionPrerequisites::kRead),
+            MODE_IS);
+
         uassert(ErrorCodes::NamespaceNotFound,
                 "Collection " + invocation.getColl() + " not found",
-                agc.getCollection());
-        uuid = agc->uuid();
-    } catch (const DBException& ex) {
-        // 'AutoGetCollectionForRead' fails with 'CommandNotSupportedOnView' if the namespace is
+                coll.exists());
+        uuid = coll.uuid();
+    } catch (ExceptionFor<ErrorCodes::CommandNotSupportedOnView>& ex) {
+        // Collection acquisition fails with 'CommandNotSupportedOnView' if the namespace is
         // referring to a view.
-        uassert(ErrorCodes::CommandNotSupportedOnView,
-                invocation.getColl() + " is a view hence 'dbcheck' is not supported.",
-                ex.code() != ErrorCodes::CommandNotSupportedOnView);
+        ex.addContext(invocation.getColl() + " is a view hence 'dbcheck' is not supported.");
         throw;
     }
 
@@ -498,7 +501,7 @@ std::unique_ptr<DbCheckRun> getRun(OperationContext* opCtx,
     BSONObj toParse = builder.obj();
 
     // If the dbCheck argument is a string, this is the per-collection form.
-    if (toParse["dbCheck"].type() == BSONType::String) {
+    if (toParse["dbCheck"].type() == BSONType::string) {
         return singleCollectionRun(
             opCtx,
             dbName,
@@ -2031,8 +2034,8 @@ StatusWith<std::unique_ptr<DbCheckAcquisition>> DbChecker::_acquireDBCheckLocks(
                                                  // updates to guarantee snapshot isolation.
                                                  PrepareConflictBehavior::kEnforce);
     } catch (const DBException& ex) {
-        // 'AutoGetCollectionForRead' fails with 'CommandNotSupportedOnView' if the namespace is
-        // referring to a view.
+        // 'DbCheckAcquisition' fails with 'CommandNotSupportedOnView' if the namespace is referring
+        // to a view.
         return ex.toStatus();
     }
 

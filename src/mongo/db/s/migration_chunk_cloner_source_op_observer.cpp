@@ -29,13 +29,6 @@
 
 #include "mongo/db/s/migration_chunk_cloner_source_op_observer.h"
 
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -48,6 +41,7 @@
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/database_sharding_state.h"
 #include "mongo/db/s/migration_chunk_cloner_source.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_write_router.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/transaction/transaction_participant.h"
@@ -58,6 +52,13 @@
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -87,7 +88,7 @@ void MigrationChunkClonerSourceOpObserver::assertNoMovePrimaryInProgress(
         return;
     }
 
-    const auto scopedDss = DatabaseShardingState::acquireShared(opCtx, nss.dbName());
+    const auto scopedDss = DatabaseShardingState::acquire(opCtx, nss.dbName());
     if (scopedDss->isMovePrimaryInProgress()) {
         LOGV2(4908600, "assertNoMovePrimaryInProgress", logAttrs(nss));
 
@@ -159,7 +160,14 @@ void MigrationChunkClonerSourceOpObserver::onInserts(
 
     auto* const css = shardingWriteRouter->getCss();
     css->checkShardVersionOrThrow(opCtx);
-    DatabaseShardingState::assertMatchingDbVersion(opCtx, nss.dbName());
+    {
+        const auto scopedSs = ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+        if (scopedSs.isInTransitionalPhase(opCtx)) {
+            scopedSs.checkDbVersionOrThrow(opCtx, nss.dbName());
+        } else {
+            DatabaseShardingState::acquire(opCtx, nss.dbName())->checkDbVersionOrThrow(opCtx);
+        }
+    }
 
     auto* const csr = checked_cast<CollectionShardingRuntime*>(css);
     auto metadata = csr->getCurrentMetadataIfKnown();
@@ -230,7 +238,14 @@ void MigrationChunkClonerSourceOpObserver::onUpdate(OperationContext* opCtx,
 
     auto* const css = shardingWriteRouter->getCss();
     css->checkShardVersionOrThrow(opCtx);
-    DatabaseShardingState::assertMatchingDbVersion(opCtx, nss.dbName());
+    {
+        const auto scopedSs = ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+        if (scopedSs.isInTransitionalPhase(opCtx)) {
+            scopedSs.checkDbVersionOrThrow(opCtx, nss.dbName());
+        } else {
+            DatabaseShardingState::acquire(opCtx, nss.dbName())->checkDbVersionOrThrow(opCtx);
+        }
+    }
 
     auto* const csr = checked_cast<CollectionShardingRuntime*>(css);
     auto metadata = csr->getCurrentMetadataIfKnown();
@@ -277,7 +292,14 @@ void MigrationChunkClonerSourceOpObserver::onDelete(OperationContext* opCtx,
     ShardingWriteRouter shardingWriteRouter(opCtx, nss);
     auto* const css = shardingWriteRouter.getCss();
     css->checkShardVersionOrThrow(opCtx);
-    DatabaseShardingState::assertMatchingDbVersion(opCtx, nss.dbName());
+    {
+        const auto scopedSs = ShardingState::ScopedTransitionalShardingState::acquireShared(opCtx);
+        if (scopedSs.isInTransitionalPhase(opCtx)) {
+            scopedSs.checkDbVersionOrThrow(opCtx, nss.dbName());
+        } else {
+            DatabaseShardingState::acquire(opCtx, nss.dbName())->checkDbVersionOrThrow(opCtx);
+        }
+    }
 
     auto* const csr = checked_cast<CollectionShardingRuntime*>(css);
     auto metadata = csr->getCurrentMetadataIfKnown();

@@ -73,7 +73,7 @@ public:
                 BSONElement keyDataElt = keyDataIt.next();
 
                 if (path->fieldRef().equalsDottedField(keyPatternElt.fieldName())) {
-                    if (Array == keyDataElt.type()) {
+                    if (BSONType::array == keyDataElt.type()) {
                         return new SimpleArrayElementIterator(keyDataElt, true);
                     } else {
                         return new SingleElementElementIterator(keyDataElt);
@@ -84,7 +84,7 @@ public:
 
         // This should not happen.
         massert(16920,
-                "trying to match on unknown field: " + path->fieldRef().dottedField().toString(),
+                "trying to match on unknown field: " + std::string{path->fieldRef().dottedField()},
                 0);
 
         return new SingleElementElementIterator(BSONElement());
@@ -118,7 +118,7 @@ public:
             BSONElement keyDataElt = keyDataIt.next();
 
             if (path->fieldRef().equalsDottedField(keyPatternElt.fieldName())) {
-                if (Array == keyDataElt.type()) {
+                if (BSONType::array == keyDataElt.type()) {
                     return new SimpleArrayElementIterator(keyDataElt, true);
                 } else {
                     return new SingleElementElementIterator(keyDataElt);
@@ -128,7 +128,7 @@ public:
 
         // Planning should not let this happen.
         massert(17409,
-                "trying to match on unknown field: " + path->fieldRef().dottedField().toString(),
+                "trying to match on unknown field: " + std::string{path->fieldRef().dottedField()},
                 0);
 
         return new SingleElementElementIterator(BSONElement());

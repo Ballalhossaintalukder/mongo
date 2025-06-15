@@ -30,21 +30,6 @@
 
 #include "mongo/executor/connection_pool.h"
 
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <algorithm>
-#include <boost/smart_ptr.hpp>
-#include <boost/tuple/tuple.hpp>
-#include <fmt/format.h>
-#include <iterator>
-#include <list>
-#include <memory>
-#include <queue>
-#include <system_error>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/service_context.h"
@@ -59,6 +44,21 @@
 #include "mongo/util/hierarchical_acquisition.h"
 #include "mongo/util/lru_cache.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <iterator>
+#include <list>
+#include <memory>
+#include <queue>
+#include <system_error>
+#include <type_traits>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/tuple/tuple.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kConnectionPool
 
@@ -79,6 +79,7 @@ MONGO_FAIL_POINT_DEFINE(forceExecutorConnectionPoolTimeout);
 MONGO_FAIL_POINT_DEFINE(connectionPoolReturnsErrorOnGet);
 MONGO_FAIL_POINT_DEFINE(connectionPoolDropConnectionsBeforeGetConnection);
 MONGO_FAIL_POINT_DEFINE(connectionPoolDoesNotFulfillRequests);
+MONGO_FAIL_POINT_DEFINE(connectionPoolRejectsConnectionRequests);
 
 static const Status kCancelledStatus{ErrorCodes::CallbackCanceled,
                                      "Cancelled acquiring connection"};
@@ -225,6 +226,13 @@ public:
     }
     Milliseconds toRefreshTimeout() const override {
         return getPool()->_options.refreshRequirement;
+    }
+
+    size_t connectionRequestsMaxQueueDepth() const override {
+        return getPool()->_options.connectionRequestsMaxQueueDepth;
+    }
+    size_t maxConnections() const override {
+        return getPool()->_options.maxConnections;
     }
 
     StringData name() const override {
@@ -388,6 +396,23 @@ public:
     size_t requestsPending(WithLock) const;
 
     /**
+     * Returns the number of rejected requests.
+     */
+    size_t rejectedConnectionsRequests(WithLock) const;
+
+    /**
+     * Updates the ConnectionPool's _cachedCreatedConnections map with the number of created
+     * connections that this SpecificPool made. This should be called before removing a SpecificPool
+     * from the ConnectionPool.
+     */
+    void updateCachedCreatedConnections(WithLock);
+
+    /**
+     * Returns the number of cached created connections associated with _hostAndPort.
+     */
+    size_t getCachedCreatedConnections(WithLock) const;
+
+    /**
      * Records the time it took to return the connection since it was requested, so that it can be
      * reported in the connection pool stats.
      */
@@ -444,6 +469,7 @@ private:
 
     // Enqueues a request, returning an iterator into _requests pointing to the request.
     Requests::iterator pushRequest(WithLock, Date_t expiration, Request request) {
+
         auto it = _requests.emplace(std::pair(expiration, std::move(request)));
         _requestsById[it->second.id] = it;
         return it;
@@ -521,6 +547,12 @@ private:
     void updateController(stdx::unique_lock<stdx::mutex>& lk);
 
 private:
+    /**
+     * Returns Status::OK if the request can be serviced.
+     * Returns a non-OK Status if the request should be rejected instead.
+     */
+    Status _verifyCanServiceRequest(WithLock);
+
     const std::shared_ptr<ConnectionPool> _parent;
 
     const transport::ConnectSSLMode _sslMode;
@@ -571,6 +603,11 @@ private:
     HostHealth _health;
 
     std::uint64_t _nextRequestId{0};
+
+    logv2::SeveritySuppressor _rejectedConnectionsLogSeverity{
+        Seconds{5}, logv2::LogSeverity::Warning(), logv2::LogSeverity::Debug(5)};
+    // The overall number of rejected connections used for stats.
+    size_t _numberRejectedConnections{0};
 };
 
 auto ConnectionPool::SpecificPool::make(std::shared_ptr<ConnectionPool> parent,
@@ -651,19 +688,19 @@ void ConnectionPool::shutdown() {
     }
 }
 
-void ConnectionPool::dropConnections(const HostAndPort& hostAndPort) {
+void ConnectionPool::dropConnections(const HostAndPort& target, const Status& status) {
     stdx::unique_lock lk(_mutex);
 
-    auto iter = _pools.find(hostAndPort);
+    auto iter = _pools.find(target);
 
     if (iter == _pools.end())
         return;
 
     auto& pool = iter->second;
-    pool->shutdown(lk, Status(ErrorCodes::PooledConnectionsDropped, "Pooled connections dropped"));
+    pool->shutdown(lk, status);
 }
 
-void ConnectionPool::dropConnections() {
+void ConnectionPool::dropConnections(const Status& status) {
     stdx::unique_lock lk(_mutex);
 
     // Grab all of the pools we're going to drop connections for. This is necessary because
@@ -685,8 +722,7 @@ void ConnectionPool::dropConnections() {
 
     // Cascade the failure across all of the pools we're dropping.
     for (const auto& pool : pools) {
-        pool->processFailure(
-            lk, Status(ErrorCodes::PooledConnectionsDropped, "Pooled connections dropped"));
+        pool->processFailure(lk, status);
         invariant(lk.owns_lock(), "processFailure released, but did not reacquire the lock.");
     }
 }
@@ -807,10 +843,18 @@ void ConnectionPool::appendConnectionStats(ConnectionPoolStats* stats) const {
                                      pool->refreshedConnections(lk),
                                      pool->neverUsedConnections(lk),
                                      pool->getOnceUsedConnections(lk),
-                                     pool->getTotalConnUsageTime(lk)};
+                                     pool->getTotalConnUsageTime(lk),
+                                     pool->rejectedConnectionsRequests(lk),
+                                     pool->requestsPending(lk)};
 
         hostStats.acquisitionWaitTimes = pool->connectionWaitTimeStats(lk);
         stats->updateStatsForHost(_name, host, hostStats);
+    }
+    for (const auto& kv : _cachedCreatedConnections) {
+        ConnectionStatsPer hostStats;
+        hostStats.created = kv.second;
+
+        stats->updateStatsForHost(_name, kv.first, hostStats);
     }
 }
 
@@ -895,6 +939,50 @@ size_t ConnectionPool::SpecificPool::requestsPending(WithLock) const {
     return _requests.size();
 }
 
+size_t ConnectionPool::SpecificPool::rejectedConnectionsRequests(WithLock) const {
+    return _numberRejectedConnections;
+}
+
+Status ConnectionPool::SpecificPool::_verifyCanServiceRequest(WithLock) {
+    if (MONGO_unlikely(connectionPoolRejectsConnectionRequests.shouldFail())) {
+        return Status(
+            ErrorCodes::PooledConnectionAcquisitionRejected,
+            "Rejecting request due to 'connectionPoolRejectsConnectionRequests' failpoint");
+    }
+
+    const size_t connectionRequestsMaxQueueDepth =
+        _parent->_controller->connectionRequestsMaxQueueDepth();
+
+    // If the value of connectionRequestsMaxQueueDepth is 0, then the feature is disabled and no
+    // further checks should be performed here: the request should NOT be rejected.
+    if (connectionRequestsMaxQueueDepth > 0 &&
+        _requests.size() >= connectionRequestsMaxQueueDepth) {
+        return Status{ErrorCodes::PooledConnectionAcquisitionRejected,
+                      fmt::format("Maximum request queue depth for host '{}' in pool '{}' was "
+                                  "exceeded (max queue depth = {}, max connections = {})",
+                                  _hostAndPort,
+                                  _parent->getName(),
+                                  connectionRequestsMaxQueueDepth,
+                                  _parent->_controller->maxConnections())};
+    }
+
+    return Status::OK();
+}
+
+void ConnectionPool::SpecificPool::updateCachedCreatedConnections(WithLock lk) {
+    auto totalCreated = createdConnections(lk) + getCachedCreatedConnections(lk);
+    _parent->_cachedCreatedConnections[_hostAndPort] = totalCreated;
+}
+
+size_t ConnectionPool::SpecificPool::getCachedCreatedConnections(WithLock) const {
+    auto elem = _parent->_cachedCreatedConnections.find(_hostAndPort);
+    if (elem == _parent->_cachedCreatedConnections.end()) {
+        return 0;
+    }
+
+    return elem->second;
+}
+
 Future<ConnectionPool::ConnectionHandle> ConnectionPool::SpecificPool::getConnection(
     WithLock lk, Milliseconds timeout, bool lease, const CancellationToken& token) {
 
@@ -940,7 +1028,24 @@ Future<ConnectionPool::ConnectionHandle> ConnectionPool::SpecificPool::getConnec
     // If we've already been cancelled or we do not have requests, then we can fulfill immediately.
     if (token.isCanceled()) {
         return Future<ConnectionPool::ConnectionHandle>::makeReady(kCancelledStatus);
-    } else if (_requests.size() == 0) {
+    }
+
+    // If a queue of requests for connections exceeds a certain size, do not accept
+    // new requests and reject them.
+    if (auto s = _verifyCanServiceRequest(lk); MONGO_unlikely(!s.isOK())) {
+        _numberRejectedConnections++;
+
+        LOGV2_DEBUG(9147901,
+                    _rejectedConnectionsLogSeverity().toInt(),
+                    "Rejecting connection acquisition attempt",
+                    "name"_attr = _parent->getName(),
+                    "hostAndPort"_attr = _hostAndPort,
+                    "reason"_attr = s,
+                    "totalRejectedRequests"_attr = _numberRejectedConnections);
+        return s;
+    }
+
+    if (_requests.size() == 0) {
         auto conn = tryGetConnection(lk, lease);
 
         if (conn) {
@@ -1219,13 +1324,15 @@ void ConnectionPool::SpecificPool::addToReady(WithLock, OwnedConnection conn) {
     connPtr->setTimeout(_parent->_controller->toRefreshTimeout(), std::move(returnConnectionFunc));
 }
 
-bool ConnectionPool::SpecificPool::initiateShutdown(WithLock) {
+bool ConnectionPool::SpecificPool::initiateShutdown(WithLock lk) {
     auto wasShutdown = std::exchange(_health.isShutdown, true);
     if (wasShutdown) {
         return false;
     }
 
     LOGV2_DEBUG(22571, 2, "Delisting connection pool", "hostAndPort"_attr = _hostAndPort);
+
+    updateCachedCreatedConnections(lk);
 
     _parent->_controller->removeHost(_id);
 
@@ -1305,7 +1412,7 @@ void ConnectionPool::SpecificPool::processFailure(stdx::unique_lock<stdx::mutex>
 
 // fulfills as many outstanding requests as possible
 void ConnectionPool::SpecificPool::fulfillRequests(stdx::unique_lock<stdx::mutex>& lk) {
-    if (auto sfp = connectionPoolDoesNotFulfillRequests.scoped(); MONGO_unlikely(sfp.isActive())) {
+    if (MONGO_unlikely(connectionPoolDoesNotFulfillRequests.shouldFail())) {
         return;
     }
 

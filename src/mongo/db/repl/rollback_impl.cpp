@@ -29,24 +29,6 @@
 
 #include "mongo/db/repl/rollback_impl.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/node_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <absl/meta/type_traits.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -65,7 +47,6 @@
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/concurrency/replication_state_transition_lock_guard.h"
 #include "mongo/db/database_name.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
@@ -75,6 +56,7 @@
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/plan_yield_policy.h"
 #include "mongo/db/repl/apply_ops_command_info.h"
+#include "mongo/db/repl/intent_registry.h"
 #include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
@@ -91,6 +73,7 @@
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/transaction_oplog_application.h"
 #include "mongo/db/s/type_shard_identity.h"
+#include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/server_recovery.h"
 #include "mongo/db/service_context.h"
@@ -118,6 +101,24 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/node_hash_map.h>
+#include <absl/container/node_hash_set.h>
+#include <absl/meta/type_traits.h>
+#include <boost/cstdint.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplicationRollback
 
@@ -379,15 +380,25 @@ Status RollbackImpl::_transitionToRollback(OperationContext* opCtx) {
     LOGV2(21593, "Transition to ROLLBACK");
     {
         rollbackHangBeforeTransitioningToRollback.pauseWhileSet(opCtx);
-        ReplicationStateTransitionLockGuard rstlLock(
-            opCtx, MODE_X, ReplicationStateTransitionLockGuard::EnqueueOnly());
+
+        boost::optional<rss::consensus::ReplicationStateTransitionGuard> rstGuard;
+        boost::optional<repl::ReplicationStateTransitionLockGuard> rstlLock;
+        if (gFeatureFlagIntentRegistration.isEnabled()) {
+            rstGuard.emplace(rss::consensus::IntentRegistry::get(opCtx)
+                                 .killConflictingOperations(
+                                     rss::consensus::IntentRegistry::InterruptionType::Rollback)
+                                 .get());
+        }
+        rstlLock.emplace(opCtx, MODE_X, ReplicationStateTransitionLockGuard::EnqueueOnly());
+
 
         // Kill all user operations to ensure we can successfully acquire the RSTL. Since the node
         // must be a secondary, this is only killing readers, whose connections will be closed
         // shortly regardless.
         _killAllUserOperations(opCtx);
-
-        rstlLock.waitForLockUntil(Date_t::max());
+        if (rstlLock) {
+            rstlLock->waitForLockUntil(Date_t::max());
+        }
 
         auto status = _replicationCoordinator->setFollowerModeRollback(opCtx);
         if (!status.isOK()) {
@@ -486,7 +497,6 @@ RollbackImpl::_namespacesAndUUIDsForOp(const OplogEntry& oplogEntry) {
                 break;
             }
             case OplogEntry::CommandType::kDbCheck:
-            case OplogEntry::CommandType::kModifyCollectionShardingIndexCatalog:
             case OplogEntry::CommandType::kCreate:
             case OplogEntry::CommandType::kDrop:
             case OplogEntry::CommandType::kImportCollection:
@@ -510,7 +520,9 @@ RollbackImpl::_namespacesAndUUIDsForOp(const OplogEntry& oplogEntry) {
             case OplogEntry::CommandType::kCommitTransaction:
             case OplogEntry::CommandType::kAbortTransaction:
             case OplogEntry::CommandType::kCreateDatabaseMetadata:
-            case OplogEntry::CommandType::kDropDatabaseMetadata: {
+            case OplogEntry::CommandType::kDropDatabaseMetadata:
+            case OplogEntry::CommandType::kBeginPromotionToShardedCluster:
+            case OplogEntry::CommandType::kCompletePromotionToShardedCluster: {
                 // There is no specific namespace to save for these operations.
                 break;
             }
@@ -770,12 +782,18 @@ void RollbackImpl::_correctRecordStoreCounts(OperationContext* opCtx) {
                   "Scanning collection to fix collection count",
                   logAttrs(nss),
                   "uuid"_attr = uuid.toString());
-            AutoGetCollectionForRead collToScan(opCtx, nss);
-            invariant(coll == collToScan.getCollection().get(),
+            const auto collToScan =
+                acquireCollection(opCtx,
+                                  CollectionAcquisitionRequest(nss,
+                                                               PlacementConcern::kPretendUnsharded,
+                                                               repl::ReadConcernArgs::get(opCtx),
+                                                               AcquisitionPrerequisites::kRead),
+                                  MODE_IS);
+            invariant(coll == collToScan.getCollectionPtr().get(),
                       str::stream() << "Catalog returned invalid collection: "
                                     << nss.toStringForErrorMsg() << " (" << uuid.toString() << ")");
             auto exec = getCollectionScanExecutor(opCtx,
-                                                  collToScan.getCollection(),
+                                                  collToScan.getCollectionPtr(),
                                                   PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY,
                                                   CollectionScanDirection::kForward);
             long long countFromScan = 0;

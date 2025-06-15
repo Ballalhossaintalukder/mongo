@@ -29,20 +29,6 @@
 
 #include "mongo/db/s/resharding/resharding_oplog_fetcher.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <mutex>
-#include <tuple>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -97,15 +83,34 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/duration.h"
+#include "mongo/util/fail_point.h"
+#include "mongo/util/future_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/timer.h"
 
+#include <cstdint>
+#include <mutex>
+#include <tuple>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
 namespace mongo {
 namespace {
+
+MONGO_FAIL_POINT_DEFINE(pauseReshardingOplogFetcherAfterConsuming);
+
 boost::intrusive_ptr<ExpressionContext> _makeExpressionContext(OperationContext* opCtx) {
     ResolvedNamespaceMap resolvedNamespaces;
     resolvedNamespaces[NamespaceString::kRsOplogNamespace] = {NamespaceString::kRsOplogNamespace,
@@ -122,7 +127,7 @@ boost::intrusive_ptr<ExpressionContext> _makeExpressionContext(OperationContext*
 
 struct OplogInsertBatch {
     std::vector<InsertStatement> statements;
-    ReshardingDonorOplogId startAt;
+    ReshardingDonorOplogId lastOplogId;
     bool moreToCome = true;
 };
 
@@ -162,7 +167,7 @@ std::vector<OplogInsertBatch> getOplogInsertBatches(const std::vector<BSONObj>& 
             ++currentIndex;
 
             const auto currentOplogEntry = uassertStatusOK(repl::OplogEntry::parse(currentDoc));
-            insertBatch.startAt =
+            insertBatch.lastOplogId =
                 ReshardingDonorOplogId::parse(IDLParserContext{"OplogFetcherParsing"},
                                               currentOplogEntry.get_id()->getDocument().toBson());
             if (resharding::isFinalOplog(currentOplogEntry)) {
@@ -218,6 +223,31 @@ void insertOplogBatch(OperationContext* opCtx,
 
     wuow.commit();
 }
+
+/**
+ * Calculates the time it took for the last oplog entry in the latest aggregate/getMore batch to get
+ * fetched.
+ */
+Milliseconds calculateTimeToFetch(OperationContext* opCtx,
+                                  const Timer& currBatchTimer,
+                                  const Timestamp& currBatchLastOplogTs,
+                                  const Timestamp& prevBatchLastOplogTs) {
+    if (currBatchLastOplogTs == prevBatchLastOplogTs) {
+        // The cursor did not advance. That is, the cursor had reached the end of the oplog on the
+        // donor, i.e. there have not been any new writes. Return the amount of time it took for
+        // the aggregate or getMore command to return.
+        return Milliseconds(currBatchTimer.millis());
+    }
+    // The cursor advanced. Return the amount of time between the current timestamp and the
+    // clusterTime timestamp of the oplog entry on the donor.
+    auto currentWallTime = opCtx->getServiceContext()->getFastClockSource()->now();
+    int elapsedTimeMillis =
+        currentWallTime.toMillisSinceEpoch() - currBatchLastOplogTs.getSecs() * 1000;
+
+    // If there are clock skews, then the difference above may be negative so cap it at zero.
+    return Milliseconds(std::max(0, elapsedTimeMillis));
+}
+
 }  // namespace
 
 const ReshardingDonorOplogId ReshardingOplogFetcher::kFinalOpAlreadyFetched{Timestamp::max(),
@@ -234,11 +264,11 @@ ReshardingOplogFetcher::ReshardingOplogFetcher(std::unique_ptr<Env> env,
     : _env(std::move(env)),
       _reshardingUUID(reshardingUUID),
       _collUUID(collUUID),
-      _startAt(startAt),
       _donorShard(donorShard),
       _recipientShard(recipientShard),
       _oplogBufferNss(oplogBufferNss),
-      _storeProgress(storeProgress) {
+      _storeProgress(storeProgress),
+      _startAt(startAt) {
     auto [p, f] = makePromiseFuture<void>();
     stdx::lock_guard lk(_mutex);
     _onInsertPromise = std::move(p);
@@ -301,48 +331,69 @@ ExecutorFuture<void> ReshardingOplogFetcher::schedule(
 
 ExecutorFuture<void> ReshardingOplogFetcher::_reschedule(
     std::shared_ptr<executor::TaskExecutor> executor, const CancellationToken& cancelToken) {
-    return ExecutorFuture(executor)
-        .then([this, executor, cancelToken] {
-            // TODO(SERVER-74658): Please revisit if this thread could be made killable.
-            ThreadClient client(fmt::format("OplogFetcher-{}-{}",
-                                            _reshardingUUID.toString(),
-                                            _donorShard.toString()),
-                                _service()->getService(ClusterRole::ShardServer),
-                                ClientOperationKillableByStepdown{false});
+    auto delay = std::make_shared<Milliseconds>(0);
+    return AsyncTry([this, executor, cancelToken, delay] {
+               return executor->sleepFor(*delay, cancelToken).then([this, executor, cancelToken] {
+                   if (_startAt == kFinalOpAlreadyFetched) {
+                       LOGV2_INFO(10355401,
+                                  "Not rescheduling resharding oplog fetcher since there is no "
+                                  "more work to do",
+                                  "donorShard"_attr = _donorShard,
+                                  "reshardingUUID"_attr = _reshardingUUID);
+                       return false;
+                   }
 
-            boost::optional<CancelableOperationContextFactory> aggOpCtxFactory;
-            {
-                stdx::lock_guard lk(_mutex);
-                _aggCancelSource.emplace(cancelToken);
-                aggOpCtxFactory.emplace(_aggCancelSource->token(), executor);
+                   // TODO(SERVER-74658): Please revisit if this thread could be made killable.
+                   ThreadClient client(fmt::format("OplogFetcher-{}-{}",
+                                                   _reshardingUUID.toString(),
+                                                   _donorShard.toString()),
+                                       _service()->getService(ClusterRole::ShardServer),
+                                       ClientOperationKillableByStepdown{false});
+
+                   boost::optional<CancelableOperationContextFactory> aggOpCtxFactory;
+                   {
+                       stdx::lock_guard lk(_mutex);
+                       _aggCancelSource.emplace(cancelToken);
+                       aggOpCtxFactory.emplace(_aggCancelSource->token(), executor);
+                   }
+                   return iterate(client.get(), *aggOpCtxFactory);
+               });
+           })
+        .until([this, executor, cancelToken, delay](StatusWith<bool> statusWithMoreOplogsToCome) {
+            if (!statusWithMoreOplogsToCome.isOK() || !statusWithMoreOplogsToCome.getValue() ||
+                cancelToken.isCanceled()) {
+                return true;
+            } else {
+                auto sleepDuration = Milliseconds{
+                    _isPreparingForCriticalSection.load()
+                        ? resharding::gReshardingOplogFetcherSleepMillisDuringCriticalSection.load()
+                        : resharding::gReshardingOplogFetcherSleepMillisBeforeCriticalSection
+                              .load()};
+                *delay = sleepDuration;
+                return false;
             }
-            return iterate(client.get(), *aggOpCtxFactory);
         })
-        .then([this, executor, cancelToken](bool moreToCome) mutable {
-            if (!moreToCome) {
-                LOGV2_INFO(6077401,
-                           "Resharding oplog fetcher done fetching",
-                           "donorShard"_attr = _donorShard,
-                           "reshardingUUID"_attr = _reshardingUUID);
-                return ExecutorFuture(std::move(executor));
-            }
-
+        .on(executor, cancelToken)
+        .onCompletion([this, executor, cancelToken](StatusWith<bool> statusWith) {
             if (cancelToken.isCanceled()) {
                 return ExecutorFuture<void>(
                     std::move(executor),
                     Status{ErrorCodes::CallbackCanceled,
                            "Resharding oplog fetcher canceled due to abort or stepdown"});
             }
-
-            // Wait a little before re-running the aggregation pipeline on the donor's oplog.
-            auto sleepDuration = Milliseconds{
-                _inCriticalSection.load()
-                    ? resharding::gReshardingOplogFetcherSleepMillisDuringCriticalSection.load()
-                    : resharding::gReshardingOplogFetcherSleepMillisBeforeCriticalSection.load()};
-            return executor->sleepFor(sleepDuration, cancelToken)
-                .then([this, executor, cancelToken] {
-                    return _reschedule(std::move(executor), cancelToken);
-                });
+            if (!statusWith.isOK()) {
+                return ExecutorFuture<void>(std::move(executor), statusWith.getStatus());
+            } else {
+                auto moreOplogsToCome = statusWith.getValue();
+                // If the cancelToken is not canceled then moreToCome has to be false at this point
+                // for us to have exited the until condition of AsyncTry.
+                invariant(!moreOplogsToCome);
+                LOGV2_INFO(6077401,
+                           "Resharding oplog fetcher done fetching",
+                           "donorShard"_attr = _donorShard,
+                           "reshardingUUID"_attr = _reshardingUUID);
+                return ExecutorFuture(std::move(executor));
+            }
         });
 }
 
@@ -432,7 +483,8 @@ AggregateCommandRequest ReshardingOplogFetcher::_makeAggregateCommandRequest(
         aggRequest.setReadConcern(readConcernArgs);
     }
 
-    auto readPref = _inCriticalSection.load()
+    auto readPref = _isPreparingForCriticalSection.load() &&
+            resharding::gReshardingOplogFetcherTargetPrimaryDuringCriticalSection.load()
         ? ReadPreferenceSetting{ReadPreference::PrimaryOnly}
         : ReadPreferenceSetting{ReadPreference::Nearest,
                                 ReadPreferenceSetting::kMinimalMaxStalenessValue};
@@ -461,17 +513,19 @@ bool ReshardingOplogFetcher::consume(Client* client,
     auto opCtxRaii = factory.makeOperationContext(client);
     int batchesProcessed = 0;
     bool moreToCome = true;
-    Timer batchFetchTimer;
+
+    auto tickSource = opCtxRaii->getServiceContext()->getTickSource();
+    Timer batchTimer(tickSource);
+
     // Note that the oplog entries are *not* being copied with a tailable cursor.
     // Shard::runAggregation() will instead return upon hitting the end of the donor's oplog.
     uassertStatusOK(shard->runAggregation(
         opCtxRaii.get(),
         aggRequest,
-        [this, &batchesProcessed, &moreToCome, &opCtxRaii, &batchFetchTimer, factory](
+        [this, &batchesProcessed, &moreToCome, &opCtxRaii, &batchTimer, factory](
             const std::vector<BSONObj>& aggregateBatch,
             const boost::optional<BSONObj>& postBatchResumeToken) {
-            _env->metrics()->onBatchRetrievedDuringOplogFetching(
-                Milliseconds(batchFetchTimer.millis()));
+            _env->metrics()->onBatchRetrievedDuringOplogFetching(Milliseconds(batchTimer.millis()));
 
             // TODO(SERVER-74658): Please revisit if this thread could be made killable.
             ThreadClient client(fmt::format("ReshardingFetcher-{}-{}",
@@ -481,6 +535,11 @@ bool ReshardingOplogFetcher::consume(Client* client,
                                 ClientOperationKillableByStepdown{false});
             auto opCtxRaii = factory.makeOperationContext(client.get());
             auto opCtx = opCtxRaii.get();
+
+            auto prevBatchLastOplogId = [&] {
+                stdx::lock_guard lk(_mutex);
+                return _startAt;
+            }();
 
             // Noting some possible optimizations:
             //
@@ -523,11 +582,15 @@ bool ReshardingOplogFetcher::consume(Client* client,
                 auto [p, f] = makePromiseFuture<void>();
                 {
                     stdx::lock_guard lk(_mutex);
-                    _startAt = insertBatch.startAt;
+                    _startAt = insertBatch.moreToCome
+                        ? insertBatch.lastOplogId
+                        : ReshardingOplogFetcher::kFinalOpAlreadyFetched;
                     _onInsertPromise.emplaceValue();
                     _onInsertPromise = std::move(p);
                     _onInsertFuture = std::move(f);
                 }
+
+                pauseReshardingOplogFetcherAfterConsuming.pauseWhileSet(opCtx);
 
                 if (!insertBatch.moreToCome) {
                     moreToCome = false;
@@ -536,27 +599,29 @@ bool ReshardingOplogFetcher::consume(Client* client,
             }
 
             if (postBatchResumeToken) {
+                auto currBatchLastOplogTs = postBatchResumeToken->getField("ts").timestamp();
+
                 // Insert a noop entry with the latest oplog timestamp from the donor's cursor
                 // response. This will allow the fetcher to resume reading from the last oplog entry
                 // it fetched even if that entry is for a different collection, making resuming less
                 // wasteful.
                 try {
-                    auto lastOplogTs = postBatchResumeToken->getField("ts").timestamp();
-                    auto newStartAt = ReshardingDonorOplogId(lastOplogTs, lastOplogTs);
+                    auto currBatchLastOplogId =
+                        ReshardingDonorOplogId(currBatchLastOplogTs, currBatchLastOplogTs);
 
-                    // If newStartAt == _startAt then inserting a reshardProgressMark is not needed.
-                    // This is because:
-                    //   1. There is already an oplog with timestamp == newStartAt in the
+                    // If currBatchLastOplogId == _startAt then inserting a reshardProgressMark is
+                    // not needed. This is because:
+                    //   1. There is already an oplog with timestamp == currBatchLastOplogId in the
                     //      oplogBufferColl collection from which the fetcher knows to resume from.
-                    //   2. Or newStartAt equals the initial value for _startAt (typically the
-                    //      minFetchTimestamp) in which case, the fetcher is going to resume from
-                    //      there anyways.
-                    if (newStartAt != _startAt) {
+                    //   2. Or currBatchLastOplogId equals the initial value for _startAt (typically
+                    //      the minFetchTimestamp) in which case, the fetcher is going to resume
+                    //      from there anyways.
+                    if (currBatchLastOplogId != _startAt) {
                         repl::MutableOplogEntry oplog;
                         oplog.setNss(_oplogBufferNss);
                         oplog.setOpType(repl::OpTypeEnum::kNoop);
                         oplog.setUuid(_collUUID);
-                        oplog.set_id(Value(newStartAt.toBSON()));
+                        oplog.set_id(Value(currBatchLastOplogId.toBSON()));
                         oplog.setObject(
                             BSON("msg" << "Latest oplog ts from donor's cursor response"));
                         oplog.setObject2(BSON("type" << resharding::kReshardProgressMark));
@@ -579,7 +644,7 @@ bool ReshardingOplogFetcher::consume(Client* client,
                         auto [p, f] = makePromiseFuture<void>();
                         {
                             stdx::lock_guard lk(_mutex);
-                            _startAt = newStartAt;
+                            _startAt = currBatchLastOplogId;
                             _onInsertPromise.emplaceValue();
                             _onInsertPromise = std::move(p);
                             _onInsertFuture = std::move(f);
@@ -590,7 +655,13 @@ bool ReshardingOplogFetcher::consume(Client* client,
                     // the previous getMore. In this case the latest oplog timestamp the donor
                     // returns will be the same, so it's safe to ignore this error.
                 }
+
+                auto timeToFetch = calculateTimeToFetch(
+                    opCtx, batchTimer, currBatchLastOplogTs, prevBatchLastOplogId.getTs());
+                _env->metrics()->updateAverageTimeToFetchOplogEntries(_donorShard, timeToFetch);
             }
+
+            batchTimer.reset();
 
             if (_maxBatches > -1 && ++batchesProcessed >= _maxBatches) {
                 return false;
@@ -602,11 +673,17 @@ bool ReshardingOplogFetcher::consume(Client* client,
     return moreToCome;
 }
 
-void ReshardingOplogFetcher::onEnteringCriticalSection() {
-    _inCriticalSection.store(true);
+void ReshardingOplogFetcher::prepareForCriticalSection() {
     stdx::lock_guard lk(_mutex);
+
+    if (_isPreparingForCriticalSection.load()) {
+        return;
+    }
+
+    _isPreparingForCriticalSection.store(true);
     // Stop consuming the current aggregation and start a new one.
-    if (_aggCancelSource) {
+    if (resharding::gReshardingOplogFetcherTargetPrimaryDuringCriticalSection.load() &&
+        _aggCancelSource) {
         _aggCancelSource->cancel();
     }
 }

@@ -28,22 +28,6 @@
  */
 
 
-#include <algorithm>
-#include <compare>
-#include <cstddef>
-#include <functional>
-#include <iostream>
-#include <iterator>
-#include <limits>
-#include <map>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -81,6 +65,22 @@
 #include "mongo/util/password_digest.h"
 #include "mongo/util/str.h"
 
+#include <algorithm>
+#include <compare>
+#include <cstddef>
+#include <functional>
+#include <iostream>
+#include <iterator>
+#include <limits>
+#include <map>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 
@@ -93,7 +93,7 @@ BSONObj generateSCRAMUserDocument(StringData username, StringData password) {
     const auto digested = createPasswordDigest(username, password);
     const auto sha1Cred = scram::Secrets<SHA1Block>::generateCredentials(digested, 10000);
     const auto sha256Cred =
-        scram::Secrets<SHA256Block>::generateCredentials(password.toString(), 15000);
+        scram::Secrets<SHA256Block>::generateCredentials(std::string{password}, 15000);
     return BSON("_id" << (str::stream() << database << "." << username).operator StringData()
                       << AuthorizationManager::USER_NAME_FIELD_NAME << username
                       << AuthorizationManager::USER_DB_FIELD_NAME << database << "credentials"
@@ -262,7 +262,7 @@ protected:
         if (_digestPassword) {
             return mongo::createPasswordDigest(username, password);
         } else {
-            return password.toString();
+            return std::string{password};
         }
     }
 

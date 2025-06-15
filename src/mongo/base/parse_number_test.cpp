@@ -27,9 +27,15 @@
  *    it in the license file.
  */
 
+#include "mongo/base/parse_number.h"
+
+#include "mongo/base/error_codes.h"
+#include "mongo/base/status.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/str.h"  // for str::stream()!
+
 #include <algorithm>
 #include <cmath>
-#include <fmt/format.h>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -37,11 +43,7 @@
 #include <typeinfo>
 #include <vector>
 
-#include "mongo/base/error_codes.h"
-#include "mongo/base/parse_number.h"
-#include "mongo/base/status.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/str.h"  // for str::stream()!
+#include <fmt/format.h>
 
 #define ASSERT_PARSES_WITH_PARSER(type, input_string, parser, expected_value) \
     do {                                                                      \
@@ -288,7 +290,7 @@ PARSE_TEST(TestSkipLeadingWhitespace) {
         }
 
         for (StringData ws : whitespaces) {
-            std::string withWhitespace = ws.toString() + numStr;
+            std::string withWhitespace = std::string{ws} + numStr;
             if (shouldParse) {
                 ASSERT_PARSES_WITH_PARSER(NumberType, withWhitespace, skipWs, expected);
             } else {
@@ -336,7 +338,7 @@ PARSE_TEST(TestEndOfNum) {
             ASSERT_EQ(ErrorCodes::FailedToParse, parsed);
         }
         for (StringData& suffix : suffixes) {
-            std::string spec = numStr.toString() + suffix;
+            std::string spec = std::string{numStr} + suffix;
             char* numEnd = nullptr;
             NumberType actual;
             parsed = NumberParser().allowTrailingText()(spec, &actual, &numEnd);
@@ -398,7 +400,7 @@ PARSE_TEST(TestSkipLeadingWsAndEndptr) {
             ASSERT_EQ(ErrorCodes::FailedToParse, parsed);
         }
         for (StringData& prefix : whitespaces) {
-            std::string spec = prefix.toString() + numStr;
+            std::string spec = std::string{prefix} + numStr;
             char* numEnd = nullptr;
             NumberType actual;
             parsed = NumberParser().skipWhitespace()(spec, &actual, &numEnd);

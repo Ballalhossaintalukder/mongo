@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <variant>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/version_context.h"
@@ -39,10 +36,17 @@
 #include "mongo/util/overloaded_visitor.h"
 #include "mongo/util/version/releases.h"
 
+#include <variant>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+
 namespace mongo {
+class IncrementalFeatureRolloutContext;
+
 class FeatureFlag {
 public:
-    ~FeatureFlag() = default;
+    virtual ~FeatureFlag() = default;
 
     /**
      * Indicates whether runtime changes to the flag via the 'setParameter' command should be
@@ -60,6 +64,20 @@ public:
      * of the flag.
      */
     virtual void appendFlagDetails(BSONObjBuilder& detailsBuilder) const {};
+
+    /**
+     * Checks if the flag is enabled, consulting the VersionContext and
+     * IncrementalFeatureRolloutContext as appropriate.
+     */
+    virtual bool checkWithContext(const VersionContext& vCtx,
+                                  IncrementalFeatureRolloutContext& ifrContext,
+                                  ServerGlobalParams::FCVSnapshot fcv) = 0;
+
+    /**
+     * Returns true if there is a possibility of the flag becoming enabled within the current
+     * process lifetime.
+     */
+    virtual bool canBeEnabled() const = 0;
 
     /**
      * Returns the boolean value representing the flag's user-configured value, which does not
@@ -94,10 +112,32 @@ public:
 };
 
 /**
+ * The superclass for any feature flag that can optionally be used as a condition for
+ * enabling/disabling a server parameter.
+ */
+class ParameterGatingFeatureFlag : public FeatureFlag {
+public:
+    /**
+     * Returns true if a server parameter that is conditionalized on this flag should be enabled.
+     */
+    bool isServerParameterEnabled(multiversion::FeatureCompatibilityVersion fcv) {
+        return isEnabledOnVersion(fcv);
+    }
+
+    /**
+     * Returns true if the flag is set to true and enabled on the target FCV version.
+     *
+     * This function is used in the 'setFeatureCompatibilityVersion' command where the in-memory FCV
+     * is in flux.
+     */
+    virtual bool isEnabledOnVersion(multiversion::FeatureCompatibilityVersion targetFCV) const = 0;
+};
+
+/**
  * BinaryCompatibleFeatureFlag is a simple boolean feature flag whose value is only set at startup.
  * Its value does not change at runtime, nor during FCV upgrade/downgrade.
  */
-class BinaryCompatibleFeatureFlag : public FeatureFlag {
+class BinaryCompatibleFeatureFlag : public ParameterGatingFeatureFlag {
 public:
     explicit BinaryCompatibleFeatureFlag(bool enabled) : _enabled(enabled) {}
 
@@ -115,12 +155,26 @@ public:
 
     void appendFlagValueAndMetadata(BSONObjBuilder& flagBuilder) const override;
 
+    bool checkWithContext(const VersionContext& vCtx,
+                          IncrementalFeatureRolloutContext& ifrContext,
+                          ServerGlobalParams::FCVSnapshot fcv) override {
+        return _enabled;
+    }
+
+    bool canBeEnabled() const override {
+        return _enabled;
+    }
+
     bool getForServerParameter() const override {
         return _enabled;
     }
 
     void setForServerParameter(bool enabled) override {
         _enabled = enabled;
+    }
+
+    bool isEnabledOnVersion(multiversion::FeatureCompatibilityVersion targetFCV) const override {
+        return _enabled;
     }
 
 private:
@@ -133,7 +187,7 @@ private:
  * threshold version and it is defined as enabled by default. It is not implicitly convertible to
  * bool to force all call sites to make a decision about what check to use.
  */
-class FCVGatedFeatureFlag : public FeatureFlag {
+class FCVGatedFeatureFlag : public ParameterGatingFeatureFlag {
 public:
     FCVGatedFeatureFlag(bool enabled,
                         StringData versionString,
@@ -179,13 +233,7 @@ public:
      */
     bool isEnabledAndIgnoreFCVUnsafe() const;
 
-    /**
-     * Returns true if the flag is set to true and enabled on the target FCV version.
-     *
-     * This function is used in the 'setFeatureCompatibilityVersion' command where the in-memory FCV
-     * is in flux.
-     */
-    bool isEnabledOnVersion(multiversion::FeatureCompatibilityVersion targetFCV) const;
+    bool isEnabledOnVersion(multiversion::FeatureCompatibilityVersion targetFCV) const override;
 
     /**
      * Returns true if the feature flag is disabled on targetFCV but enabled on originalFCV.
@@ -206,6 +254,16 @@ public:
     }
 
     void appendFlagValueAndMetadata(BSONObjBuilder& flagBuilder) const override;
+
+    bool checkWithContext(const VersionContext& vCtx,
+                          IncrementalFeatureRolloutContext& ifrContext,
+                          ServerGlobalParams::FCVSnapshot fcv) override {
+        return isEnabled(vCtx, fcv);
+    }
+
+    bool canBeEnabled() const override {
+        return _enabled;
+    }
 
     bool getForServerParameter() const override {
         return _enabled;
@@ -242,50 +300,6 @@ public:
 };
 
 /**
- * Expresses that a feature may depend on either a binary-compatible or FCV-gated feature flag.
- *
- * This class can wrap either a BinaryCompatibleFeatureFlag or an FCVGatedFeatureFlag, and provides
- * a single method to check if the feature is enabled.
- *
- * It can also represent a "null object" state, where the feature does not depend on a feature flag,
- * and thus it is unconditionally enabled.
- *
- * For FCV-gated feature flags, you must provide a callback defining how to check an FCV-gated flag,
- * to handle cases such as uninitialized FCV or checking multiple flags under the same FCV snapshot.
- *
- * If you don't need to support both binary-compatible and FCV-gated feature flags, you should
- * use BinaryCompatibleFeatureFlag or FCVGatedFeatureFlag directly.
- */
-class CheckableFeatureFlagRef {
-public:
-    CheckableFeatureFlagRef() = default;
-    explicit(false) CheckableFeatureFlagRef(BinaryCompatibleFeatureFlag& featureFlag)
-        : _featureFlag(&featureFlag) {}
-    explicit(false) CheckableFeatureFlagRef(FCVGatedFeatureFlag& featureFlag)
-        : _featureFlag(&featureFlag) {}
-
-    template <typename F>
-    bool isEnabled(F&& isFcvGatedFlagEnabled) const {
-        return visit(
-            OverloadedVisitor{[](std::monostate) { return true; },
-                              [](BinaryCompatibleFeatureFlag* impl) { return impl->isEnabled(); },
-                              [&](FCVGatedFeatureFlag* impl) -> bool {
-                                  return isFcvGatedFlagEnabled(*impl);
-                              }},
-            _featureFlag);
-    }
-
-private:
-    std::variant<std::monostate, BinaryCompatibleFeatureFlag*, FCVGatedFeatureFlag*> _featureFlag;
-};
-
-/**
- * Expresses that a feature is not dependent on a feature flag, and
- * thus it is always enabled.
- */
-inline constexpr CheckableFeatureFlagRef kDoesNotRequireFeatureFlag;
-
-/**
  * Describes where in the release cycle a feature is.
  */
 enum class RolloutPhase {
@@ -313,7 +327,8 @@ public:
      *
      * NB: Unlike other feature flags, incremental rollout flags _can_ change their value at
      * runtime. Callers should take care not to assume that repeated calls to this check will return
-     * the same value. Consider using an 'IncrementalFeatureContext' when querying the flag value.
+     * the same value. Consider using an 'IncrementalFeatureRolloutContext' when querying the flag
+     * value.
      */
     bool checkEnabled();
 
@@ -340,6 +355,14 @@ public:
     void appendFlagValueAndMetadata(BSONObjBuilder& flagBuilder) const override;
 
     void appendFlagDetails(BSONObjBuilder& detailsBuilder) const override;
+
+    bool checkWithContext(const VersionContext& vCtx,
+                          IncrementalFeatureRolloutContext& ifrContext,
+                          ServerGlobalParams::FCVSnapshot fcv) override;
+
+    bool canBeEnabled() const override {
+        return true;
+    }
 
     bool getForServerParameter() const override {
         return _value.loadRelaxed();
@@ -371,5 +394,34 @@ private:
     Atomic<int64_t> _numFalseChecks;
     Atomic<int64_t> _numTrueChecks;
     Atomic<int64_t> _numToggles;
+};
+
+/**
+ * Records a set of 'IncrementalRolloutFeatureFlag's that were queried during an operation along
+ * with their values. An operation with behavior controlled by 'IncrementalRolloutFeatureFlag's
+ * should create an 'IncrementalRolloutFeatureContext' and uses its 'getSavedFlagValue()' method
+ * instead of directly querying the flag for two reasons:
+ *   1. The saved record of which flags were consulted and which features were enabled is useful
+ *      diagnostically.
+ *   2. Repeated checks of a flag via the same instance of 'IncrementalFeatureRolloutContext' will
+ *      all return the same value, helping avoid errors caused by changes to a feature flag that are
+ *      concurrent with an ongoing operation.
+ */
+class IncrementalFeatureRolloutContext {
+public:
+    /**
+     * Returns the saved value of a feature flag when there is one or queries the flag via
+     * 'checkEnabled()' and saves its value when there is not.
+     */
+    bool getSavedFlagValue(IncrementalRolloutFeatureFlag& flag);
+
+    /**
+     * Writes a diagnostic record of queried flags and their values. Each element of the array is a
+     * document with 'name' and 'value' fields.
+     */
+    void appendSavedFlagValues(BSONArrayBuilder& builder) const;
+
+private:
+    absl::flat_hash_map<const IncrementalRolloutFeatureFlag*, bool> _savedFlagValues;
 };
 }  // namespace mongo

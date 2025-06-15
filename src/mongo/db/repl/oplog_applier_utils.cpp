@@ -27,23 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <absl/hash/hash.h>
-#include <absl/meta/type_traits.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/oplog_applier_utils.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -65,8 +49,8 @@
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/multitenancy_gen.h"
 #include "mongo/db/namespace_string.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/repl/oplog_applier_utils.h"
-#include "mongo/db/repl/oplog_constraint_violation_logger.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/repl/repl_server_parameters_gen.h"
@@ -77,6 +61,7 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/shard_role.h"
 #include "mongo/db/stats/counters.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
@@ -85,6 +70,24 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/hash/hash.h>
+#include <absl/meta/type_traits.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -503,8 +506,14 @@ Status OplogApplierUtils::applyOplogEntryOrGroupedInsertsCommon(
                         str::stream()
                             << "missing database (" << nss.dbName().toStringForErrorMsg() << ")",
                         db);
-                OldClientContext ctx(opCtx, coll->nss(), db);
 
+                AutoStatsTracker statsTracker(
+                    opCtx,
+                    nss,
+                    Top::LockType::WriteLocked,
+                    AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                    DatabaseProfileSettings::get(opCtx->getServiceContext())
+                        .getDatabaseProfileLevel(nss.dbName()));
                 // We convert updates to upserts in secondary mode when the
                 // oplogApplicationEnforcesSteadyStateConstraints parameter is false, to avoid
                 // failing on the constraint that updates in steady state mode always update

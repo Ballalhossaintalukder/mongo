@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -43,6 +40,9 @@
 #include "mongo/db/storage/storage_engine_lock_file.h"
 #include "mongo/db/storage/storage_options.h"
 
+#include <memory>
+#include <string>
+
 namespace mongo {
 
 namespace {
@@ -50,14 +50,17 @@ class DevNullStorageEngineFactory : public StorageEngine::Factory {
 public:
     std::unique_ptr<StorageEngine> create(OperationContext* opCtx,
                                           const StorageGlobalParams& params,
-                                          const StorageEngineLockFile* lockFile) const override {
+                                          const StorageEngineLockFile* lockFile,
+                                          bool isReplSet,
+                                          bool shouldRecoverFromOplogAsStandalone,
+                                          bool inStandaloneMode) const override {
         StorageEngineOptions options;
         options.directoryPerDB = params.directoryperdb;
         options.forRepair = params.repair;
         options.forRestore = params.restore;
         options.lockFileCreatedByUncleanShutdown = lockFile && lockFile->createdByUncleanShutdown();
         return std::make_unique<StorageEngineImpl>(
-            opCtx, std::make_unique<DevNullKVEngine>(), options);
+            opCtx, std::make_unique<DevNullKVEngine>(), std::unique_ptr<KVEngine>(), options);
     }
 
     StringData getCanonicalName() const override {

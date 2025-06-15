@@ -29,6 +29,15 @@
 
 #pragma once
 
+#include "mongo/db/exec/sbe/expressions/expression.h"
+#include "mongo/db/exec/sbe/stages/lookup_hash_table.h"
+#include "mongo/db/exec/sbe/stages/stages.h"
+#include "mongo/db/exec/sbe/values/row.h"
+#include "mongo/db/exec/sbe/values/slot.h"
+#include "mongo/db/exec/sbe/values/value.h"
+#include "mongo/db/operation_context.h"
+#include "mongo/db/query/collation/collator_interface.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -38,15 +47,6 @@
 #include <vector>
 
 #include <boost/optional/optional.hpp>
-
-#include "mongo/db/exec/sbe/expressions/expression.h"
-#include "mongo/db/exec/sbe/stages/lookup_hash_table.h"
-#include "mongo/db/exec/sbe/stages/stages.h"
-#include "mongo/db/exec/sbe/values/row.h"
-#include "mongo/db/exec/sbe/values/slot.h"
-#include "mongo/db/exec/sbe/values/value.h"
-#include "mongo/db/operation_context.h"
-#include "mongo/db/query/collation/collator_interface.h"
 
 namespace mongo::sbe {
 /**
@@ -109,10 +109,6 @@ public:
     void open(bool reOpen) final;
     PlanState getNext() final;
     void close() final;
-
-    void doForceSpill() final {
-        _hashTable.forceSpill();
-    };
 
     std::unique_ptr<PlanStageStats> getStats(bool includeDebugInfo) const final;
     const SpecificStats* getSpecificStats() const final;
@@ -201,5 +197,9 @@ private:
 
     // LookupHashTable instance holding the inner collection.
     LookupHashTable _hashTable;
+
+    void doForceSpill() final {
+        _hashTable.forceSpill();
+    };
 };  // class HashLookupStage
 }  // namespace mongo::sbe

@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <iosfwd>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -59,6 +49,17 @@
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/uuid.h"
+
+#include <functional>
+#include <iosfwd>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -117,6 +118,10 @@ public:
      * all indexes have been initialized. For callers that timestamp this write, use
      * 'makeTimestampedIndexOnInitFn', otherwise use 'kNoopOnInitFn'.
      *
+     * Callers can optionally limit the memory usage via 'maxMemoryUsageBytes'. If omitted, the
+     * default memory limit is controlled by the 'maxIndexBuildMemoryUsageMegabytes' server
+     * parameter.
+     *
      * Does not need to be called inside of a WriteUnitOfWork (but can be due to nesting).
      *
      * Requires holding an exclusive lock on the collection.
@@ -127,11 +132,14 @@ public:
         const std::vector<BSONObj>& specs,
         OnInitFn onInit,
         InitMode initMode = InitMode::SteadyState,
-        const boost::optional<ResumeIndexInfo>& resumeInfo = boost::none);
-    StatusWith<std::vector<BSONObj>> init(OperationContext* opCtx,
-                                          CollectionWriter& collection,
-                                          const BSONObj& spec,
-                                          OnInitFn onInit);
+        const boost::optional<ResumeIndexInfo>& resumeInfo = boost::none,
+        boost::optional<size_t> maxMemoryUsageBytes = boost::none);
+    StatusWith<std::vector<BSONObj>> init(
+        OperationContext* opCtx,
+        CollectionWriter& collection,
+        const BSONObj& spec,
+        OnInitFn onInit,
+        boost::optional<size_t> maxMemoryUsageBytes = boost::none);
     /**
      * Not all index initializations need an OnInitFn, in particular index builds that do not need
      * to timestamp catalog writes. This is a no-op.

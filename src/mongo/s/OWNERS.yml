@@ -12,6 +12,12 @@ filters:
   - "*query_analyzer*":
     approvers:
       - 10gen/server-cluster-scalability
+  - "query_analysis*":
+    approvers:
+      - 10gen/server-cluster-scalability
+  - "would_change_owning_shard_exception*":
+    approvers:
+      - 10gen/query-execution-router
   - "*refine_collection_shard_key*":
     approvers:
       - 10gen/server-cluster-scalability
@@ -60,9 +66,6 @@ filters:
   - "database_version*":
     approvers:
       - 10gen/server-catalog-and-routing
-  - "index_version*":
-    approvers:
-      - 10gen/server-catalog-and-routing
   - "resource_yielders*":
     approvers:
       - 10gen/server-catalog-and-routing
@@ -72,6 +75,15 @@ filters:
   - "routing_*":
     approvers:
       - 10gen/server-catalog-and-routing
+  - "mongos.cpp":
+    approvers:
+      - 10gen/server-programmability
+  - "mongos_main*":
+    approvers:
+      - 10gen/server-programmability
+  - "mongos_options_*":
+    approvers:
+      - 10gen/server-programmability
   - "service_entry_point*":
     approvers:
       - 10gen/server-programmability
@@ -82,12 +94,6 @@ filters:
     approvers:
       - 10gen/server-catalog-and-routing
   - "shard_version*":
-    approvers:
-      - 10gen/server-catalog-and-routing
-  - "sharding_index_catalog_cache*":
-    approvers:
-      - 10gen/server-catalog-and-routing
-  - "sharding_state*":
     approvers:
       - 10gen/server-catalog-and-routing
   - "sharding_types.idl":

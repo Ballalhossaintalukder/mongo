@@ -27,15 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdlib>
-#include <exception>
-#include <iostream>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,6 +46,15 @@
 #include "mongo/util/options_parser/options_parser.h"
 #include "mongo/util/options_parser/value.h"
 #include "mongo/util/str.h"
+
+#include <cstdlib>
+#include <exception>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -264,9 +264,9 @@ int ksDecodeMain(int argc, char* argv[]) try {
 
     if (environment.count("output")) {
         auto strVal = environment["output"].as<std::string>();
-        if (StringData(strVal).equalCaseInsensitive("explain")) {
+        if (str::equalCaseInsensitive(strVal, "explain")) {
             options.outputFormat = OutputFormat::kExplain;
-        } else if (StringData(strVal).equalCaseInsensitive("bson")) {
+        } else if (str::equalCaseInsensitive(strVal, "bson")) {
             options.outputFormat = OutputFormat::kBson;
         } else {
             exitWithUsage("Unknown output format");
@@ -284,11 +284,11 @@ int ksDecodeMain(int argc, char* argv[]) try {
 
     if (environment.count("recordId")) {
         std::string strVal = environment["recordId"].as<std::string>();
-        if (StringData(strVal).equalCaseInsensitive("string")) {
+        if (str::equalCaseInsensitive(strVal, "string")) {
             options.keyFormat.emplace(KeyFormat::String);
-        } else if (StringData(strVal).equalCaseInsensitive("long")) {
+        } else if (str::equalCaseInsensitive(strVal, "long")) {
             options.keyFormat.emplace(KeyFormat::Long);
-        } else if (!StringData(strVal).equalCaseInsensitive("none")) {
+        } else if (!str::equalCaseInsensitive(strVal, "none")) {
             exitWithUsage("Unknown RecordId format");
         }
     }

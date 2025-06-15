@@ -27,12 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/sorted_data_interface_test_assert.h"
 #include "mongo/db/storage/sorted_data_interface_test_harness.h"
 #include "mongo/unittest/unittest.h"
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace {
@@ -44,31 +44,31 @@ TEST_F(SortedDataInterfaceTest, IsEmpty) {
     const auto sorted(
         harnessHelper()->newSortedDataInterface(opCtx(), /*unique=*/true, /*partial=*/false));
 
-    ASSERT(sorted->isEmpty(opCtx()));
+    ASSERT(sorted->isEmpty(opCtx(), recoveryUnit()));
 
     {
         StorageWriteTransaction txn(recoveryUnit());
-        ASSERT_SDI_INSERT_OK(
-            sorted->insert(opCtx(), makeKeyString(sorted.get(), key1, loc1), false));
-        ASSERT_SDI_INSERT_OK(
-            sorted->insert(opCtx(), makeKeyString(sorted.get(), key2, loc2), false));
-        ASSERT_SDI_INSERT_OK(
-            sorted->insert(opCtx(), makeKeyString(sorted.get(), key3, loc3), false));
+        ASSERT_SDI_INSERT_OK(sorted->insert(
+            opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key1, loc1), false));
+        ASSERT_SDI_INSERT_OK(sorted->insert(
+            opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key2, loc2), false));
+        ASSERT_SDI_INSERT_OK(sorted->insert(
+            opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key3, loc3), false));
         txn.commit();
     }
 
-    ASSERT(!sorted->isEmpty(opCtx()));
+    ASSERT(!sorted->isEmpty(opCtx(), recoveryUnit()));
 
     {
         StorageWriteTransaction txn(recoveryUnit());
-        sorted->unindex(opCtx(), makeKeyString(sorted.get(), key1, loc1), false);
-        sorted->unindex(opCtx(), makeKeyString(sorted.get(), key2, loc2), false);
-        sorted->unindex(opCtx(), makeKeyString(sorted.get(), key3, loc3), false);
-        ASSERT(sorted->isEmpty(opCtx()));
+        sorted->unindex(opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key1, loc1), false);
+        sorted->unindex(opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key2, loc2), false);
+        sorted->unindex(opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key3, loc3), false);
+        ASSERT(sorted->isEmpty(opCtx(), recoveryUnit()));
         txn.commit();
     }
 
-    ASSERT(sorted->isEmpty(opCtx()));
+    ASSERT(sorted->isEmpty(opCtx(), recoveryUnit()));
 }
 
 }  // namespace

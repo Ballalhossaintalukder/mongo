@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <vector>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/util/string_map.h"
+
+#include <vector>
 
 
 namespace mongo::timeseries::write_ops_utils::details {
@@ -56,12 +56,12 @@ inline bool operator==(const timeseries::write_ops_utils::details::Measurement& 
 
     StringMap<BSONElement> rhsFields;
     for (auto& field : rhs.dataFields) {
-        rhsFields.insert({field.fieldNameStringData().toString(), field});
+        rhsFields.insert({std::string{field.fieldNameStringData()}, field});
     }
 
     for (size_t i = 0; i < lhs.dataFields.size(); ++i) {
         auto& lhsField = lhs.dataFields[i];
-        auto it = rhsFields.find(lhsField.fieldNameStringData().toString());
+        auto it = rhsFields.find(std::string{lhsField.fieldNameStringData()});
         if (it == rhsFields.end()) {
             return false;
         }

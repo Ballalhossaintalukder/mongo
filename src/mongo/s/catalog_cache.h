@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <cstdint>
-#include <string>
-#include <utility>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -51,13 +43,21 @@
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/shard_version.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/thread_pool.h"
 #include "mongo/util/concurrency/thread_pool_interface.h"
 #include "mongo/util/read_through_cache.h"
+
+#include <cstdint>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 
@@ -101,9 +101,6 @@ public:
     }
     const ShardId& getDbPrimaryShardId() const;
     const DatabaseVersion& getDbVersion() const;
-    const boost::optional<ShardingIndexesCatalogCache>& getIndexesInfo() const {
-        return _sii;
-    }
     // When set to true, the ShardVersions returned by this object will have the
     // 'ignoreCollectionUuidMismatch' flag set, thus instructing the receiving shards to ignore
     // collection UUID mismatches between the sharding catalog and their local catalog.
@@ -113,7 +110,6 @@ public:
 private:
     CachedDatabaseInfo _dbInfo;
     ChunkManager _cm;
-    boost::optional<ShardingIndexesCatalogCache> _sii;
 };
 
 /**
@@ -203,9 +199,29 @@ class CatalogCache {
     CatalogCache& operator=(const CatalogCache&) = delete;
 
 public:
+    /**
+     * Constructs a CatalogCache using separate cache loaders for the database and collection
+     * caches.
+     *
+     * The shutdown flags control whether the database and/or collection cache loaders should be
+     * shut down when this CatalogCache is destroyed. This is useful when the loaders are not shared
+     * across multiple caches.
+     */
+    CatalogCache(ServiceContext* service,
+                 std::shared_ptr<CatalogCacheLoader> databaseCacheLoader,
+                 std::shared_ptr<CatalogCacheLoader> collectionCacheLoader,
+                 bool cascadeDatabaseCacheLoaderShutdown = true,
+                 bool cascadeCollectionCacheLoaderShutdown = true,
+                 StringData kind = ""_sd);
+
+    /**
+     * Constructs a CatalogCache using a single cache loader for both database and collection
+     * caches.
+     */
     CatalogCache(ServiceContext* service,
                  std::shared_ptr<CatalogCacheLoader> cacheLoader,
                  StringData kind = ""_sd);
+
     virtual ~CatalogCache();
 
     /**
@@ -333,6 +349,10 @@ private:
                       ThreadPoolInterface& threadPool,
                       std::shared_ptr<CatalogCacheLoader> catalogCacheLoader);
 
+        void shutDown() {
+            _catalogCacheLoader->shutDown();
+        }
+
     private:
         LookupResult _lookupDatabase(OperationContext* opCtx,
                                      const DatabaseName& dbName,
@@ -350,6 +370,10 @@ private:
                         std::shared_ptr<CatalogCacheLoader> catalogCacheLoader);
 
         void reportStats(BSONObjBuilder* builder) const;
+
+        void shutDown() {
+            _catalogCacheLoader->shutDown();
+        }
 
     private:
         LookupResult _lookupCollection(OperationContext* opCtx,
@@ -415,11 +439,14 @@ private:
     // (Optional) the kind of catalog cache instantiated. Used for logging and reporting purposes.
     std::string _kind;
 
-    // Interface from which chunks will be retrieved
-    std::shared_ptr<CatalogCacheLoader> _cacheLoader;
-
     // Executor on which the caches below will execute their blocking work
     ThreadPool _executor;
+
+    // Flags set at construction time to determine whether the database and collection catalog cache
+    // loaders should be shut down at destruction time. This allows for independent control if they
+    // do not share the same loader instance.
+    const bool _cascadeDatabaseCacheLoaderShutdown;
+    const bool _cascadeCollectionCacheLoaderShutdown;
 
     DatabaseCache _databaseCache;
 

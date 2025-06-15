@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -55,12 +50,15 @@
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/async_requests_sender.h"
-#include "mongo/s/catalog_cache.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/cluster_commands_helpers.h"
-#include "mongo/s/grid.h"
 #include "mongo/s/router_role.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <set>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace {
@@ -134,22 +132,25 @@ ClusterGetQueryableEncryptionCountInfoCmd::Invocation::typedRun(OperationContext
     }
 
     auto nss = request().getNamespace();
-    const auto cri =
-        uassertStatusOK(Grid::get(opCtx)->catalogCache()->getCollectionRoutingInfo(opCtx, nss));
-    tassert(7924701, "ESC collection cannot be sharded", !cri.isSharded());
+    auto response = routing_context_utils::withValidatedRoutingContext(
+        opCtx, {nss}, [&](RoutingContext& routingCtx) {
+            tassert(7924701,
+                    "ESC collection cannot be sharded",
+                    !routingCtx.getCollectionRoutingInfo(nss).isSharded());
 
-    auto& cmd = request();
-    setReadWriteConcern(opCtx, cmd, this);
+            auto& cmd = request();
+            setReadWriteConcern(opCtx, cmd, this);
 
-    auto response =
-        uassertStatusOK(executeCommandAgainstShardWithMinKeyChunk(
-                            opCtx,
-                            nss,
-                            cri,
-                            CommandHelpers::filterCommandRequestForPassthrough(cmd.toBSON()),
-                            ReadPreferenceSetting(ReadPreference::PrimaryOnly),
-                            Shard::RetryPolicy::kIdempotent)
-                            .swResponse);
+            return uassertStatusOK(
+                executeCommandAgainstShardWithMinKeyChunk(
+                    opCtx,
+                    nss,
+                    routingCtx,
+                    CommandHelpers::filterCommandRequestForPassthrough(cmd.toBSON()),
+                    ReadPreferenceSetting(ReadPreference::PrimaryOnly),
+                    Shard::RetryPolicy::kIdempotent)
+                    .swResponse);
+        });
 
     BSONObjBuilder result;
     CommandHelpers::filterCommandReplyForPassthrough(response.data, &result);

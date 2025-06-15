@@ -27,6 +27,15 @@
  *    it in the license file.
  */
 
+#include "mongo/base/parse_number.h"
+
+#include "mongo/base/error_codes.h"
+#include "mongo/base/static_assert.h"
+#include "mongo/base/status_with.h"
+#include "mongo/platform/decimal128.h"
+#include "mongo/platform/overflow_arithmetic.h"
+#include "mongo/util/ctype.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -37,14 +46,6 @@
 
 #include <boost/cstdint.hpp>
 #include <boost/move/utility_core.hpp>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/base/parse_number.h"
-#include "mongo/base/static_assert.h"
-#include "mongo/base/status_with.h"
-#include "mongo/platform/decimal128.h"
-#include "mongo/platform/overflow_arithmetic.h"
-#include "mongo/util/ctype.h"
 
 namespace mongo {
 namespace {
@@ -110,7 +111,7 @@ inline StringData _extractBase(StringData stringValue, int inputBase, int* outpu
     const auto hexPrefixUpper = "0X"_sd;
     if (inputBase == 0) {
         if (stringValue.size() > 2 &&
-            (stringValue.startsWith(hexPrefixLower) || stringValue.startsWith(hexPrefixUpper))) {
+            (stringValue.starts_with(hexPrefixLower) || stringValue.starts_with(hexPrefixUpper))) {
             *outputBase = 16;
             return stringValue.substr(2);
         }
@@ -123,7 +124,7 @@ inline StringData _extractBase(StringData stringValue, int inputBase, int* outpu
     } else {
         *outputBase = inputBase;
         if (inputBase == 16 &&
-            (stringValue.startsWith(hexPrefixLower) || stringValue.startsWith(hexPrefixUpper))) {
+            (stringValue.starts_with(hexPrefixLower) || stringValue.starts_with(hexPrefixUpper))) {
             return stringValue.substr(2);
         }
         return stringValue;
@@ -228,7 +229,7 @@ Status parseNumberFromStringHelper<double>(StringData stringValue,
     if (!parser._skipLeadingWhitespace && ctype::isSpace(stringValue[0]))
         return Status(ErrorCodes::FailedToParse, "Leading whitespace");
 
-    std::string str = stringValue.toString();
+    std::string str = std::string{stringValue};
     const char* cStr = str.c_str();
     char* endp;
     errno = 0;
@@ -297,7 +298,7 @@ Status parseNumberFromStringHelper<Decimal128>(StringData stringValue,
     std::uint32_t signalingFlags = 0;
     size_t charsConsumed;
     auto parsedDecimal =
-        Decimal128(stringValue.toString(), &signalingFlags, parser._roundingMode, &charsConsumed);
+        Decimal128(std::string{stringValue}, &signalingFlags, parser._roundingMode, &charsConsumed);
 
     if (Decimal128::hasFlag(signalingFlags, Decimal128::SignalingFlag::kOverflow)) {
         return Status(ErrorCodes::Overflow, "Conversion from string to decimal would overflow");

@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <fmt/format.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/pipeline/document_source_merge_spec.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -39,12 +36,15 @@
 #include "mongo/db/pipeline/aggregation_request_helper.h"
 #include "mongo/db/pipeline/document_source_merge.h"
 #include "mongo/db/pipeline/document_source_merge_gen.h"
-#include "mongo/db/pipeline/document_source_merge_spec.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -56,9 +56,9 @@ NamespaceString mergeTargetNssParseFromBSON(boost::optional<TenantId> tenantId,
                         "but found {}",
                         DocumentSourceMerge::kStageName,
                         typeName(elem.type())),
-            elem.type() == BSONType::String || elem.type() == BSONType::Object);
+            elem.type() == BSONType::string || elem.type() == BSONType::object);
 
-    if (elem.type() == BSONType::String) {
+    if (elem.type() == BSONType::string) {
         uassert(5786800,
                 fmt::format("{} 'into' field cannot be an empty string",
                             DocumentSourceMerge::kStageName),
@@ -101,12 +101,12 @@ std::vector<std::string> mergeOnFieldsParseFromBSON(const BSONElement& elem) {
                         "but found {}",
                         DocumentSourceMerge::kStageName,
                         typeName(elem.type())),
-            elem.type() == BSONType::String || elem.type() == BSONType::Array);
+            elem.type() == BSONType::string || elem.type() == BSONType::array);
 
-    if (elem.type() == BSONType::String) {
+    if (elem.type() == BSONType::string) {
         fields.push_back(elem.str());
     } else {
-        invariant(elem.type() == BSONType::Array);
+        invariant(elem.type() == BSONType::array);
 
         BSONObjIterator iter(elem.Obj());
         while (iter.more()) {
@@ -115,7 +115,7 @@ std::vector<std::string> mergeOnFieldsParseFromBSON(const BSONElement& elem) {
                     fmt::format("{} 'on' array elements must be strings, but found {}",
                                 DocumentSourceMerge::kStageName,
                                 typeName(matchByElem.type())),
-                    matchByElem.type() == BSONType::String);
+                    matchByElem.type() == BSONType::string);
             fields.push_back(matchByElem.str());
         }
     }
@@ -145,13 +145,13 @@ MergeWhenMatchedPolicy mergeWhenMatchedParseFromBSON(const BSONElement& elem) {
                         "but found {}",
                         DocumentSourceMerge::kStageName,
                         typeName(elem.type())),
-            elem.type() == BSONType::String || elem.type() == BSONType::Array);
+            elem.type() == BSONType::string || elem.type() == BSONType::array);
 
-    if (elem.type() == BSONType::Array) {
+    if (elem.type() == BSONType::array) {
         return {MergeWhenMatchedModeEnum::kPipeline, parsePipelineFromBSON(elem)};
     }
 
-    invariant(elem.type() == BSONType::String);
+    invariant(elem.type() == BSONType::string);
 
     IDLParserContext ctx{DocumentSourceMergeSpec::kWhenMatchedFieldName};
     auto value = elem.valueStringData();

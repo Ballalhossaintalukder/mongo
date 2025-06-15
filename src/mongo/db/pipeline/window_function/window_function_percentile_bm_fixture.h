@@ -28,13 +28,20 @@
  */
 #pragma once
 #include "mongo/db/pipeline/accumulator_percentile_enum_gen.h"
-#include <benchmark/benchmark.h>
+#include "mongo/db/query/query_fcv_environment_for_test.h"
+
 #include <vector>
+
+#include <benchmark/benchmark.h>
 
 namespace mongo {
 
 class WindowFunctionPercentileBenchmarkFixture : public benchmark::Fixture {
 public:
+    void SetUp(benchmark::State& state) final {
+        QueryFCVEnvironmentForTest::setUp();
+    }
+
     void removable_unbounded_percentile(benchmark::State& state,
                                         PercentileMethodEnum method,
                                         std::vector<double> ps);

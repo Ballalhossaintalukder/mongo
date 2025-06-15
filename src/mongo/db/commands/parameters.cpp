@@ -27,17 +27,6 @@
  *    it in the license file.
  */
 
-#include <compare>
-#include <map>
-#include <mutex>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/parse_number.h"
 #include "mongo/base/status.h"
@@ -73,6 +62,17 @@
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <compare>
+#include <map>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -213,10 +213,10 @@ Status setLogComponentVerbosity(const BSONObj& bsonSettings) {
 }
 
 GetParameterOptions parseGetParameterOptions(BSONElement elem) {
-    if (elem.type() == BSONType::Object) {
+    if (elem.type() == BSONType::object) {
         return GetParameterOptions::parse(IDLParserContext{"getParameter"}, elem.Obj());
     }
-    if ((elem.type() == BSONType::String) && (elem.valueStringDataSafe() == "*"_sd)) {
+    if ((elem.type() == BSONType::string) && (elem.valueStringDataSafe() == "*"_sd)) {
         GetParameterOptions ret;
         ret.setAllParameters(true);
         return ret;
@@ -298,6 +298,10 @@ public:
                 (requireStartupSettable && !i->second->allowedToChangeAtStartup()) ||
                 (requireIFR && !i->second->isForIncrementalFeatureRollout())) {
                 continue;
+            }
+
+            if (requireNameMatch) {
+                i->second->warnIfDeprecated("getParameter");
             }
 
             if (options.getShowDetails()) {
@@ -451,6 +455,8 @@ public:
                 result.append(oldValue);
             }
 
+            foundParameter->second->warnIfDeprecated("setParameter");
+
             try {
                 uassertStatusOK(foundParameter->second->set(parameter, boost::none));
             } catch (const DBException& ex) {
@@ -576,7 +582,7 @@ void AutomationServiceDescriptorServerParameter::append(OperationContext*,
 
 Status AutomationServiceDescriptorServerParameter::set(const BSONElement& newValueElement,
                                                        const boost::optional<TenantId>&) {
-    if (newValueElement.type() != String) {
+    if (newValueElement.type() != BSONType::string) {
         return {ErrorCodes::TypeMismatch,
                 "Value for parameter automationServiceDescriptor must be of type 'string'"};
     }
@@ -593,7 +599,7 @@ Status AutomationServiceDescriptorServerParameter::setFromString(StringData str,
 
     {
         const stdx::lock_guard<stdx::mutex> lock(autoServiceDescriptorMutex);
-        autoServiceDescriptorValue = str.toString();
+        autoServiceDescriptorValue = std::string{str};
     }
 
     return Status::OK();

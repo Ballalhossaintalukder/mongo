@@ -28,16 +28,7 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <mutex>
-#include <tuple>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/sharding_initialization_mongod.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -85,8 +76,8 @@
 #include "mongo/db/s/shard_local.h"
 #include "mongo/db/s/shard_server_catalog_cache_loader.h"
 #include "mongo/db/s/shard_server_catalog_cache_loader_impl.h"
-#include "mongo/db/s/sharding_initialization_mongod.h"
 #include "mongo/db/s/sharding_ready.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/shard_id.h"
@@ -116,13 +107,23 @@
 #include "mongo/s/shard_version.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
 #include "mongo/s/sharding_initialization.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/stdx/unordered_map.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/with_lock.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <mutex>
+#include <tuple>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -165,7 +166,7 @@ public:
                 ->shardRegistry()
                 ->updateReplSetHosts(connStr,
                                      ShardRegistry::ConnectionStringUpdateType::kConfirmed);
-        } catch (const ExceptionForCat<ErrorCategory::ShutdownError>& e) {
+        } catch (const ExceptionFor<ErrorCategory::ShutdownError>& e) {
             LOGV2(471692, "Unable to update the shard registry", "error"_attr = e);
         }
 
@@ -277,7 +278,7 @@ private:
                             ClientOperationKillableByStepdown{false});
             auto opCtx = tc->makeOperationContext();
             ShardingInitializationMongoD::updateShardIdentityConfigString(opCtx.get(), update);
-        } catch (const ExceptionForCat<ErrorCategory::ShutdownError>& e) {
+        } catch (const ExceptionFor<ErrorCategory::ShutdownError>& e) {
             LOGV2(22069, "Unable to update shard identity config string", "error"_attr = e);
         } catch (...) {
             _endUpdateShardIdentityConfigString(setName, update);
@@ -378,10 +379,35 @@ void _initializeGlobalShardingState(OperationContext* opCtx,
         }
     }();
 
-    auto catalogCache = feature_flags::gDualCatalogCache.isEnabled()
-        ? std::make_unique<CatalogCache>(service,
-                                         std::make_shared<ConfigServerCatalogCacheLoaderImpl>())
-        : std::make_unique<CatalogCache>(service, shardRoleCatalogCacheLoader);
+    auto catalogCache = [&]() -> std::unique_ptr<CatalogCache> {
+        // If the dual catalog cache feature flag is enabled, use the ConfigServer implementation
+        // for both the database and collection caches.
+        if (feature_flags::gDualCatalogCache.isEnabled()) {
+            return std::make_unique<CatalogCache>(
+                service, std::make_shared<ConfigServerCatalogCacheLoaderImpl>());
+        }
+
+        // If only the database dual catalog cache is enabled, use the ConfigServer implementation
+        // for database metadata, and the ShardServer implementation for collection metadata.
+        //
+        // We pass `true` for `cascadeDatabaseCacheLoaderShutdown` because the CatalogCache owns the
+        // ConfigServer catalog cache loader.
+        //
+        // We pass `false` for `cascadeCollectionCacheLoaderShutdown` because the ShardServer
+        // catalog cache loader is owned and shut down by the FilteringMetadataCache. This avoids
+        // double shutdown or undefined behavior from shared ownership.
+        if (feature_flags::gDatabaseDualCatalogCache.isEnabled()) {
+            return std::make_unique<CatalogCache>(
+                service,
+                std::make_shared<ConfigServerCatalogCacheLoaderImpl>(),
+                shardRoleCatalogCacheLoader,
+                true /* cascadeDatabaseCacheLoaderShutdown */,
+                false /* cascadeCollectionCacheLoaderShutdown */);
+        }
+
+        // Otherwise, use the ShardServer implementation for both caches.
+        return std::make_unique<CatalogCache>(service, shardRoleCatalogCacheLoader);
+    }();
 
     bool isStandaloneOrPrimary = [&]() {
         // This is only called in startup when there shouldn't be replication state changes, but to
@@ -553,7 +579,7 @@ void ShardingInitializationMongoD::initializeFromShardIdentity(
         shardingState->setRecoveryCompleted({shardIdentity.getClusterId(),
                                              serverGlobalParams.clusterRole,
                                              shardIdentity.getConfigsvrConnectionString(),
-                                             ShardId(shardIdentity.getShardName().toString())});
+                                             ShardId(std::string{shardIdentity.getShardName()})});
     } catch (const DBException& ex) {
         shardingState->setRecoveryFailed(ex.toStatus());
     }
@@ -793,7 +819,7 @@ boost::optional<ShardIdentity> ShardingInitializationMongoD::getShardIdentityDoc
             return boost::none;
         }
 
-        MONGO_UNREACHABLE;
+        MONGO_UNREACHABLE_TASSERT(10083525);
     }
 
     // In sharded *non*-readOnly mode, error if --overrideShardIdentity is provided

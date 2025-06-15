@@ -29,6 +29,17 @@
 
 #pragma once
 
+#include "mongo/base/status.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/timestamp.h"
+#include "mongo/db/database_name.h"
+#include "mongo/db/index_builds/index_builds.h"
+#include "mongo/db/index_builds/resumable_index_builds_gen.h"
+#include "mongo/db/storage/spill_table.h"
+#include "mongo/db/storage/temporary_record_store.h"
+#include "mongo/util/periodic_runner.h"
+#include "mongo/util/str.h"
+
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -36,21 +47,11 @@
 
 #include <boost/serialization/strong_typedef.hpp>
 
-#include "mongo/base/status.h"
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/timestamp.h"
-#include "mongo/db/database_name.h"
-#include "mongo/db/index_builds/index_builds.h"
-#include "mongo/db/index_builds/resumable_index_builds_gen.h"
-#include "mongo/db/storage/temporary_record_store.h"
-#include "mongo/util/periodic_runner.h"
-#include "mongo/util/str.h"
-
 namespace mongo {
 
 class BackupBlock;
 class JournalListener;
-class DurableCatalog;
+class MDBCatalog;
 class KVEngine;
 class OperationContext;
 class RecoveryUnit;
@@ -59,6 +60,11 @@ class StorageEngineLockFile;
 class StorageEngineMetadata;
 
 struct StorageGlobalParams;
+
+// StorageEngine constants
+const std::string kCatalogInfo = std::string{DatabaseName::kMdbCatalog.db(omitTenant)};
+const NamespaceString kCatalogInfoNamespace = NamespaceString(DatabaseName::kMdbCatalog);
+const auto kResumableIndexIdentStem = "resumable-index-build-"_sd;
 
 /**
  * The StorageEngine class is the top level interface for creating a new storage engine. All
@@ -105,10 +111,12 @@ public:
         /**
          * Return a new instance of the StorageEngine. Caller owns the returned pointer.
          */
-        virtual std::unique_ptr<StorageEngine> create(
-            OperationContext* opCtx,
-            const StorageGlobalParams& params,
-            const StorageEngineLockFile* lockFile) const = 0;
+        virtual std::unique_ptr<StorageEngine> create(OperationContext* opCtx,
+                                                      const StorageGlobalParams& params,
+                                                      const StorageEngineLockFile* lockFile,
+                                                      bool isReplSet,
+                                                      bool shouldRecoverFromOplogAsStandalone,
+                                                      bool inStandaloneMode) const = 0;
 
         /**
          * Returns the name of the storage engine.
@@ -203,6 +211,12 @@ public:
     virtual void notifyReplStartupRecoveryComplete(RecoveryUnit&) {}
 
     /**
+     * The storage engine can save several elements of ReplSettings on construction.  Standalone
+     * mode is one such setting that can change after construction and need to be updated.
+     */
+    virtual void setInStandaloneMode() {}
+
+    /**
      * Returns a new interface to the storage engine's recovery unit.  The recovery
      * unit is the durability interface.  For details, see recovery_unit.h
      */
@@ -234,9 +248,8 @@ public:
      * caller. For example, on starting from a previous unclean shutdown, we may try to recover
      * orphaned idents, which are known to the storage engine but not referenced in the catalog.
      */
-    virtual void loadDurableCatalog(OperationContext* opCtx,
-                                    LastShutdownState lastShutdownState) = 0;
-    virtual void closeDurableCatalog(OperationContext* opCtx) = 0;
+    virtual void loadMDBCatalog(OperationContext* opCtx, LastShutdownState lastShutdownState) = 0;
+    virtual void closeMDBCatalog(OperationContext* opCtx) = 0;
 
     /**
      * Checkpoints the data to disk.
@@ -492,6 +505,17 @@ public:
                                      const NamespaceString& nss) = 0;
 
     /**
+     * Creates a temporary table that can be used for spilling in-memory state to disk. A table
+     * created using this API does not interfere with the reads/writes happening on the main
+     * KVEngine instance. This table is automatically dropped when the returned handle is
+     * destructed. If the available disk space falls below thresholdBytes, writes to the spill table
+     * will fail.
+     */
+    virtual std::unique_ptr<SpillTable> makeSpillTable(OperationContext* opCtx,
+                                                       KeyFormat keyFormat,
+                                                       int64_t thresholdBytes) = 0;
+
+    /**
      * Creates a temporary RecordStore on the storage engine. On startup after an unclean shutdown,
      * the storage engine will drop any un-dropped temporary record stores.
      */
@@ -522,7 +546,7 @@ public:
      * On error, the storage engine should assert and crash.
      * There is intentionally no uncleanShutdown().
      */
-    virtual void cleanShutdown(ServiceContext* svcCtx) = 0;
+    virtual void cleanShutdown(ServiceContext* svcCtx, bool memLeakAllowed) = 0;
 
     /**
      * Returns the SnapshotManager for this StorageEngine or NULL if not supported.
@@ -556,13 +580,6 @@ public:
      * Returns true if the storage engine supports the readConcern level "snapshot".
      */
     virtual bool supportsReadConcernSnapshot() const = 0;
-
-    /**
-     * Returns true if the storage engine uses oplog truncate markers to more finely control
-     * deletion of oplog history, instead of the standard capped collection controls on
-     * the oplog collection size.
-     */
-    virtual bool supportsOplogTruncateMarkers() const = 0;
 
     /**
      * Returns a set of drop pending idents inside the storage engine.
@@ -756,19 +773,6 @@ public:
     };
 
     /**
-     * Drop abandoned idents using two-phase drop at the stable timestamp. Idents may be needed for
-     * reads between the oldest and stable timestamps. If successful, returns a ReconcileResult with
-     * indexes that need to be rebuilt or builds that need to be restarted.
-     *
-     * Abandoned internal idents require special handling based on the context known only to the
-     * caller. For example, on starting from a previous unclean shutdown, we would always drop all
-     * unknown internal idents. If we started from a clean shutdown, the internal idents may contain
-     * information for resuming index builds.
-     */
-    virtual StatusWith<ReconcileResult> reconcileCatalogAndIdents(
-        OperationContext* opCtx, Timestamp stableTs, LastShutdownState lastShutdownState) = 0;
-
-    /**
      * Returns the all_durable timestamp. All transactions with timestamps earlier than the
      * all_durable timestamp are committed.
      *
@@ -816,8 +820,11 @@ public:
 
     virtual KVEngine* getEngine() = 0;
     virtual const KVEngine* getEngine() const = 0;
-    virtual DurableCatalog* getDurableCatalog() = 0;
-    virtual const DurableCatalog* getDurableCatalog() const = 0;
+    virtual KVEngine* getSpillEngine() = 0;
+    virtual const KVEngine* getSpillEngine() const = 0;
+    virtual MDBCatalog* getMDBCatalog() = 0;
+    virtual const MDBCatalog* getMDBCatalog() const = 0;
+    virtual std::set<std::string> getDropPendingIdents() = 0;
 
     /**
      * A service that would like to pin the oldest timestamp registers its request here. If the
@@ -922,7 +929,7 @@ public:
     /**
      * Return true if the storage engine indicates that it is under cache pressure.
      */
-    virtual bool underCachePressure() {
+    virtual bool underCachePressure(int concurrentWriteOuts, int concurrentReadOuts) {
         return false;
     };
 
@@ -932,6 +939,11 @@ public:
     virtual size_t getCacheSizeMB() {
         return 0;
     }
+
+    /**
+     * Returns whether the storage engine is currently trying to live-restore its database.
+     */
+    virtual bool hasOngoingLiveRestore() = 0;
 };
 
 }  // namespace mongo

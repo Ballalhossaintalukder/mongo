@@ -29,11 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_rank_fusion.h"
 
-#include <algorithm>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <fmt/format.h>
-#include <fmt/ranges.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -62,9 +57,14 @@
 #include "mongo/db/pipeline/search/document_source_vector_search.h"
 #include "mongo/db/pipeline/search/search_helper.h"
 #include "mongo/db/query/allowed_contexts.h"
-#include "mongo/db/query/util/string_util.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/string_map.h"
+
+#include <algorithm>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -74,7 +74,7 @@ REGISTER_DOCUMENT_SOURCE_WITH_FEATURE_FLAG(rankFusion,
                                            DocumentSourceRankFusion::LiteParsed::parse,
                                            DocumentSourceRankFusion::createFromBson,
                                            AllowedWithApiStrict::kNeverInVersion1,
-                                           feature_flags::gFeatureFlagRankFusionBasic);
+                                           &feature_flags::gFeatureFlagRankFusionBasic);
 
 namespace {
 
@@ -83,6 +83,9 @@ static const std::string rankFusionScoreDetailsDescription =
     "value output by reciprocal rank fusion algorithm, computed as sum of (weight * (1 / "
     "(60 + rank))) across input pipelines from which this document is output, from:";
 
+// Stage name without the '$' prefix
+static const std::string rankFusionStageName = "rankFusion";
+
 /**
  * Checks that the input pipeline is a valid ranked pipeline. This means it is either one of
  * $search, $vectorSearch, $geoNear, $rankFusion, $scoreFusion (which have ordered output) or has an
@@ -90,254 +93,29 @@ static const std::string rankFusionScoreDetailsDescription =
  * can modify the documents in any way. Only stages that retrieve, limit, or order documents are
  * allowed.
  */
-static void rankFusionPipelineValidator(const Pipeline& pipeline) {
-    // Note that we don't check for $rankFusion and $scoreFusion explicitly because it will be
-    // desugared by this point.
-    static const std::set<StringData> implicitlyOrderedStages{
-        DocumentSourceVectorSearch::kStageName,
-        DocumentSourceSearch::kStageName,
-        DocumentSourceGeoNear::kStageName};
-    auto sources = pipeline.getSources();
-
+static void rankFusionBsonPipelineValidator(const std::vector<BSONObj>& pipeline) {
     static const std::string rankPipelineMsg =
         "All subpipelines to the $rankFusion stage must begin with one of $search, "
         "$vectorSearch, $geoNear, $scoreFusion, $rankFusion or have a custom $sort in "
         "the pipeline.";
     uassert(9834300,
             str::stream() << "$rankFusion input pipeline cannot be empty. " << rankPipelineMsg,
-            !sources.empty());
+            !pipeline.empty());
 
-    auto firstStageName = sources.front()->getSourceName();
-    auto isRankedPipeline = implicitlyOrderedStages.contains(firstStageName) ||
-        std::any_of(sources.begin(), sources.end(), [](auto& stage) {
-                                return stage->getSourceName() == DocumentSourceSort::kStageName;
-                            });
-    uassert(9191100, rankPipelineMsg, isRankedPipeline);
 
-    std::for_each(sources.begin(), sources.end(), [](auto& stage) {
-        if (stage->getSourceName() == DocumentSourceGeoNear::kStageName) {
-            uassert(9191101,
-                    str::stream() << "$geoNear can be used in a $rankFusion subpipeline but not "
-                                     "when includeLocs or distanceField is specified because they "
-                                     "modify the documents by adding an output field. Only stages "
-                                     "that retrieve, limit, or order documents are allowed.",
-                    stage->constraints().noFieldModifications);
-        } else if (stage->getSourceName() == DocumentSourceSearch::kStageName) {
-            uassert(
-                9191102,
-                str::stream()
-                    << "$search can be used in a $rankFusion subpipeline but not when "
-                       "returnStoredSource is set to true because it modifies the output fields. "
-                       "Only stages that retrieve, limit, or order documents are allowed.",
-                stage->constraints().noFieldModifications);
-        } else {
-            uassert(9191103,
-                    str::stream() << stage->getSourceName()
-                                  << " is not allowed in a $rankFusion subpipeline because it "
-                                     "modifies the documents or transforms their fields. Only "
-                                     "stages that retrieve, limit, or order documents are allowed.",
-                    stage->constraints().noFieldModifications);
-        }
-    });
-}
-
-/**
- * Computes a suggestion for each invalid / non-existent weight entry in the 'validWeights' array.
- * The valid / existing pipelines that did not have a matching weight specification are
- * the set of options that can be suggested from.
- * The return vector has one entry per invalid weight, with the first entry in pair being
- * the name of the invalid weight, and the second being a list of suggestions.
- */
-std::vector<std::pair<std::string, std::vector<std::string>>> computeWeightsTypoSuggestions(
-    const std::vector<std::string>& unmatchedPipelines,
-    const std::vector<std::string>& invalidWeights) {
-    std::vector<std::pair<std::string, std::vector<std::string>>> suggestions;
-    for (const std::string& invalidWeight : invalidWeights) {
-        // First, check a special, but also likely, case where there is only a single unmatched
-        // pipeline. If so, this is the only possible suggestion, and there is no need to
-        // waste time computing the levenshtein distance.
-        if (unmatchedPipelines.size() == 1) {
-            suggestions.push_back({invalidWeight, {unmatchedPipelines.front()}});
-            continue;
-        }
-
-        // There are multiple unmatched pipelines, so find the best suggestion.
-        // 'shortestDistance' is the levenshtein distance of the best suggestion found so far.
-        // Initialize with the first unmatched pipeline, then compare to the rest.
-        unsigned int shortestDistance =
-            query_string_util::levenshteinDistance(invalidWeight, unmatchedPipelines[0]);
-        std::vector<std::string> bestSuggestions = {unmatchedPipelines[0]};
-        for (std::size_t i = 1; i < unmatchedPipelines.size(); i++) {
-            unsigned int ld =
-                query_string_util::levenshteinDistance(invalidWeight, unmatchedPipelines[i]);
-            if (ld == shortestDistance) {
-                // Equally good suggestion found.
-                bestSuggestions.push_back(unmatchedPipelines[i]);
-            } else if (ld < shortestDistance) {
-                // Better suggestion found.
-                shortestDistance = ld;
-                bestSuggestions = {unmatchedPipelines[i]};
-            }
-        }
-        // Record best suggestion for this invalid weight.
-        suggestions.push_back({invalidWeight, bestSuggestions});
-    }
-    return suggestions;
-}
-
-/**
- * This function will fail the query in the case where non-existent weight(s) were referenced in
- * 'combinations.weights' in the RankFusionSpec.
- * Before failing the query outright, the function first computes the best valid, unmatched pipeline
- * the user could have intended for each non-existent specified weight, and builds it into a user
- * friendly error message to give the best possible feedback.
- *
- * Note: This function needs a list of the unmatched pipelines, but is instead given a list of
- *       all pipelines and matched pipelines, which can be used to compute the unmatched pipelines.
- *       This is for performance reasons, because the caller of this function can easily know these
- *       inputs, and only needs to call this function in error cases.
- */
-void failWeightsValidationWithPipelineSuggestions(
-    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& allPipelines,
-    const stdx::unordered_set<std::string>& matchedPipelines,
-    const std::vector<std::string>& invalidWeights) {
-    // The list of unmatchedPipelines is first computed to find
-    // the valid set of possible suggestions.
-    std::vector<std::string> unmatchedPipelines;
-    for (const auto& pipeline : allPipelines) {
-        if (!matchedPipelines.contains(pipeline.first)) {
-            unmatchedPipelines.push_back(pipeline.first);
-        }
+    auto rankedPipelineStatus = hybrid_scoring_util::isRankedPipeline(pipeline);
+    if (!rankedPipelineStatus.isOK()) {
+        uasserted(9191100, rankedPipelineStatus.reason() + " " + rankPipelineMsg);
     }
 
-    // For each invalid weight, find the best possible suggested unmatched pipeline,
-    // that is, the one with the shortest levenshtein distance.
-    // The first entry in the pair is the name of the invalid weight,
-    // the second entry is the name of the suggested unmatched pipeline.
-    const std::vector<std::pair<std::string, std::vector<std::string>>> suggestions =
-        computeWeightsTypoSuggestions(unmatchedPipelines, invalidWeights);
-
-    // 'i' is the index into the 'suggestions' array.
-    auto convertSingleSuggestionToString = [&](const std::size_t i) -> std::string {
-        std::string s = fmt::format("(provided: '{}' -> ", suggestions[i].first);
-        if (suggestions[i].second.size() == 1) {
-            s += fmt::format("suggested: '{}')", suggestions[i].second.front());
-        } else {
-            s += fmt::format("suggestions: [{}])", fmt::join(suggestions[i].second, ", "));
-        }
-        if (i < suggestions.size() - 1) {
-            s += ", ";
-        }
-        return s;
-    };
-
-    // All best suggestions have been computed.
-    // The build error message that contains all suggestions.
-    std::string errorMsg = fmt::format(
-        "$rankFusion stage contained ({}) weight(s) in "
-        "'combination.weights' that did not reference valid pipeline names. "
-        "Suggestions for valid pipeline names: ",
-        std::to_string(invalidWeights.size()));
-    for (std::size_t i = 0; i < suggestions.size(); i++) {
-        errorMsg += convertSingleSuggestionToString(i);
+    auto selectionPipelineStatus = hybrid_scoring_util::isSelectionPipeline(pipeline);
+    if (!selectionPipelineStatus.isOK()) {
+        uasserted(9191103,
+                  selectionPipelineStatus.reason() +
+                      " Only stages that retrieve, limit, or order documents are allowed.");
     }
 
-    // Fail query.
-    uasserted(9967500, errorMsg);
-}
-
-/**
- * Parses and validates the weights for pipelines that have been explicitly specified in the
- * RankFusionSpec. Returns a map from the pipeline name to the specified weight (as a double)
- * for that pipeline. This function also validates that the weights specification is valid,
- * and fails the query if for example, a non-existant pipeline is specified, or a pipeline
- * is specified more than once.
- * Note: not all pipelines must be in the returned map; it only holds the ones that were explicitly
- * listed in the stage specification. This means any valid subset from none to all of the pipelines
- * may be contained in the resulting map. Any pipelines not present in the resulting map have
- * an implicit default weight of 1.
- */
-StringMap<double> extractAndValidateWeights(
-    const RankFusionSpec& spec,
-    const std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>>& pipelines) {
-    // Output map of pipeline name, to weight of pipeline.
-    StringMap<double> weights;
-
-    // If no weights specified, no work to do; return empty map.
-    const auto& combinationSpec = spec.getCombination();
-    if (!combinationSpec.has_value()) {
-        return weights;
-    }
-
-    // Keeps track of the weights in the RankFusionSpec that do not reference a valid pipeline
-    // most often from a misspelling/typo.
-    std::vector<std::string> invalidWeights;
-    // Keeps track of the pipelines that have been successfully matched/taken by specified weights.
-    // We use this to build a list of pipelines that have not been matched later,
-    // if necessary to suggest pipelines that might have been misspelled.
-    stdx::unordered_set<std::string> matchedPipelines;
-
-    for (const auto& weightEntry : combinationSpec->getWeights()) {
-        // First validate that this pipeline exists.
-        if (!pipelines.contains(weightEntry.fieldName())) {
-            // This weight does not reference a valid pipeline.
-            // The query will eventually fail, but we process all the weights first
-            // to give the best suggestions in the error message.
-            invalidWeights.push_back(weightEntry.fieldName());
-            continue;
-        }
-
-        // The pipeline exists, but must not already have been seen; else its a duplicate.
-        // Otherwise, add it to the output map.
-        // Practically, this should never arise because the BSON processing layer filters out
-        // redundant keys, but we leave it in as a defensive programming measure.
-        uassert(
-            9967401,
-            str::stream()
-                << "A pipeline named '" << weightEntry.fieldName()
-                << "' is specified more than once in the $rankFusion 'combinations.weight' object.",
-            !weights.contains(weightEntry.fieldName()));
-
-        // Unique, existing pipeline weight found.
-        // Validate the weight number and add to output map.
-        // weightEntry.Number() throws a uassert if non-numeric.
-        double weight = weightEntry.Number();
-        uassert(9460300,
-                str::stream() << "Rank fusion pipeline weight must be non-negative, but given "
-                              << weight << " for pipeline '" << weightEntry.fieldName() << "'.",
-                weight >= 0);
-        weights[weightEntry.fieldName()] = weight;
-        matchedPipelines.insert(weightEntry.fieldName());
-    }
-
-    // All weights that the user has specified have been processed.
-    // Check for error cases.
-    if (int(pipelines.size()) < combinationSpec->getWeights().nFields()) {
-        // There are more specified weights than input pipelines.
-        // Give feedback on which possible weights are extraneous.
-        tassert(9967501,
-                "There must be at least some invalid weights when there are more weights "
-                "than input pipelines to $rankFusion",
-                !invalidWeights.empty());
-        // Fail query.
-        uasserted(
-            9460301,
-            fmt::format(
-                "$rankFusion input has more weights ({}) than pipelines ({}). "
-                "If 'combination.weights' is specified, there must be a less or equal number of "
-                "weights as pipelines, each of which is unique and existing. "
-                "Possible extraneous specified weights = [{}]",
-                combinationSpec->getWeights().nFields(),
-                int(pipelines.size()),
-                fmt::join(invalidWeights, ", ")));
-    } else if (!invalidWeights.empty()) {
-        // There are invalid / misspelled weights.
-        // Fail the query with the best pipeline recommendations we can generate.
-        failWeightsValidationWithPipelineSuggestions(pipelines, matchedPipelines, invalidWeights);
-    }
-
-    // Successfully validated weights.
-    return weights;
+    // TODO: SERVER-104730 explicitly ban nested $scoreFusion/$rankFusion
 }
 
 auto makeSureSortKeyIsOutput(const auto& stageList) {
@@ -380,7 +158,7 @@ boost::intrusive_ptr<DocumentSource> setWindowFields(const auto& expCtx,
  */
 boost::intrusive_ptr<DocumentSource> addScoreField(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
-    const std::string& prefix,
+    const StringData prefix,
     const int rankConstant,
     const double weight) {
     const std::string score = fmt::format("{}_score", prefix);
@@ -416,8 +194,54 @@ boost::intrusive_ptr<DocumentSource> nestUserDocs(const auto& expCtx) {
         BSON("$replaceWith" << BSON("docs" << "$$ROOT")).firstElement(), expCtx);
 }
 
+/**
+ * Builds and returns an $addFields stage that materializes scoreDetails for an individual input
+ * pipeline. The way we materialize scoreDetails depends on if the input pipeline generates "score"
+ * or "scoreDetails" metadata.
+ *
+ * Later, these individual input pipeline scoreDetails will be gathered together in order to build
+ * scoreDetails for the overall $rankFusion pipeline (see calculateFinalScoreDetails()).
+ */
+boost::intrusive_ptr<DocumentSource> addInputPipelineScoreDetails(
+    const boost::intrusive_ptr<ExpressionContext>& expCtx,
+    const StringData inputPipelinePrefix,
+    const bool inputGeneratesScore,
+    const bool inputGeneratesScoreDetails) {
+    const std::string scoreDetails = fmt::format("{}_scoreDetails", inputPipelinePrefix);
+    BSONObjBuilder bob;
+    {
+        BSONObjBuilder addFieldsBob(bob.subobjStart("$addFields"_sd));
+
+        if (inputGeneratesScoreDetails) {
+            // If the input pipeline generates scoreDetails (for example, $search may generate
+            // searchScoreDetails), then we'll use the existing details:
+            // {$addFields: {prefix_scoreDetails: {$meta: "scoreDetails"}}}
+            // We don't grab {$meta: "score"} because we assume any existing scoreDetails already
+            // includes its own score at "scoreDetails.value".
+            addFieldsBob.append(scoreDetails, BSON("$meta" << "scoreDetails"));
+        } else if (inputGeneratesScore) {
+            // If the input pipeline does not generate scoreDetails but does generate a "score" (for
+            // example, a $text query sorted on the text score), we'll build our own scoreDetails
+            // for the pipeline like:
+            // {$addFields: {prefix_scoreDetails: {value: {$meta: "score"}, details: []}}}
+            addFieldsBob.append(
+                scoreDetails,
+                BSON("value" << BSON("$meta" << "score") << "details" << BSONArrayBuilder().arr()));
+        } else {
+            // If the input pipeline generates neither "score" not "scoreDetails" (for example, a
+            // pipeline with just a $sort), we don't have any interesting information to include in
+            // scoreDetails (rank is added later). We'll still build empty scoreDetails to
+            // reflect that:
+            // {$addFields: {prefix_scoreDetails: {details: []}}}
+            addFieldsBob.append(scoreDetails, BSON("details" << BSONArrayBuilder().arr()));
+        }
+    }
+    const auto spec = bob.obj();
+    return DocumentSourceAddFields::createFromBson(spec.firstElement(), expCtx);
+}
+
 std::list<boost::intrusive_ptr<DocumentSource>> buildFirstPipelineStages(
-    const std::string& prefixOne,
+    const StringData prefixOne,
     const int rankConstant,
     const double weight,
     const bool includeScoreDetails,
@@ -431,7 +255,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> buildFirstPipelineStages(
         addScoreField(expCtx, prefixOne, rankConstant, weight),
     };
     if (includeScoreDetails) {
-        outputStages.push_back(hybrid_scoring_util::score_details::addScoreDetails(
+        outputStages.push_back(addInputPipelineScoreDetails(
             expCtx, prefixOne, inputGeneratesScore, inputGeneratesScoreDetails));
     }
     return outputStages;
@@ -528,16 +352,36 @@ boost::intrusive_ptr<DocumentSource> buildUnionWithPipeline(
     oneInputPipeline->pushBack(setWindowFields(expCtx, fmt::format("{}_rank", prefix)));
     oneInputPipeline->pushBack(addScoreField(expCtx, prefix, rankConstant, weight));
     if (includeScoreDetails) {
-        oneInputPipeline->pushBack(hybrid_scoring_util::score_details::addScoreDetails(
+        oneInputPipeline->pushBack(addInputPipelineScoreDetails(
             expCtx, prefix, inputGeneratesScore, inputGeneratesScoreDetails));
     }
     std::vector<BSONObj> bsonPipeline = oneInputPipeline->serializeToBson();
 
-    auto collName = expCtx->getNamespaceString().coll();
+    auto collName = expCtx->getUserNss().coll();
 
     BSONObj inputToUnionWith =
         BSON("$unionWith" << BSON("coll" << collName << "pipeline" << bsonPipeline));
     return DocumentSourceUnionWith::createFromBson(inputToUnionWith.firstElement(), expCtx);
+}
+
+/**
+ * Constuct the scoreDetails metadata object. Looks like the following:
+ * { "$setMetadata": {"scoreDetails": {"value": "$score", "description":
+ * {"scoreDetailsDescription..."}, "details": "$calculatedScoreDetails"}}},
+ */
+boost::intrusive_ptr<DocumentSource> constructScoreDetailsMetadata(
+    const std::string& scoreDetailsDescription,
+    const boost::intrusive_ptr<ExpressionContext>& expCtx) {
+    boost::intrusive_ptr<DocumentSource> setScoreDetails = DocumentSourceSetMetadata::create(
+        expCtx,
+        Expression::parseObject(expCtx.get(),
+                                BSON("value" << "$score"
+                                             << "description" << scoreDetailsDescription
+                                             << "details"
+                                             << "$calculatedScoreDetails"),
+                                expCtx->variablesParseState),
+        DocumentMetadataFields::kScoreDetails);
+    return setScoreDetails;
 }
 
 std::list<boost::intrusive_ptr<DocumentSource>> buildScoreAndMergeStages(
@@ -565,9 +409,9 @@ std::list<boost::intrusive_ptr<DocumentSource>> buildScoreAndMergeStages(
     if (includeScoreDetails) {
         boost::intrusive_ptr<DocumentSource> addFieldsDetails =
             hybrid_scoring_util::score_details::constructCalculatedFinalScoreDetails(
-                inputPipelines, weights, expCtx);
-        auto setScoreDetails = hybrid_scoring_util::score_details::constructScoreDetailsMetadata(
-            rankFusionScoreDetailsDescription, expCtx);
+                inputPipelines, weights, true, expCtx);
+        auto setScoreDetails =
+            constructScoreDetailsMetadata(rankFusionScoreDetailsDescription, expCtx);
         return {group, addFields, addFieldsDetails, setScoreDetails, sort, restoreUserDocs};
     }
     // TODO SERVER-85426: Remove this check once all feature flags have been removed.
@@ -585,16 +429,18 @@ std::unique_ptr<DocumentSourceRankFusion::LiteParsed> DocumentSourceRankFusion::
     const NamespaceString& nss, const BSONElement& spec, const LiteParserOptions& options) {
     uassert(ErrorCodes::FailedToParse,
             str::stream() << kStageName << " must take a nested object but found: " << spec,
-            spec.type() == BSONType::Object);
+            spec.type() == BSONType::object);
 
     auto parsedSpec = RankFusionSpec::parse(IDLParserContext(kStageName), spec.embeddedObject());
     auto inputPipesObj = parsedSpec.getInput().getPipelines();
 
     // Ensure that all pipelines are valid ranked selection pipelines.
     std::vector<LiteParsedPipeline> liteParsedPipelines;
-    for (const auto& elem : inputPipesObj) {
-        liteParsedPipelines.emplace_back(nss, parsePipelineFromBSON(elem));
-    }
+    std::transform(
+        inputPipesObj.begin(),
+        inputPipesObj.end(),
+        std::back_inserter(liteParsedPipelines),
+        [nss](const auto& elem) { return LiteParsedPipeline(nss, parsePipelineFromBSON(elem)); });
 
     return std::make_unique<DocumentSourceRankFusion::LiteParsed>(
         spec.fieldName(), nss, std::move(liteParsedPipelines));
@@ -606,7 +452,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
             str::stream() << "The " << kStageName
                           << " stage specification must be an object, found "
                           << typeName(elem.type()),
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
 
     // It is currently necessary to annotate on the ExpressionContext that this is a $rankFusion
     // query. Once desugaring happens, there's no way to identity from the (desugared) pipeline
@@ -622,8 +468,10 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
     std::map<std::string, std::unique_ptr<Pipeline, PipelineDeleter>> inputPipelines;
     // Ensure that all pipelines are valid ranked selection pipelines.
     for (const auto& elem : spec.getInput().getPipelines()) {
-        auto pipeline = Pipeline::parse(parsePipelineFromBSON(elem), pExpCtx);
-        rankFusionPipelineValidator(*pipeline);
+        auto bsonPipeline = parsePipelineFromBSON(elem);
+        rankFusionBsonPipelineValidator(bsonPipeline);
+
+        auto pipeline = Pipeline::parse(bsonPipeline, pExpCtx);
 
         auto inputName = elem.fieldName();
         uassertStatusOKWithContext(
@@ -637,7 +485,13 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
         inputPipelines[inputName] = std::move(pipeline);
     }
 
-    StringMap<double> weights = extractAndValidateWeights(spec, inputPipelines);
+    StringMap<double> weights;
+    // If RankFusionCombinationSpec has no value (no weights specified), no work to do.
+    const auto& combinationSpec = spec.getCombination();
+    if (combinationSpec.has_value()) {
+        weights = hybrid_scoring_util::validateWeights(
+            combinationSpec->getWeights(), inputPipelines, rankFusionStageName);
+    }
 
     // For now, the rankConstant is always 60.
     static const double rankConstant = 60;
@@ -661,10 +515,10 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
         // If not, the default is one.
         double pipelineWeight = hybrid_scoring_util::getPipelineWeight(weights, name);
 
-        // TODO SERVER-100754 Replace isScoredPipeline() with generatesMetadataType(kScore)
         // We need to know if the pipeline generates "score" and "scoreDetails" metadata so we know
         // how to construct each pipeline's individual "scoreDetails" (see addScoreDetails()).
-        const bool inputGeneratesScore = hybrid_scoring_util::isScoredPipeline(*pipeline);
+        const bool inputGeneratesScore =
+            pipeline->generatesMetadataType(DocumentMetadataFields::kScore);
         const bool inputGeneratesScoreDetails =
             pipeline->generatesMetadataType(DocumentMetadataFields::kScoreDetails);
 
@@ -673,7 +527,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
             makeSureSortKeyIsOutput(pipeline->getSources());
 
 
-            while (!pipeline->getSources().empty()) {
+            while (!pipeline->empty()) {
                 outputStages.push_back(pipeline->popFront());
             }
             auto firstPipelineStages = buildFirstPipelineStages(name,
@@ -683,9 +537,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
                                                                 inputGeneratesScore,
                                                                 inputGeneratesScoreDetails,
                                                                 pExpCtx);
-            for (const auto& stage : firstPipelineStages) {
-                outputStages.push_back(std::move(stage));
-            }
+            outputStages.splice(outputStages.end(), std::move(firstPipelineStages));
         } else {
             auto unionWithStage = buildUnionWithPipeline(name,
                                                          rankConstant,
@@ -702,9 +554,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> DocumentSourceRankFusion::create
     // Build all remaining stages to perform the fusion.
     auto finalStages =
         buildScoreAndMergeStages(inputPipelines, weights, includeScoreDetails, pExpCtx);
-    for (const auto& stage : finalStages) {
-        outputStages.push_back(stage);
-    }
+    outputStages.splice(outputStages.end(), std::move(finalStages));
 
     return outputStages;
 }

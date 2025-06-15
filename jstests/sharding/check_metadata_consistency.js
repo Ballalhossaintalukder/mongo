@@ -9,6 +9,7 @@
 import {configureFailPoint} from "jstests/libs/fail_point_util.js";
 import {FeatureFlagUtil} from "jstests/libs/feature_flag_util.js";
 import {ShardingTest} from "jstests/libs/shardingtest.js";
+import {findChunksUtil} from "jstests/sharding/libs/find_chunks_util.js";
 
 // Configure initial sharding cluster
 const st = new ShardingTest({});
@@ -89,12 +90,6 @@ function assertCollectionAuxiliaryMetadataMismatch(inconsistencies, expectedMeta
                tojson(expectedMetadataWithShards) + ", but got " + tojson(inconsistencies));
 }
 
-// TODO SERVER-77915 We can get rid of isTrackedByConfigServer method once all unsharded collections
-// are being tracked by the config server
-function isTrackedByConfigServer(nss) {
-    return configDB.collections.countDocuments({_id: nss}, {limit: 1}) !== 0;
-}
-
 function isFcvGraterOrEqualTo(fcvRequired) {
     // Requires all primary shard nodes to be running the fcvRequired version.
     let isFcvGreater = true;
@@ -173,12 +168,14 @@ function isFcvGraterOrEqualTo(fcvRequired) {
     let inconsistencies = db.checkMetadataConsistency().toArray();
     assert.eq(1, inconsistencies.length, tojson(inconsistencies));
     assert.eq("CollectionUUIDMismatch", inconsistencies[0].type, tojson(inconsistencies[0]));
+    assert.eq(1, inconsistencies[0].details.numDocs, tojson(inconsistencies[0]));
 
     // Collection level mode command
     const collInconsistencies = db.coll.checkMetadataConsistency().toArray();
     assert.eq(1, collInconsistencies.length);
     assert.eq(
         "CollectionUUIDMismatch", collInconsistencies[0].type, tojson(collInconsistencies[0]));
+    assert.eq(1, collInconsistencies[0].details.numDocs, tojson(inconsistencies[0]));
 
     // Clean up the database to pass the hooks that detect inconsistencies
     db.dropDatabase();
@@ -198,11 +195,13 @@ function isFcvGraterOrEqualTo(fcvRequired) {
     let inconsistencies = db.checkMetadataConsistency().toArray();
     assert.eq(1, inconsistencies.length, tojson(inconsistencies));
     assert.eq("MisplacedCollection", inconsistencies[0].type, tojson(inconsistencies[0]));
+    assert.eq(1, inconsistencies[0].details.numDocs, tojson(inconsistencies[0]));
 
     // Collection level mode command
     const collInconsistencies = db.coll.checkMetadataConsistency().toArray();
     assert.eq(1, collInconsistencies.length, tojson(inconsistencies));
     assert.eq("MisplacedCollection", collInconsistencies[0].type, tojson(inconsistencies[0]));
+    assert.eq(1, collInconsistencies[0].details.numDocs, tojson(inconsistencies[0]));
 
     // Clean up the database to pass the hooks that detect inconsistencies
     db.dropDatabase();
@@ -235,6 +234,115 @@ function isFcvGraterOrEqualTo(fcvRequired) {
     db.dropDatabase();
     assertNoInconsistencies();
 })();
+
+if (FeatureFlagUtil.isPresentAndEnabled(st.s, "CheckRangeDeletionsWithMissingShardKeyIndex")) {
+    (function testRangeDeletionWithMissingRangedShardKeyInconsistency() {
+        jsTest.log("Executing testRangeDeletionWithMissingRangedShardKeyInconsistency");
+        // Check inconsistencies in case one shard does not own a chunk but has an outstanding range
+        // deletion, and one shard own two chunks with no outstanding range deletions
+
+        const db = getNewDb();
+        const dbName = db.getName();
+        const kSourceCollName = "coll";
+        const ns = dbName + "." + kSourceCollName;
+
+        // Enable the range deletion indexes checks
+        const checkOptions = {'checkRangeDeletionIndexes': 1};
+
+        // Enforce dbPrimary to be shard0 (first chunk is on shard0 is granted)
+        assert.commandWorked(
+            st.s.adminCommand({enableSharding: dbName, primaryShard: st.shard0.shardName}));
+
+        st.shardColl(
+            kSourceCollName, {skey: 1}, {skey: 0}, {skey: 1}, dbName, true /* waitForDelete */);
+
+        // Suspend range deletions
+        let suspendRangeDeletionShard0 = configureFailPoint(st.shard0, "suspendRangeDeletion");
+
+        // Move one chunk to create an orphaned range on shard0 (donor)
+        assert.commandWorked(
+            st.s.adminCommand({moveChunk: ns, find: {skey: -10}, to: st.shard1.shardName}));
+
+        // Connect directly to shards to bypass the mongos checks for dropping shard key indexes
+        assert.commandWorked(st.shard0.getDB(dbName).coll.dropIndex({skey: 1}));
+        assert.commandWorked(st.shard1.getDB(dbName).coll.dropIndex({skey: 1}));
+        assert.commandWorked(st.s.getDB(dbName).coll.insert({skey: -10}));
+        assert.commandWorked(st.s.getDB(dbName).coll.insert({skey: 10}));
+
+        // Check inconsistencies
+        let inconsistencies = db.checkMetadataConsistency(checkOptions).toArray();
+        assert.eq(2, inconsistencies.length, tojson(inconsistencies));
+        const incTypes = inconsistencies.map(inconsistency => inconsistency.type);
+        const correctIncTypes = incTypes.includes("MissingShardKeyIndex") &&
+            incTypes.includes("RangeDeletionMissingShardKeyIndex");
+        assert.eq(true, correctIncTypes, tojson(inconsistencies));
+
+        // Clean up the database to pass the hooks that detect inconsistencies
+        db.dropDatabase();
+        assertNoInconsistencies();
+
+        // Turn off fail point
+        suspendRangeDeletionShard0.off();
+    })();
+
+    (function testRangeDeletionWithMissingHashedShardKeyInconsistency() {
+        jsTest.log("Executing testRangeDeletionWithMissingHashedShardKeyInconsistency");
+
+        const db = getNewDb();
+        const dbName = db.getName();
+        const kSourceCollName = "coll";
+        const ns = dbName + "." + kSourceCollName;
+
+        // Enable the range deletion indexes checks
+        const checkOptions = {'checkRangeDeletionIndexes': 1};
+
+        st.shardColl(kSourceCollName, {skey: "hashed"}, false, false, dbName, false);
+
+        // Insert some documents into the collection
+        const numDocs = 100;
+        let bulk = db.getCollection(kSourceCollName).initializeUnorderedBulkOp();
+        for (let i = 0; i < numDocs; i++) {
+            bulk.insert({skey: i});
+        }
+        assert.commandWorked(bulk.execute());
+
+        // Check inconsistencies in case one shard owns a chunk and has a outstanding range
+        // deletion, and one shard owns two chunks and has no outstanding range deletions
+        let suspendRangeDeletionShard0 = configureFailPoint(st.shard0, "suspendRangeDeletion");
+        let chunk0 =
+            findChunksUtil.findOneChunkByNs(st.s.getDB('config'), ns, {shard: st.shard0.shardName});
+        assert.commandWorked(db.adminCommand({split: ns, bounds: [chunk0.min, chunk0.max]}));
+        let halfChunk =
+            findChunksUtil.findOneChunkByNs(st.s.getDB('config'), ns, {shard: st.shard0.shardName});
+        assert.commandWorked(db.adminCommand(
+            {moveChunk: ns, bounds: [halfChunk.min, halfChunk.max], to: st.shard1.shardName}));
+        assert.commandWorked(st.shard0.getDB(dbName).coll.dropIndex({skey: "hashed"}));
+
+        let inc0 = db.checkMetadataConsistency(checkOptions).toArray();
+        assert.eq(1, inc0.length, tojson(inc0));
+        assert.eq("RangeDeletionMissingShardKeyIndex", inc0[0].type, tojson(inc0[0]));
+
+        // Check inconsistencies in case one shard does not own chunks and has outstanding range
+        // deletions, and one shard owns two chunks and has no outstanding range deletions
+        assert.commandWorked(st.shard0.getDB(dbName).coll.createIndex({skey: "hashed"}));
+        halfChunk =
+            findChunksUtil.findOneChunkByNs(st.s.getDB('config'), ns, {shard: st.shard0.shardName});
+        assert.commandWorked(db.adminCommand(
+            {moveChunk: ns, bounds: [halfChunk.min, halfChunk.max], to: st.shard1.shardName}));
+        assert.commandWorked(st.shard0.getDB(dbName).coll.dropIndex({skey: "hashed"}));
+
+        let inc1 = db.checkMetadataConsistency(checkOptions).toArray();
+        assert.eq(1, inc1.length, tojson(inc1));
+        assert.eq("RangeDeletionMissingShardKeyIndex", inc1[0].type, tojson(inc1[0]));
+
+        // Clean up the database to pass the hooks that detect inconsistencies
+        db.dropDatabase();
+        assertNoInconsistencies();
+
+        // Turn off fail point
+        suspendRangeDeletionShard0.off();
+    })();
+}
 
 (function testMissingIndex() {
     jsTest.log("Executing testMissingIndex");
@@ -641,17 +749,15 @@ function isFcvGraterOrEqualTo(fcvRequired) {
     const localCollation = db.getCollectionInfos({name: kSourceCollName})[0].options.collation;
     assertNoInconsistencies();
 
-    if (!isTrackedByConfigServer(kNss)) {
-        // Shard the collection to make it tracked.
-        // Note: we need to specify a simple collation on shardCollection command to make clear that
-        // chunks will be sorted using a simple collation, however, the default collation for the
-        // collection is preserved to {'locale':'ca'}.
-        assert.commandWorked(
-            db.adminCommand({shardCollection: kNss, key: {x: 1}, collation: {locale: "simple"}}));
+    // Shard the collection to make it tracked.
+    // Note: we need to specify a simple collation on shardCollection command to make clear that
+    // chunks will be sorted using a simple collation, however, the default collation for the
+    // collection is preserved to {'locale':'ca'}.
+    assert.commandWorked(
+        db.adminCommand({shardCollection: kNss, key: {x: 1}, collation: {locale: "simple"}}));
 
-        const no_inconsistency = db.checkMetadataConsistency().toArray();
-        assert.eq(0, no_inconsistency.length);
-    }
+    const no_inconsistency = db.checkMetadataConsistency().toArray();
+    assert.eq(0, no_inconsistency.length);
 
     // Update the default collation on the sharding catalog only and catch the inconsistency.
     assert.commandWorked(
@@ -685,37 +791,32 @@ function isFcvGraterOrEqualTo(fcvRequired) {
     assert.commandWorked(db.runCommand({create: kSourceCollName, capped: true, size: 1000}));
     assertNoInconsistencies();
 
-    if (isTrackedByConfigServer(kNss)) {
-        configDB.collections.update({_id: kNss}, {$set: {unsplittable: false}});
+    // Register another collection as sharded to be able to get a config.collections document as
+    // a reference.
+    const kNssSharded = db.getName() + ".sharded_collection";
+    assert.commandWorked(db.adminCommand({shardCollection: kNssSharded, key: {_id: 1}}));
 
-    } else {
-        // Register another collection as sharded to be able to get a config.collections document as
-        // a reference.
-        const kNssSharded = db.getName() + ".sharded_collection";
-        assert.commandWorked(db.adminCommand({shardCollection: kNssSharded, key: {_id: 1}}));
+    let collEntry = configDB.collections.findOne({_id: kNssSharded});
+    const shardedCollUuid = collEntry.uuid;
 
-        let collEntry = configDB.collections.findOne({_id: kNssSharded});
-        const shardedCollUuid = collEntry.uuid;
+    // Insert a new collection into config.collections with the nss and uuid from the unsharded
+    // capped collection previously created.
+    const uuid = db.getCollectionInfos({name: kSourceCollName})[0].info.uuid;
+    collEntry._id = kNss;
+    collEntry.uuid = uuid;
+    configDB.collections.insert(collEntry);
 
-        // Insert a new collection into config.collections with the nss and uuid from the unsharded
-        // capped collection previously created.
-        const uuid = db.getCollectionInfos({name: kSourceCollName})[0].info.uuid;
-        collEntry._id = kNss;
-        collEntry.uuid = uuid;
-        configDB.collections.insert(collEntry);
-
-        // Insert a chunk entry for the tracked unsharded collection.
-        const chunkEntry = {
-            "uuid": uuid,
-            "min": {"_id": MinKey},
-            "max": {"_id": MaxKey},
-            "shard": primaryShard.shardName,
-            "lastmod": Timestamp(0, 1),
-            "onCurrentShardSince": Timestamp(0, 1),
-            "history": [{"validAfter": Timestamp(0, 1), "shard": primaryShard.shardName}]
-        };
-        configDB.chunks.insert(chunkEntry);
-    }
+    // Insert a chunk entry for the tracked unsharded collection.
+    const chunkEntry = {
+        "uuid": uuid,
+        "min": {"_id": MinKey},
+        "max": {"_id": MaxKey},
+        "shard": primaryShard.shardName,
+        "lastmod": Timestamp(0, 1),
+        "onCurrentShardSince": Timestamp(0, 1),
+        "history": [{"validAfter": Timestamp(0, 1), "shard": primaryShard.shardName}]
+    };
+    configDB.chunks.insert(chunkEntry);
 
     // Catch the inconsistency.
     const inconsistencies = db.checkMetadataConsistency().toArray();

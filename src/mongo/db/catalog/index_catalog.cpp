@@ -28,19 +28,18 @@
  */
 
 
-#include <utility>
+#include "mongo/db/catalog/index_catalog.h"
 
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/index_catalog.h"
 #include "mongo/util/assert_util.h"
+
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
 
 namespace mongo {
 using IndexIterator = IndexCatalog::IndexIterator;
-using ReadyIndexesIterator = IndexCatalog::ReadyIndexesIterator;
-using AllIndexesIterator = IndexCatalog::AllIndexesIterator;
 
 bool IndexIterator::more() {
     if (_start) {
@@ -58,40 +57,6 @@ const IndexCatalogEntry* IndexIterator::next() {
     return _prev;
 }
 
-ReadyIndexesIterator::ReadyIndexesIterator(OperationContext* const opCtx,
-                                           IndexCatalogEntryContainer::const_iterator beginIterator,
-                                           IndexCatalogEntryContainer::const_iterator endIterator)
-    : _opCtx(opCtx), _iterator(beginIterator), _endIterator(endIterator) {}
-
-const IndexCatalogEntry* ReadyIndexesIterator::_advance() {
-    while (_iterator != _endIterator) {
-        const IndexCatalogEntry* entry = _iterator->get();
-        ++_iterator;
-        return entry;
-    }
-
-    return nullptr;
-}
-
-AllIndexesIterator::AllIndexesIterator(
-    OperationContext* const opCtx,
-    std::unique_ptr<std::vector<const IndexCatalogEntry*>> ownedContainer)
-    : _opCtx(opCtx), _ownedContainer(std::move(ownedContainer)) {
-    // Explicitly order calls onto the ownedContainer with respect to its move.
-    _iterator = _ownedContainer->begin();
-    _endIterator = _ownedContainer->end();
-}
-
-const IndexCatalogEntry* AllIndexesIterator::_advance() {
-    if (_iterator == _endIterator) {
-        return nullptr;
-    }
-
-    const IndexCatalogEntry* entry = *_iterator;
-    ++_iterator;
-    return entry;
-}
-
 StringData toString(IndexBuildMethod method) {
     switch (method) {
         case IndexBuildMethod::kHybrid:
@@ -100,7 +65,7 @@ StringData toString(IndexBuildMethod method) {
             return "Foreground"_sd;
     }
 
-    MONGO_UNREACHABLE;
+    MONGO_UNREACHABLE_TASSERT(10083503);
 }
 
 // Returns normalized versions of 'indexSpecs' for the catalog.

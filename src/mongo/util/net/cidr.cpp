@@ -30,7 +30,6 @@
 #include "mongo/util/net/cidr.h"
 
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/platform/basic.h"
 
 #ifdef _WIN32
 #include <Ws2tcpip.h>
@@ -89,7 +88,7 @@ T& append(T& s, int family, const std::array<uint8_t, 16> ip, int len) {
 }  // namespace
 
 StatusWith<CIDR> CIDR::parse(BSONElement from) {
-    if (from.type() != String) {
+    if (from.type() != BSONType::string) {
         return {ErrorCodes::UnsupportedFormat, "CIDR range must be a string"};
     }
     return parse(from.valueStringData());
@@ -98,7 +97,7 @@ StatusWith<CIDR> CIDR::parse(BSONElement from) {
 StatusWith<CIDR> CIDR::parse(StringData s) {
     CIDR value;
     auto slash = find(begin(s), end(s), '/');
-    auto ip = (slash == end(s)) ? s.toString() : s.substr(0, slash - begin(s)).toString();
+    auto ip = (slash == end(s)) ? std::string{s} : std::string{s.substr(0, slash - begin(s))};
 
     if (inet_pton(AF_INET, ip.c_str(), value._ip.data())) {
         value._family = AF_INET;

@@ -27,17 +27,18 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/document_source_sequential_document_cache.h"
+
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/pipeline/dependencies.h"
+#include "mongo/db/pipeline/search/document_source_search.h"
+
 #include <iterator>
 #include <list>
 #include <utility>
 
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/pipeline/dependencies.h"
-#include "mongo/db/pipeline/document_source_sequential_document_cache.h"
-#include "mongo/db/pipeline/search/document_source_search.h"
 
 namespace mongo {
 
@@ -47,7 +48,7 @@ constexpr StringData DocumentSourceSequentialDocumentCache::kStageName;
 
 DocumentSourceSequentialDocumentCache::DocumentSourceSequentialDocumentCache(
     const boost::intrusive_ptr<ExpressionContext>& expCtx, SequentialDocumentCache* cache)
-    : DocumentSource(kStageName, expCtx), _cache(cache) {
+    : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx), _cache(cache) {
     invariant(_cache);
 
     if (_cache->isServing()) {
@@ -172,7 +173,8 @@ Pipeline::SourceContainer::iterator DocumentSourceSequentialDocumentCache::doOpt
     if (_cache->isServing()) {
         // Need to dispose last stage to be removed.
         Pipeline::stitch(container);
-        lastPtr->dispose();
+        auto& source = dynamic_cast<exec::agg::Stage&>(*lastPtr);
+        source.dispose();
         container->erase(container->begin(), prefixSplit);
     }
 

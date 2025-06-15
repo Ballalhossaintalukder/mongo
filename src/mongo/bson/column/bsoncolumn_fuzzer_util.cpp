@@ -28,8 +28,12 @@
  */
 
 #include "mongo/bson/column/bsoncolumn_fuzzer_util.h"
+
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/column/simple8b_helpers.h"
+#include "mongo/bson/column/simple8b_type_util.h"
+
+#include <absl/numeric/int128.h>
 
 namespace mongo::bsoncolumn {
 
@@ -272,26 +276,30 @@ bool generateBufNoNuls(const char*& ptr, const char* end, const char* buf, size_
  *         bound total depth
  * return - true if successful, false if fuzzer input is invalid
  */
+
+// helpers to safely read one byte from [ptr, end)
+#define READ_BYTE(ptr, end, out, arithmetic) \
+    if (ptr >= end)                          \
+        return false;                        \
+    uint8_t out = *ptr arithmetic;           \
+    ptr++;
+
 bool createFuzzedElement(const char*& ptr,
                          const char* end,
                          std::forward_list<BSONObj>& elementMemory,
                          int& repetition,
                          BSONElement& result,
                          size_t depth) {
-    if (ptr >= end)
-        return false;
-
     // Interpret first byte as a BSONType inclusively
     // Valid types range from -1 to 19 and 127
-    uint8_t typeRun = *ptr;
-    ptr++;
+    READ_BYTE(ptr, end, typeRun, );
     // There are 22 distinct types, interpret every possible value as one of them
     uint8_t typeMagnitude = typeRun % 22;
     BSONType type = typeMagnitude <= 19 ? static_cast<BSONType>(typeMagnitude)
                                         :  // EOO - NumberDecimal
-        typeMagnitude == 20 ? BSONType::MaxKey
+        typeMagnitude == 20 ? BSONType::maxKey
                             :  // reinterpret 20 -> 127
-        BSONType::MinKey;      // reinterpret 21 -> -1
+        BSONType::minKey;      // reinterpret 21 -> -1
     // Use the remainder of the type entropy to represent repetition factor, this helps
     // bias the probability to trigger the RLE encoding more often
     //
@@ -299,35 +307,40 @@ bool createFuzzedElement(const char*& ptr,
     // any or all of +1 (for more 0 deltas), +120 (the minimum amount to create an RLE
     // block), and +(16 * 120) (the maximum amount in an RLE block)
     //
-    // Effectively, this means in a single execution we could create a run of
-    // 1+1+120+(16 * 120) = 2042
-    // More individual variety in how much of each tier we add will come from the fuzzer's
-    // natural variation and random creation of duplicate elements
-    uint8_t repetitionFactor = typeMagnitude / 22;
+    // If we choose to add one of these run types, we will pull another byte to
+    // dictate how many within that order of magnitude to add.
+
+    // repetitionFactor represents a scale of repetition (single, block, max block)
+    // repetitionFactor can go up to 11, 0-8 mean no repetition, this is a bias
+    // towards singletons so as not to have too many runs (each individual element
+    // in a fuzzer input has this chance, so there will be many RLE cases explored)
+    // 9 means we add 0-119 more copies of the element
+    // 10 means we additionally add 0-15 full rle blocks (120 copies each)
+    // 11 means we additionally add 0-9 max rle blocks (120 * 16 copies each)
+    uint8_t repetitionFactor = typeRun / 22;
     repetition = 1;
-    if (repetitionFactor % 2 == 1)  // 1st bit: add one more repetition
-        repetition++;
-    repetitionFactor /= 2;
-    if (repetitionFactor % 2 == 1)  // 2nd bit: add one more rle block
-        repetition += mongo::simple8b_internal::kRleMultiplier;
-    repetitionFactor /= 2;
-    if (repetitionFactor % 2 == 1)  // 3rd bit: add a max rle block
-        repetition +=
-            mongo::simple8b_internal::kRleMultiplier * mongo::simple8b_internal::kMaxRleCount;
+    if (repetitionFactor >= 9) {  // add singletons of repetition
+        READ_BYTE(ptr, end, singles, % 120);
+        repetition += singles;
+    }
+    if (repetitionFactor >= 10) {  // add full rle blocks
+        READ_BYTE(ptr, end, blocks, % 16);
+        repetition += blocks * mongo::simple8b_internal::kRleMultiplier;
+    }
+    if (repetitionFactor >= 11) {  // add max rle blocks
+        READ_BYTE(ptr, end, maxBlocks, % 10)
+        repetition += maxBlocks * mongo::simple8b_internal::kRleMultiplier *
+            mongo::simple8b_internal::kMaxRleCount;
+    }
 
     // Construct a BSONElement based on type.
     size_t len;
     char buf[kMaxBufLength];
     switch (type) {
-        case Array: {
+        case BSONType::array: {
             if (depth >= kRecursionLimit)
                 return false;
-            // Get a count up to 255
-            uint8_t count;
-            if (ptr >= end)
-                return false;
-            count = static_cast<uint8_t>(*ptr);
-            ptr++;
+            READ_BYTE(ptr, end, count, );
 
             UniqueBSONArrayBuilder bab;
             for (uint8_t i = 0; i < count; ++i) {
@@ -343,11 +356,8 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementArray(bab.arr(), elementMemory);
             return true;
         }
-        case BinData: {
-            if (ptr >= end)
-                return false;
-            uint8_t binDataTypeMagnitude = *ptr;
-            ptr++;
+        case BSONType::binData: {
+            READ_BYTE(ptr, end, binDataTypeMagnitude, );
             binDataTypeMagnitude %= 10;
             BinDataType binDataType = binDataTypeMagnitude <= 8
                 ? static_cast<BinDataType>(binDataTypeMagnitude)
@@ -357,13 +367,13 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementBinData(binDataType, &buf[0], len, elementMemory);
             return true;
         }
-        case Code: {
+        case BSONType::code: {
             if (!generateBuf(ptr, end, &buf[0], len))
                 return false;
             result = createElementCode(StringData(buf, len), elementMemory);
             return true;
         }
-        case CodeWScope: {
+        case BSONType::codeWScope: {
             if (depth >= kRecursionLimit)
                 return false;
             if (!generateBuf(ptr, end, &buf[0], len))
@@ -374,7 +384,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createCodeWScope(StringData(buf, len), obj, elementMemory);
             return true;
         }
-        case DBRef: {
+        case BSONType::dbRef: {
             if (!generateBuf(ptr, end, &buf[0], len))
                 return false;
             // Initialize an OID from a 12 byte array
@@ -387,7 +397,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createDBRef(StringData(buf, len), oid, elementMemory);
             return true;
         }
-        case Object: {
+        case BSONType::object: {
             if (depth >= kRecursionLimit)
                 return false;
             BSONObj obj;
@@ -396,7 +406,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementObj(obj, elementMemory);
             return true;
         }
-        case RegEx: {
+        case BSONType::regEx: {
             if (!generateBufNoNuls(ptr, end, &buf[0], len))
                 return false;
             auto patternStr = StringData(buf, len);
@@ -410,26 +420,24 @@ bool createFuzzedElement(const char*& ptr,
             result = createRegex(patternStr, optionsStr, elementMemory);
             return true;
         }
-        case String: {
+        case BSONType::string: {
             if (!generateBuf(ptr, end, &buf[0], len))
                 return false;
             result = createElementString(StringData(buf, len), elementMemory);
             return true;
         }
-        case Symbol: {
+        case BSONType::symbol: {
             if (!generateBuf(ptr, end, &buf[0], len))
                 return false;
             result = createSymbol(StringData(buf, len), elementMemory);
             return true;
         }
-        case Bool: {
-            if (ptr >= end)
-                return false;
-            result = createBool(*ptr % 2 == 1, elementMemory);
-            ptr++;
+        case BSONType::boolean: {
+            READ_BYTE(ptr, end, boolVal, % 2);
+            result = createBool(boolVal == 1, elementMemory);
             return true;
         }
-        case bsonTimestamp: {
+        case BSONType::timestamp: {
             if (static_cast<size_t>(end - ptr) < sizeof(long long))
                 return false;
             long long val;
@@ -439,7 +447,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createTimestamp(timestamp, elementMemory);
             return true;
         }
-        case Date: {
+        case BSONType::date: {
             if (static_cast<size_t>(end - ptr) < sizeof(long long))
                 return false;
             long long millis;
@@ -449,15 +457,15 @@ bool createFuzzedElement(const char*& ptr,
             result = createDate(val, elementMemory);
             return true;
         }
-        case EOO: {
+        case BSONType::eoo: {
             result = BSONElement();
             return true;
         }
-        case jstNULL: {
+        case BSONType::null: {
             result = createNull(elementMemory);
             return true;
         }
-        case jstOID: {
+        case BSONType::oid: {
             // Initialize an OID from a 12 byte array
             if (end - ptr < 12)
                 return false;
@@ -468,15 +476,15 @@ bool createFuzzedElement(const char*& ptr,
             result = createObjectId(val, elementMemory);
             return true;
         }
-        case MaxKey: {
+        case BSONType::maxKey: {
             result = createElementMaxKey(elementMemory);
             return true;
         }
-        case MinKey: {
+        case BSONType::minKey: {
             result = createElementMinKey(elementMemory);
             return true;
         }
-        case NumberDecimal: {
+        case BSONType::numberDecimal: {
             // Initialize a Decimal128 from parts
             if (static_cast<size_t>(end - ptr) < 4 * sizeof(uint64_t))
                 return false;
@@ -495,7 +503,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementDecimal128(val, elementMemory);
             return true;
         }
-        case NumberDouble: {
+        case BSONType::numberDouble: {
             if (static_cast<size_t>(end - ptr) < sizeof(double))
                 return false;
             double val;
@@ -504,7 +512,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementDouble(val, elementMemory);
             return true;
         }
-        case NumberInt: {
+        case BSONType::numberInt: {
             if (static_cast<size_t>(end - ptr) < sizeof(int32_t))
                 return false;
             int32_t val;
@@ -513,7 +521,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementInt32(val, elementMemory);
             return true;
         }
-        case NumberLong: {
+        case BSONType::numberLong: {
             if (static_cast<size_t>(end - ptr) < sizeof(int64_t))
                 return false;
             int64_t val;
@@ -522,7 +530,7 @@ bool createFuzzedElement(const char*& ptr,
             result = createElementInt64(val, elementMemory);
             return true;
         }
-        case Undefined: {
+        case BSONType::undefined: {
             result = createUndefined(elementMemory);
             return true;
         }
@@ -548,11 +556,7 @@ bool createFuzzedObj(const char*& ptr,
                      BSONObj& result,
                      size_t depth) {
     // Use branching factor of objects of up to 255
-    uint8_t count;
-    if (ptr >= end)
-        return false;
-    count = static_cast<uint8_t>(*ptr);
-    ptr++;
+    READ_BYTE(ptr, end, count, );
 
     BSONObjBuilder bob;
     for (uint8_t i = 0; i < count; ++i) {
@@ -578,6 +582,213 @@ bool createFuzzedObj(const char*& ptr,
     }
     bob.done();
     result = bob.obj();
+    return true;
+}
+
+/* Fill in BSONElement(s) into a generated elements vector, with repetition,
+ * respecting delta, delta-of-delta, and string/binary encodings as appropriate.
+ * Uses fuzzer input to determine delta spacing as needed
+ *
+ * ptr - pointer into the original fuzzer input, will be advanced
+ * end - end of the original fuzzer input
+ * elementMemory - needs to stay in scope for the lifetime of when we expect
+ *                 generated elements to remain valid
+ * element - the element to populate with
+ * repetition - the number of elements to add
+ * generatedElements - vector to receive results
+ * return - true if successful, false if fuzzer input is invalid
+ */
+
+bool addFuzzedElements(const char*& ptr,
+                       const char* end,
+                       std::forward_list<BSONObj>& elementMemory,
+                       BSONElement element,
+                       int repetition,
+                       std::vector<BSONElement>& generatedElements) {
+
+    auto process_delta_run = [&]<typename T, typename Create>(T val, const Create& create) {
+        T maxVal = -1 + (1 << (sizeof(T) - 1));
+        T minVal = 1 - (1 << (sizeof(T) - 1));
+        // use fuzzed byte as a fractional delta increase, 0 means no delta
+        READ_BYTE(ptr, end, factor, );
+        T delta = val / 255 * factor;
+        for (int i = 1; i < repetition; ++i) {
+            if (delta > 0) {
+                if (val > maxVal - delta)
+                    return false;
+            } else {
+                if (val < minVal - delta)
+                    return false;
+            }
+            val += delta;
+            auto runElement = create(val, elementMemory);
+            generatedElements.push_back(runElement);
+        }
+        return true;
+    };
+
+    auto process_delta_of_delta_run = [&]<typename T, typename Create>(T val,
+                                                                       const Create& create) {
+        T maxVal = -1 + (1 << (sizeof(T) - 1));
+        T minVal = 1 - (1 << (sizeof(T) - 1));
+        // use fuzzed byte as a fractional delta increase, 0 means no delta
+        READ_BYTE(ptr, end, factor, );
+        T delta = val / 255 * factor;
+        T deltaOfDelta = delta;
+        for (int i = 1; i < repetition; ++i) {
+            if (delta > 0) {
+                if (val > maxVal - delta)
+                    return false;
+            } else {
+                if (val < minVal - delta)
+                    return false;
+            }
+            val += delta;
+            delta += deltaOfDelta;
+            auto runElement = create(val, elementMemory);
+            generatedElements.push_back(runElement);
+        }
+        return true;
+    };
+
+    auto process_delta_of_buffer_run = [&]<typename Create>(boost::optional<int128_t>& encodedVal,
+                                                            const Create& create) {
+        if (!encodedVal) {
+            // Don't bother with delta encoding, only exercise 0-delta repeats
+            for (int i = 1; i < repetition; ++i)
+                generatedElements.push_back(element);
+        } else {
+            int128_t encoding = encodedVal.get();
+            READ_BYTE(ptr, end, factor, );
+            int128_t delta = encoding / 255 * factor;
+            for (int i = 1; i < repetition; ++i) {
+                if (delta > 0) {
+                    if (encoding > absl::Int128Max() - delta)
+                        return false;
+                } else {
+                    if (encoding > absl::Int128Min() - delta)
+                        return false;
+                }
+                encoding += delta;
+                auto smallString = Simple8bTypeUtil::decodeString(encoding);
+                auto runElement = create(smallString, elementMemory);
+                generatedElements.push_back(runElement);
+            }
+        }
+        return true;
+    };
+
+    generatedElements.push_back(element);
+    if (repetition > 1) {
+        switch (element.type()) {
+            case BSONType::numberDouble: {
+                double doubleVal = element.Double();
+                boost::optional<int64_t> val;
+                uint8_t scale = 0;
+                for (; !val; ++scale) {
+                    val = Simple8bTypeUtil::encodeDouble(doubleVal, scale);
+                }
+                scale--;
+                if (!process_delta_run(
+                        val.get(), [&](int64_t v, std::forward_list<BSONObj>& elMem) {
+                            double doubleV = Simple8bTypeUtil::decodeDouble(v, scale);
+                            return mongo::bsoncolumn::createElementDouble(doubleV, elMem);
+                        }))
+                    return false;
+                break;
+            }
+            case BSONType::numberInt: {
+                int32_t val = element.Int();
+                if (!process_delta_run(val, mongo::bsoncolumn::createElementInt32))
+                    return false;
+                break;
+            }
+            case BSONType::numberLong: {
+                int64_t val = element.Long();
+                if (!process_delta_run(val, mongo::bsoncolumn::createElementInt64))
+                    return false;
+                break;
+            }
+            case BSONType::string: {
+                std::string val = element.str();
+                boost::optional<int128_t> encodedVal = Simple8bTypeUtil::encodeString(val);
+                if (!process_delta_of_buffer_run(encodedVal,
+                                                 [&](mongo::Simple8bTypeUtil::SmallString ss,
+                                                     std::forward_list<BSONObj>& elMem) {
+                                                     return mongo::bsoncolumn::createElementString(
+                                                         StringData(ss.str.data(), ss.size), elMem);
+                                                 }))
+                    return false;
+                break;
+            }
+            case BSONType::code: {
+                std::string val = element._asCode();
+                boost::optional<int128_t> encodedVal = Simple8bTypeUtil::encodeString(val);
+                if (!process_delta_of_buffer_run(encodedVal,
+                                                 [&](mongo::Simple8bTypeUtil::SmallString ss,
+                                                     std::forward_list<BSONObj>& elMem) {
+                                                     return mongo::bsoncolumn::createElementCode(
+                                                         StringData(ss.str.data(), ss.size), elMem);
+                                                 }))
+                    return false;
+                break;
+            }
+            case BSONType::binData: {
+                int len;
+                const char* val = element.binData(len);
+                boost::optional<int128_t> encodedVal =
+                    Simple8bTypeUtil::encodeString(StringData(val, len));
+                if (!process_delta_of_buffer_run(
+                        encodedVal,
+                        [&](mongo::Simple8bTypeUtil::SmallString ss,
+                            std::forward_list<BSONObj>& elMem) {
+                            BinDataType binDataType = element.binDataType();
+                            return mongo::bsoncolumn::createElementBinData(
+                                binDataType, ss.str.data(), ss.size, elMem);
+                        }))
+                    return false;
+                break;
+            }
+            case BSONType::oid: {
+                int64_t val = Simple8bTypeUtil::encodeObjectId(element.OID());
+                if (!process_delta_of_delta_run(val,
+                                                [&](int64_t v, std::forward_list<BSONObj>& elMem) {
+                                                    return mongo::bsoncolumn::createObjectId(
+                                                        Simple8bTypeUtil::decodeObjectId(
+                                                            v, element.__oid().getInstanceUnique()),
+                                                        elMem);
+                                                }))
+                    return false;
+                break;
+            }
+            case BSONType::date: {
+                long long val = element.date().toMillisSinceEpoch();
+                if (!process_delta_of_delta_run(
+                        val, [&](long long v, std::forward_list<BSONObj>& elMem) {
+                            return mongo::bsoncolumn::createDate(Date_t::fromMillisSinceEpoch(v),
+                                                                 elMem);
+                        }))
+                    return false;
+                break;
+            }
+            case BSONType::timestamp: {
+                long long val = element.timestampValue();
+                if (!process_delta_of_delta_run(
+                        val, [&](long long v, std::forward_list<BSONObj>& elMem) {
+                            Timestamp timestamp(v);
+                            return mongo::bsoncolumn::createTimestamp(timestamp, elMem);
+                        }))
+                    return false;
+                break;
+            }
+            default: {
+                for (int i = 1; i < repetition; ++i)
+                    generatedElements.push_back(element);
+                break;
+            }
+        }
+    }
+
     return true;
 }
 

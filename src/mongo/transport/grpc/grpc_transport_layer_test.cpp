@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <fcntl.h>
-#include <memory>
-#include <sys/stat.h>
-#include <vector>
-
-#include <boost/filesystem.hpp>
-
 #include "mongo/client/async_client.h"
 #include "mongo/db/server_options.h"
 #include "mongo/logv2/log.h"
@@ -62,6 +55,14 @@
 #include "mongo/util/net/ssl_options.h"
 #include "mongo/util/periodic_runner_factory.h"
 #include "mongo/util/scopeguard.h"
+
+#include <memory>
+#include <vector>
+
+#include <fcntl.h>
+
+#include <boost/filesystem.hpp>
+#include <sys/stat.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -766,8 +767,8 @@ public:
                                      grpc::CommandServiceTestFixtures::kClientCertificateKeyFile,
                                      "grpc");
 
-        sslGlobalParams.sslCAFile = _tempDir->getCAFile().toString();
-        sslGlobalParams.sslPEMKeyFile = _tempDir->getPEMKeyFile().toString();
+        sslGlobalParams.sslCAFile = std::string{_tempDir->getCAFile()};
+        sslGlobalParams.sslPEMKeyFile = std::string{_tempDir->getPEMKeyFile()};
     }
 
     const test::TempCertificatesDir& getCertificatesDir() const {
@@ -812,10 +813,10 @@ TEST_F(RotateCertificatesGRPCTransportLayerTest, RotateCertificatesSucceeds) {
 
             // Overwrite the tmp files to hold new certs.
             boost::filesystem::copy_file(kTrustedCAFile,
-                                         getCertificatesDir().getCAFile().toString(),
+                                         std::string{getCertificatesDir().getCAFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
             boost::filesystem::copy_file(kTrustedPEMFile,
-                                         getCertificatesDir().getPEMKeyFile().toString(),
+                                         std::string{getCertificatesDir().getPEMKeyFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
 
             ASSERT_OK(tl.rotateCertificates(SSLManagerCoordinator::get()->getSSLManager(), false));
@@ -862,7 +863,7 @@ TEST_F(RotateCertificatesGRPCTransportLayerTest, RotateCertificatesThrowsAndUses
                 CommandServiceTestFixtures::kClientCertificateKeyFile);
             ASSERT_GRPC_STUB_CONNECTED(stub);
 
-            boost::filesystem::resize_file(getCertificatesDir().getCAFile().toString(), 0);
+            boost::filesystem::resize_file(std::string{getCertificatesDir().getCAFile()}, 0);
 
             ASSERT_EQ(
                 tl.rotateCertificates(SSLManagerCoordinator::get()->getSSLManager(), false).code(),
@@ -901,10 +902,10 @@ TEST_F(RotateCertificatesGRPCTransportLayerTest,
 
             // Overwrite the tmp files to hold new, invalid certs.
             boost::filesystem::copy_file(kInvalidPEMFile,
-                                         getCertificatesDir().getPEMKeyFile().toString(),
+                                         std::string{getCertificatesDir().getPEMKeyFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
             boost::filesystem::copy_file(kInvalidPEMFile,
-                                         getCertificatesDir().getClientPEMKeyFile().toString(),
+                                         std::string{getCertificatesDir().getClientPEMKeyFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
 
             ASSERT_EQ(
@@ -960,13 +961,13 @@ TEST_F(RotateCertificatesGRPCTransportLayerTest, ClientUsesOldCertsUntilRotate) 
 
             // Overwrite the tmp files to hold new certs.
             boost::filesystem::copy_file(kTrustedCAFile,
-                                         getCertificatesDir().getCAFile().toString(),
+                                         std::string{getCertificatesDir().getCAFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
             boost::filesystem::copy_file(kTrustedPEMFile,
-                                         getCertificatesDir().getPEMKeyFile().toString(),
+                                         std::string{getCertificatesDir().getPEMKeyFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
             boost::filesystem::copy_file(kTrustedClientPEMFile,
-                                         getCertificatesDir().getClientPEMKeyFile().toString(),
+                                         std::string{getCertificatesDir().getClientPEMKeyFile()},
                                          boost::filesystem::copy_options::overwrite_existing);
             // Rotate the certificates server side.
             ASSERT_OK(tl.rotateCertificates(SSLManagerCoordinator::get()->getSSLManager(), false));

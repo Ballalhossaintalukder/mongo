@@ -29,16 +29,21 @@
 
 #pragma once
 
-#include <benchmark/benchmark.h>
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/query/query_fcv_environment_for_test.h"
+
 #include <vector>
 
-#include "mongo/bson/bsonobj.h"
-#include "mongo/platform/basic.h"
+#include <benchmark/benchmark.h>
 
 namespace mongo {
 
 class PlanCacheBenchmarkFixture : public benchmark::Fixture {
 public:
+    void SetUp(benchmark::State& state) final {
+        QueryFCVEnvironmentForTest::setUp();
+    }
+
     virtual void benchmarkQueryMatchProject(benchmark::State& state,
                                             BSONObj matchSpec,
                                             BSONObj projectSpec) = 0;

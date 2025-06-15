@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/exec/sbe/values/value.h"
@@ -42,6 +37,11 @@
 #include "mongo/platform/decimal128.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace mongo::abt {
 
@@ -438,7 +438,7 @@ class MultiLet final : public ABTOpDynamicArity<0>, public ExpressionSyntaxSort 
 
 public:
     MultiLet(std::vector<ProjectionName> names, ABTVector exprs)
-        : Base(std::move(exprs)), _varNames(names) {
+        : Base(std::move(exprs)), _varNames(std::move(names)) {
         for (auto&& a : nodes()) {
             assertExprSort(a);
         }

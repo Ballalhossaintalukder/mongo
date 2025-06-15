@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/namespace_string.h"
@@ -40,7 +36,12 @@
 #include "mongo/s/database_version.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/util/future.h"
+#include "mongo/util/modules_incompletely_marked_header.h"
 #include "mongo/util/string_map.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -206,10 +207,10 @@ private:
     friend class ShardServerOpObserver;  // For access to _allowCollectionCreation below
 
     // Specifies whether the request is allowed to create database/collection implicitly
-    bool _allowCollectionCreation{false};
+    MONGO_MOD_NEEDS_REPLACEMENT bool _allowCollectionCreation{false};
     // Specifies whether the CollectionShardingRuntime should be set as unknown after collection
     // creation
-    bool _forceCSRAsUnknownAfterCollectionCreation{false};
+    MONGO_MOD_NEEDS_REPLACEMENT bool _forceCSRAsUnknownAfterCollectionCreation{false};
 
     // Stores the shard version expected for each collection that will be accessed
     struct ShardVersionTracker {

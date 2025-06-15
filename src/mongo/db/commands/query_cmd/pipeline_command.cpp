@@ -27,19 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -65,17 +52,30 @@
 #include "mongo/db/query/query_settings/query_settings_service.h"
 #include "mongo/db/read_concern_support_result.h"
 #include "mongo/db/repl/read_concern_level.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/rpc/reply_builder_interface.h"
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/database_name_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/serialization_context.h"
+
+#include <algorithm>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {

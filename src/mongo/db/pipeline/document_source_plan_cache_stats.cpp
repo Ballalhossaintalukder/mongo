@@ -27,20 +27,21 @@
  *    it in the license file.
  */
 
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-#include <list>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_plan_cache_stats.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/pipeline/document_source_plan_cache_stats.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+#include <list>
+
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -55,7 +56,7 @@ boost::intrusive_ptr<DocumentSource> DocumentSourcePlanCacheStats::createFromBso
     uassert(ErrorCodes::FailedToParse,
             str::stream() << kStageName
                           << " value must be an object. Found: " << typeName(spec.type()),
-            spec.type() == BSONType::Object);
+            spec.type() == BSONType::object);
 
     bool allHosts = false;
     BSONObjIterator specIt(spec.embeddedObject());
@@ -82,7 +83,9 @@ boost::intrusive_ptr<DocumentSource> DocumentSourcePlanCacheStats::createFromBso
 
 DocumentSourcePlanCacheStats::DocumentSourcePlanCacheStats(
     const boost::intrusive_ptr<ExpressionContext>& expCtx, bool allHosts)
-    : DocumentSource(kStageName, expCtx), _allHosts(allHosts) {}
+    : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
+      _allHosts(allHosts) {}
 
 void DocumentSourcePlanCacheStats::serializeToArray(std::vector<Value>& array,
                                                     const SerializationOptions& opts) const {

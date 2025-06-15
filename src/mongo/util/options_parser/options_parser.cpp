@@ -31,11 +31,25 @@
 #include "mongo/util/options_parser/options_parser.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <exception>
+#include <fstream>  // IWYU pragma: keep
+#include <iterator>
+#include <map>
+#include <memory>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+#include <fcntl.h>
+
 #include <boost/any.hpp>
 #include <boost/any/bad_any_cast.hpp>
 #include <boost/core/typeinfo.hpp>
-#include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/path_traits.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/iostreams/categories.hpp>
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/imbue.hpp>
@@ -51,21 +65,8 @@
 #include <boost/program_options/variables_map.hpp>
 #include <boost/type_index.hpp>
 #include <boost/type_index/type_index_facade.hpp>
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
-#include <exception>
-#include <fcntl.h>
 #include <fmt/format.h>
-#include <fstream>  // IWYU pragma: keep
-#include <iterator>
-#include <map>
-#include <memory>
-#include <stdexcept>
 #include <sys/stat.h>
-#include <type_traits>
-#include <utility>
 #include <yaml-cpp/exceptions.h>
 #include <yaml-cpp/node/detail/iterator.h>
 #include <yaml-cpp/node/detail/iterator_fwd.h>
@@ -578,10 +579,10 @@ std::string runYAMLRestExpansion(StringData url, Seconds timeout) {
         ErrorCodes::OperationFailed, "No HTTP Client available in this build of MongoDB", client);
 
     // Expect https:// URLs unless we can be sure we're talking to localhost.
-    if (!url.startsWith("https://")) {
+    if (!url.starts_with("https://")) {
         uassert(ErrorCodes::BadValue,
                 "__rest configuration expansion only supports http/https",
-                url.startsWith("http://"));
+                url.starts_with("http://"));
         const auto start = strlen("http://");
         auto end = url.find('/', start);
         if (end == std::string::npos) {
@@ -872,8 +873,8 @@ Status checkLongName(const po::variables_map& vm,
                     sb << "Illegal option assignment: \"" << *keyValueVectorIt << "\"";
                     return Status(ErrorCodes::BadValue, sb.str());
                 }
-                std::string key = keySD.toString();
-                std::string value = valueSD.toString();
+                std::string key = std::string{keySD};
+                std::string value = std::string{valueSD};
                 // Make sure we aren't setting an option to two different values
                 if (mapValue.count(key) > 0 && mapValue[key] != value) {
                     StringBuilder sb;

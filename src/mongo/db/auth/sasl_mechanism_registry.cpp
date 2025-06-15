@@ -27,17 +27,12 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <iterator>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
+#include "mongo/db/auth/sasl_mechanism_registry.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/client/authenticate.h"
 #include "mongo/db/auth/auth_name.h"
-#include "mongo/db/auth/sasl_mechanism_registry.h"
 #include "mongo/db/auth/sasl_options.h"
 #include "mongo/db/auth/user.h"
 #include "mongo/db/commands/test_commands_enabled.h"
@@ -48,6 +43,12 @@
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/sequence_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <iterator>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kAccessControl
 
@@ -156,7 +157,7 @@ void appendMechs(const std::vector<std::unique_ptr<ServerFactoryBase>>& mechs,
                    mechs.cend(),
                    std::back_inserter(*pNames),
                    [](const std::unique_ptr<mongo::ServerFactoryBase>& factory) {
-                       return factory->mechanismName().toString();
+                       return std::string{factory->mechanismName()};
                    });
 }
 
@@ -199,7 +200,7 @@ Service::ConstructorActionRegisterer SASLServerMechanismRegistryValidationInitia
 
         // Manually include MONGODB-X509 since there is no factory for it since it not a SASL
         // mechanism
-        supportedMechanisms.push_back(auth::kMechanismMongoX509.toString());
+        supportedMechanisms.push_back(std::string{auth::kMechanismMongoX509});
 
         // Error if the user tries to use a SASL mechanism that does not exist
         for (const auto& mech : saslGlobalParams.authenticationMechanisms) {

@@ -29,26 +29,6 @@
 
 #include "mongo/db/mongod_main.h"
 
-#include <algorithm>
-#include <boost/filesystem/operations.hpp>
-#include <csignal>
-#include <cstdint>
-#include <cstdlib>
-#include <ctime>
-#include <exception>
-#include <fstream>  // IWYU pragma: keep
-#include <functional>
-#include <iostream>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/filesystem/path.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -75,7 +55,6 @@
 #include "mongo/db/auth/user_cache_invalidator_job.h"
 #include "mongo/db/catalog/catalog_helper.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_catalog_helper.h"
 #include "mongo/db/catalog/collection_impl.h"
 #include "mongo/db/catalog/collection_options.h"
@@ -144,7 +123,6 @@
 #include "mongo/db/profile_filter_impl.h"
 #include "mongo/db/query/client_cursor/clientcursor.h"
 #include "mongo/db/query/query_knobs_gen.h"
-#include "mongo/db/query/query_settings/query_settings_service.h"
 #include "mongo/db/query/search/mongot_options.h"
 #include "mongo/db/query/search/search_task_executors.h"
 #include "mongo/db/query/stats/stats_cache_loader_impl.h"
@@ -175,6 +153,7 @@
 #include "mongo/db/s/collection_sharding_state_factory_shard.h"
 #include "mongo/db/s/config/configsvr_coordinator_service.h"
 #include "mongo/db/s/config_server_op_observer.h"
+#include "mongo/db/s/database_sharding_state_factory_shard.h"
 #include "mongo/db/s/ddl_lock_manager.h"
 #include "mongo/db/s/migration_blocking_operation/multi_update_coordinator.h"
 #include "mongo/db/s/migration_chunk_cloner_source_op_observer.h"
@@ -193,6 +172,7 @@
 #include "mongo/db/s/sharding_ddl_coordinator_service.h"
 #include "mongo/db/s/sharding_initialization_mongod.h"
 #include "mongo/db/s/sharding_ready.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_lifecycle_monitor.h"
@@ -252,7 +232,6 @@
 #include "mongo/s/resource_yielders.h"
 #include "mongo/s/routing_information_cache.h"
 #include "mongo/s/service_entry_point_router_role.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/scripting/dbdirectclient_factory.h"
 #include "mongo/scripting/engine.h"
 #include "mongo/stdx/mutex.h"
@@ -294,6 +273,26 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/version.h"
 #include "mongo/watchdog/watchdog_mongod.h"
+
+#include <algorithm>
+#include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <ctime>
+#include <exception>
+#include <fstream>  // IWYU pragma: keep
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/optional/optional.hpp>
 
 #ifdef MONGO_CONFIG_GRPC
 #include "mongo/transport/grpc/grpc_feature_flag_gen.h"
@@ -392,7 +391,7 @@ ExitCode initializeTransportLayer(ServiceContext* serviceContext, BSONObjBuilder
 void logStartup(OperationContext* opCtx) {
     BSONObjBuilder toLog;
     std::stringstream id;
-    id << getHostNameCached() << "-" << jsTime().asInt64();
+    id << getHostNameCached() << "-" << Date_t::now().asInt64();
     toLog.append("_id", id.str());
     toLog.append("hostname", getHostNameCached());
 
@@ -415,26 +414,35 @@ void logStartup(OperationContext* opCtx) {
     Lock::GlobalWrite lk(opCtx);
     AutoGetDb autoDb(opCtx, NamespaceString::kStartupLogNamespace.dbName(), mongo::MODE_X);
     auto db = autoDb.ensureDbExists(opCtx);
-    auto collection = CollectionCatalog::get(opCtx)->lookupCollectionByNamespace(
-        opCtx, NamespaceString::kStartupLogNamespace);
+    // kStartupLogNamespace is always local and doesn't require a placement version check.
+    auto collection =
+        acquireCollection(opCtx,
+                          CollectionAcquisitionRequest{NamespaceString::kStartupLogNamespace,
+                                                       PlacementConcern::kPretendUnsharded,
+                                                       repl::ReadConcernArgs::get(opCtx),
+                                                       AcquisitionPrerequisites::kWrite},
+                          MODE_X);
     WriteUnitOfWork wunit(opCtx);
-    if (!collection) {
+    if (!collection.exists()) {
         BSONObj options = BSON("capped" << true << "size" << 10 * 1024 * 1024);
         repl::UnreplicatedWritesBlock uwb(opCtx);
         CollectionOptions collectionOptions = uassertStatusOK(
             CollectionOptions::parse(options, CollectionOptions::ParseKind::parseForCommand));
-        collection =
+        auto newColl =
             db->createCollection(opCtx, NamespaceString::kStartupLogNamespace, collectionOptions);
+        invariant(newColl);
+        // Re-acquire after creation
+        collection =
+            acquireCollection(opCtx,
+                              CollectionAcquisitionRequest{NamespaceString::kStartupLogNamespace,
+                                                           PlacementConcern::kPretendUnsharded,
+                                                           repl::ReadConcernArgs::get(opCtx),
+                                                           AcquisitionPrerequisites::kWrite},
+                              MODE_X);
     }
-    invariant(collection);
 
-    // TODO(SERVER-103406): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
-    uassertStatusOK(
-        collection_internal::insertDocument(opCtx,
-                                            CollectionPtr::CollectionPtr_UNSAFE(collection),
-                                            InsertStatement(o),
-                                            nullptr /* OpDebug */,
-                                            false));
+    uassertStatusOK(collection_internal::insertDocument(
+        opCtx, collection.getCollectionPtr(), InsertStatement(o), nullptr /* OpDebug */, false));
     wunit.commit();
 }
 
@@ -1023,9 +1031,17 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
         startFLECrud(serviceContext);
 
         DiskSpaceMonitor::start(serviceContext);
-        auto diskMonitor = DiskSpaceMonitor::get(serviceContext);
-        diskMonitor->registerAction(
-            IndexBuildsCoordinator::get(serviceContext)->makeKillIndexBuildOnLowDiskSpaceAction());
+        const bool filesNotAllInSameDirectory =
+            storageEngine->isUsingDirectoryPerDb() || storageEngine->isUsingDirectoryForIndexes();
+        if (filesNotAllInSameDirectory) {
+            LOGV2(7333400,
+                  "The index builds DiskSpaceMonitor action which periodically checks if we "
+                  "have enough disk space to build indexes will not run when the storage engine "
+                  "stores data files in different directories");
+        } else {
+            auto diskMonitor = DiskSpaceMonitor::get(serviceContext);
+            IndexBuildsCoordinator::get(serviceContext)->registerKillIndexBuildAction(*diskMonitor);
+        }
     }
 
     startClientCursorMonitor();
@@ -1229,7 +1245,7 @@ MONGO_INITIALIZER_GENERAL(ForkServer, ("EndStartupOptionHandling"), ("default"))
  * and can be found in the /proc filesystem.
  */
 Status shutdownProcessByDBPathPidFile(const std::string& dbpath) {
-    auto pidfile = (boost::filesystem::path(dbpath) / kLockFileBasename.toString()).string();
+    auto pidfile = (boost::filesystem::path(dbpath) / std::string{kLockFileBasename}).string();
     if (!boost::filesystem::exists(pidfile)) {
         return {ErrorCodes::OperationFailed,
                 str::stream() << "There doesn't seem to be a server running with dbpath: "
@@ -1495,6 +1511,8 @@ void setUpSharding(ServiceContext* service) {
     ShardingState::create(service);
     CollectionShardingStateFactory::set(
         service, std::make_unique<CollectionShardingStateFactoryShard>(service));
+    DatabaseShardingStateFactory::set(service,
+                                      std::make_unique<DatabaseShardingStateFactoryShard>());
 }
 
 namespace {
@@ -1793,7 +1811,15 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
             4784910, {LogComponent::kSharding}, "Shutting down the ShardingInitializationMongoD");
         ShardingInitializationMongoD::get(serviceContext)->shutDown(opCtx);
 
-        // Acquire the RSTL in mode X. First we enqueue the lock request, then kill all operations,
+        boost::optional<rss::consensus::ReplicationStateTransitionGuard> rstg;
+        if (gFeatureFlagIntentRegistration.isEnabled()) {
+            rstg.emplace(rss::consensus::IntentRegistry::get(serviceContext)
+                             .killConflictingOperations(
+                                 rss::consensus::IntentRegistry::InterruptionType::Shutdown)
+                             .get());
+        }
+        // Acquire the RSTL in mode X. First we enqueue the lock request, then kill all
+        // operations,
         // destroy all stashed transaction resources in order to release locks, and finally wait
         // until the lock request is granted.
         LOGV2_OPTIONS(4784911,
@@ -1844,6 +1870,7 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
         // Release the rstl before waiting for the index build threads to join as index build
         // reacquires rstl in uninterruptible lock guard to finish their cleanup process.
         rstl.release();
+        rstg = boost::none;
 
         // Shuts down the thread pool and waits for index builds to finish.
         // Depends on setKillAllOperations() above to interrupt the index build operations.
@@ -1865,17 +1892,6 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
         ReplicaSetMonitor::shutdown();
     }
 
-    auto sr = Grid::get(serviceContext)->isInitialized()
-        ? Grid::get(serviceContext)->shardRegistry()
-        : nullptr;
-    if (sr) {
-        SectionScopedTimer scopedTimer(serviceContext->getFastClockSource(),
-                                       TimedSectionId::shutDownShardRegistry,
-                                       &shutdownTimeElapsedBuilder);
-        LOGV2_OPTIONS(4784919, {LogComponent::kSharding}, "Shutting down the shard registry");
-        sr->shutdown();
-    }
-
     if (ShardingState::get(serviceContext)->enabled()) {
         SectionScopedTimer scopedTimer(serviceContext->getFastClockSource(),
                                        TimedSectionId::shutDownTransactionCoord,
@@ -1894,25 +1910,8 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
         validator->shutDown();
     }
 
-    if (TestingProctor::instance().isEnabled()) {
-        auto pool = Grid::get(serviceContext)->isInitialized()
-            ? Grid::get(serviceContext)->getExecutorPool()
-            : nullptr;
-        if (pool) {
-            SectionScopedTimer scopedTimer(serviceContext->getFastClockSource(),
-                                           TimedSectionId::shutDownExecutorPool,
-                                           &shutdownTimeElapsedBuilder);
-            LOGV2_OPTIONS(6773200, {LogComponent::kSharding}, "Shutting down the ExecutorPool");
-            pool->shutdownAndJoin();
-        }
-    }
-
-    if (Grid::get(serviceContext)->isShardingInitialized()) {
-        SectionScopedTimer scopedTimer(serviceContext->getFastClockSource(),
-                                       TimedSectionId::shutDownCatalogCache,
-                                       &shutdownTimeElapsedBuilder);
-        LOGV2_OPTIONS(6773201, {LogComponent::kSharding}, "Shutting down the CatalogCache");
-        Grid::get(serviceContext)->catalogCache()->shutDownAndJoin();
+    if (auto grid = Grid::get(serviceContext)) {
+        grid->shutdown(opCtx, &shutdownTimeElapsedBuilder, false /* isMongos */);
     }
 
     LOGV2_OPTIONS(9439300, {LogComponent::kSharding}, "Shutting down the filtering metadata cache");
@@ -1978,7 +1977,9 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
                                        TimedSectionId::shutDownStorageEngine,
                                        &shutdownTimeElapsedBuilder);
         LOGV2(4784930, "Shutting down the storage engine");
-        catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(serviceContext);
+        // Allow memory leak for faster shutdown.
+        catalog::shutDownCollectionCatalogAndGlobalStorageEngineCleanly(serviceContext,
+                                                                        true /* memLeakAllowed */);
     }
 
     // We drop the scope cache because leak sanitizer can't see across the
@@ -2120,8 +2121,6 @@ int mongod_main(int argc, char* argv[]) {
     if (change_stream_serverless_helpers::canInitializeServices()) {
         ChangeStreamChangeCollectionManager::create(service);
     }
-
-    query_settings::initializeForShard(service);
 
 #if defined(_WIN32)
     if (ntservice::shouldStartService()) {

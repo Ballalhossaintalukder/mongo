@@ -29,10 +29,10 @@
 
 #pragma once
 
-#include <fmt/format.h>
-
 #include "mongo/db/query/plan_explainer.h"
 #include "mongo/db/query/plan_summary_stats.h"
+
+#include <fmt/format.h>
 
 namespace mongo {
 namespace express {
@@ -59,7 +59,7 @@ public:
     }
 
     void setStageName(StringData stageName) {
-        _stageName = stageName.toString();
+        _stageName = std::string{stageName};
     }
 
     void incNumKeysExamined(size_t amount) {
@@ -71,11 +71,11 @@ public:
     }
 
     void setIndexName(StringData indexName) {
-        _indexName = indexName.toString();
+        _indexName = std::string{indexName};
     }
 
     void setIndexKeyPattern(StringData indexKeyPattern) {
-        _indexKeyPattern = indexKeyPattern.toString();
+        _indexKeyPattern = std::string{indexKeyPattern};
     }
 
     void populateSummaryStats(PlanSummaryStats* statsOut) const {

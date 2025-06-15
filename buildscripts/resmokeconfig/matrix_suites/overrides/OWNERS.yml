@@ -11,6 +11,9 @@ filters:
   - "multiplan_single_solutions.yml":
     approvers:
       - 10gen/query-optimization
+  - "networking.yml":
+    approvers:
+      - 10gen/server-networking-and-observability
   - "query_settings.yml":
     approvers:
       - 10gen/query-execution-query-settings
@@ -20,6 +23,9 @@ filters:
   - "repeat_queries.yml":
     approvers:
       - 10gen/query-optimization
+  - "*viewless_timeseries.yml":
+    approvers:
+      - 10gen/server-catalog-and-routing
   - "stepdown_primary_change_streams.yml":
     approvers:
       - 10gen/query-execution-change-streams

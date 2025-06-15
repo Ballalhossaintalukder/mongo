@@ -28,11 +28,6 @@
  */
 
 
-#include <memory>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/auth/action_type.h"
@@ -48,6 +43,11 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/request_types/set_allow_migrations_gen.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -133,7 +133,8 @@ public:
                         newOpCtxPtr.get(), nss, collectionUUID, allowMigrations);
             }
 
-            tellShardsToRefresh(opCtx, ns(), ConfigsvrSetAllowMigrations::kCommandName.toString());
+            tellShardsToRefresh(
+                opCtx, ns(), std::string{ConfigsvrSetAllowMigrations::kCommandName});
 
             // Since we no write happened on this txnNumber, we need to make a dummy write to
             // protect against older requests with old txnNumbers.

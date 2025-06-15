@@ -28,20 +28,6 @@
  */
 
 
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <iostream>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -85,6 +71,20 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 
@@ -126,7 +126,7 @@ std::string getThreadNameByAppName(DBClientBase* conn, StringData appName) {
     const auto cursorResponse = CursorResponse::parseFromBSON(curOpReply->getCommandReply());
     ASSERT_OK(cursorResponse.getStatus());
     const auto batch = cursorResponse.getValue().getBatch();
-    return batch.empty() ? "" : batch[0].getStringField("desc").toString();
+    return batch.empty() ? "" : std::string{batch[0].getStringField("desc")};
 }
 
 TEST(OpMsg, UnknownRequiredFlagClosesConnection) {
@@ -283,7 +283,7 @@ TEST(OpMsg, CloseConnectionOnFireAndForgetNotWritablePrimaryError) {
         // conn.call() calculated the request checksum, but setFlag() makes it invalid. Clear the
         // checksum so the next conn.call() recalculates it.
         OpMsg::removeChecksum(&request);
-        ASSERT_THROWS(conn.call(request), ExceptionForCat<ErrorCategory::NetworkError>);
+        ASSERT_THROWS(conn.call(request), ExceptionFor<ErrorCategory::NetworkError>);
 
         conn.connect(host, "integration_test", boost::none);  // Reconnect.
 
@@ -320,7 +320,7 @@ TEST(OpMsg, CloseConnectionOnFireAndForgetNotWritablePrimaryError) {
         // Fire-and-forget should still close connection.
         OpMsg::setFlag(&request, OpMsg::kMoreToCome);
         OpMsg::removeChecksum(&request);
-        ASSERT_THROWS(conn.call(request), ExceptionForCat<ErrorCategory::NetworkError>);
+        ASSERT_THROWS(conn.call(request), ExceptionFor<ErrorCategory::NetworkError>);
 
         break;
     }
@@ -409,7 +409,7 @@ void exhaustGetMoreTest(bool enableChecksum) {
     // Construct getMore request with exhaust flag. Set batch size so we will need multiple batches
     // to exhaust the cursor.
     int batchSize = 2;
-    GetMoreCommandRequest getMoreRequest(cursorId, nss.coll().toString());
+    GetMoreCommandRequest getMoreRequest(cursorId, std::string{nss.coll()});
     getMoreRequest.setBatchSize(batchSize);
     opMsgRequest = OpMsgRequestBuilder::create(
         auth::ValidatedTenancyScope::kNotRequired, nss.dbName(), getMoreRequest.toBSON());
@@ -528,7 +528,7 @@ TEST(OpMsg, ServerDoesNotSetMoreToComeOnErrorInGetMore) {
 
     // Construct getMore request with exhaust flag.
     int batchSize = 2;
-    GetMoreCommandRequest getMoreRequest(cursorId, nss.coll().toString());
+    GetMoreCommandRequest getMoreRequest(cursorId, std::string{nss.coll()});
     getMoreRequest.setBatchSize(batchSize);
     opMsgRequest = OpMsgRequestBuilder::create(
         auth::ValidatedTenancyScope::kNotRequired, nss.dbName(), getMoreRequest.toBSON());
@@ -578,7 +578,7 @@ TEST(OpMsg, ExhaustWorksForAggCursor) {
     // Construct getMore request with exhaust flag. Set batch size so we will need multiple batches
     // to exhaust the cursor.
     int batchSize = 2;
-    GetMoreCommandRequest getMoreRequest(cursorId, nss.coll().toString());
+    GetMoreCommandRequest getMoreRequest(cursorId, std::string{nss.coll()});
     getMoreRequest.setBatchSize(batchSize);
     opMsgRequest = OpMsgRequestBuilder::create(
         auth::ValidatedTenancyScope::kNotRequired, nss.dbName(), getMoreRequest.toBSON());

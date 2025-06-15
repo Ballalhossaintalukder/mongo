@@ -27,15 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -50,6 +41,7 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/database.h"
+#include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/client.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
@@ -105,9 +97,27 @@
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
 
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
 namespace mongo {
+
+Database* getDbOrCreate(OperationContext* opCtx, const NamespaceString& nss) {
+    auto db = DatabaseHolder::get(opCtx)->getDb(opCtx, nss.dbName());
+    if (!db) {
+        return DatabaseHolder::get(opCtx)->openDb(opCtx, nss.dbName(), nullptr);
+    }
+    return db;
+}
 namespace repl {
 namespace ReplTests {
 
@@ -251,9 +261,9 @@ protected:
     }
     int count() const {
         Lock::GlobalWrite lk(&_opCtx);
-        OldClientContext ctx(&_opCtx, nss());
-        Database* db = ctx.db();
-        // TODO(SERVER-103411): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
+        Database* db = getDbOrCreate(&_opCtx, nss());
+        // TODO(SERVER-103411): Investigate usage validity of
+        // CollectionPtr::CollectionPtr_UNSAFE
         CollectionPtr coll = CollectionPtr::CollectionPtr_UNSAFE(
             CollectionCatalog::get(&_opCtx)->lookupCollectionByNamespace(&_opCtx, nss()));
         if (!coll) {
@@ -281,14 +291,20 @@ protected:
         std::vector<BSONObj> ops;
         {
             DBDirectClient db(&_opCtx);
-            auto cursor = db.find(
-                FindCommandRequest{NamespaceString::createNamespaceString_forTest(cllNS())});
+            auto storageEngine = _opCtx.getServiceContext()->getStorageEngine();
+            LocalOplogInfo* oplogInfo = LocalOplogInfo::get(&_opCtx);
+
+            // Oplog should be available at this point.
+            invariant(oplogInfo);
+            storageEngine->waitForAllEarlierOplogWritesToBeVisible(&_opCtx,
+                                                                   oplogInfo->getRecordStore());
+            auto cursor = db.find(FindCommandRequest{NamespaceString::createNamespaceString_forTest(
+                cllNS())});  // Read all ops from the oplog.
             while (cursor->more()) {
                 ops.push_back(cursor->nextSafe());
             }
         }
 
-        OldClientContext ctx(&_opCtx, nss());
         for (std::vector<BSONObj>::iterator i = ops.begin(); i != ops.end(); ++i) {
             repl::UnreplicatedWritesBlock uwb(&_opCtx);
             auto entry = uassertStatusOK(OplogEntry::parse(*i));
@@ -341,9 +357,8 @@ protected:
         NamespaceString nss = NamespaceString::createNamespaceString_forTest(ns);
         ::mongo::writeConflictRetry(&_opCtx, "deleteAll", nss, [&] {
             Lock::GlobalWrite lk(&_opCtx);
-            OldClientContext ctx(&_opCtx, nss);
             WriteUnitOfWork wunit(&_opCtx);
-            Database* db = ctx.db();
+            Database* db = getDbOrCreate(&_opCtx, nss);
             CollectionWriter writer{&_opCtx, nss};
             Collection* coll = writer.getWritableCollection(&_opCtx);
             if (!coll) {
@@ -363,9 +378,8 @@ protected:
     }
     void insert(const BSONObj& o) const {
         Lock::GlobalWrite lk(&_opCtx);
-        OldClientContext ctx(&_opCtx, nss());
         WriteUnitOfWork wunit(&_opCtx);
-        Database* db = ctx.db();
+        Database* db = getDbOrCreate(&_opCtx, nss());
         // TODO(SERVER-103411): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
         CollectionPtr coll = CollectionPtr::CollectionPtr_UNSAFE(
             CollectionCatalog::get(&_opCtx)->lookupCollectionByNamespace(&_opCtx, nss()));

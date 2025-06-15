@@ -27,8 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-
+#include "mongo/db/vector_clock_metadata_hook.h"
 
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -42,9 +41,10 @@
 #include "mongo/db/service_context.h"
 #include "mongo/db/vector_clock.h"
 #include "mongo/db/vector_clock_gen.h"
-#include "mongo/db/vector_clock_metadata_hook.h"
 #include "mongo/transport/session.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
 
 namespace mongo {
 
@@ -74,7 +74,7 @@ Status VectorClockMetadataHook::readReplyMetadata(OperationContext* opCtx,
         if (!operationTime.eoo()) {
             tassert(4457010,
                     "operationTime must be a timestamp if present",
-                    operationTime.type() == BSONType::bsonTimestamp);
+                    operationTime.type() == BSONType::timestamp);
             timeTracker->updateOperationTime(LogicalTime(operationTime.timestamp()));
         }
     }

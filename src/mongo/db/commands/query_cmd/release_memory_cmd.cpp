@@ -28,11 +28,11 @@
  */
 
 #include "mongo/db/commands.h"
-#include "mongo/db/commands/query_cmd/acquire_locks.h"
 #include "mongo/db/query/client_cursor/cursor_manager.h"
 #include "mongo/db/query/client_cursor/release_memory_gen.h"
 #include "mongo/db/query/client_cursor/release_memory_util.h"
 #include "mongo/db/query/plan_executor.h"
+#include "mongo/db/query/plan_yield_policy_release_memory.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 
@@ -89,13 +89,22 @@ public:
             };
 
             for (CursorId cursorId : request().getCommandParameter()) {
-                auto cursorPin = CursorManager::get(opCtx)->pinCursor(opCtx, cursorId);
+                if (auto status = opCtx->checkForInterruptNoAssert(); !status.isOK()) {
+                    break;
+                }
+
+                auto cursorPin =
+                    CursorManager::get(opCtx)->pinCursor(opCtx, cursorId, definition()->getName());
                 if (cursorPin.isOK()) {
+                    ScopeGuard killCursorGuard([&cursorPin] {
+                        // Something went wrong. Destroy the cursor.
+                        cursorPin.getValue().deleteUnderlying();
+                    });
+
                     if (MONGO_unlikely(releaseMemoryHangAfterPinCursor.shouldFail())) {
                         LOGV2(9745500,
                               "releaseMemoryHangAfterPinCursor fail point enabled. Blocking until "
-                              "fail "
-                              "point is disabled");
+                              "failpoint is disabled");
                         releaseMemoryHangAfterPinCursor.pauseWhileSet(opCtx);
                     }
 
@@ -120,12 +129,21 @@ public:
                         });
 
                     if (response.isOK()) {
-                        response = acquireLocksAndReleaseMemory(opCtx, cursorPin.getValue());
+                        response = releaseMemory(opCtx, cursorPin.getValue());
                     }
+
                     if (response.isOK()) {
                         released.push_back(cursorId);
+                        killCursorGuard.dismiss();
                     } else {
                         handleError(cursorId, response);
+                        // Do not destroy the cursor if the error is
+                        // QueryExceededMemoryLimitNoDiskUseAllowed since at this point spilling has
+                        // not yet started.
+                        if (response.code() ==
+                            ErrorCodes::QueryExceededMemoryLimitNoDiskUseAllowed) {
+                            killCursorGuard.dismiss();
+                        }
                     }
                 } else if (cursorPin.getStatus().code() == ErrorCodes::CursorNotFound) {
                     notFound.push_back(cursorId);
@@ -169,22 +187,23 @@ public:
             return request().getGenericArguments();
         }
 
-        Status acquireLocksAndReleaseMemory(OperationContext* opCtx, ClientCursorPin& cursorPin) {
+        Status releaseMemory(OperationContext* opCtx, ClientCursorPin& cursorPin) {
             try {
-                applyConcernsAndReadPreference(opCtx, *cursorPin.getCursor());
-                CursorLocks locks{opCtx, cursorPin.getCursor()->nss(), cursorPin};
+                PlanExecutor* exec = cursorPin->getExecutor();
 
-                if (!cursorPin->isAwaitData()) {
-                    auto status = opCtx->checkForInterruptNoAssert();
-                    if (!status.isOK()) {
-                        return status;
-                    }
+                std::unique_ptr<PlanYieldPolicy> yieldPolicy = nullptr;
+                if (exec->lockPolicy() == PlanExecutor::LockPolicy::kLockExternally) {
+                    yieldPolicy = PlanYieldPolicyReleaseMemory::make(
+                        opCtx,
+                        PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY,
+                        boost::none,
+                        exec->nss());
                 }
 
-                PlanExecutor* exec = cursorPin->getExecutor();
                 exec->reattachToOperationContext(opCtx);
                 ScopeGuard opCtxGuard([&]() { exec->detachFromOperationContext(); });
-                exec->forceSpill();
+                exec->forceSpill(yieldPolicy.get());
+
                 return Status::OK();
             } catch (const DBException& e) {
                 return e.toStatus();

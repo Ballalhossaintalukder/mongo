@@ -23,8 +23,8 @@ function runPipelineWithLetCommandVars(pipeline, letVars) {
 }
 
 const pipelines = {
-    single: [{$score: {score: "$single", normalizeFunction: "none"}}],
-    double: [{$score: {score: "$double", normalizeFunction: "none"}}]
+    single: [{$score: {score: "$single", normalization: "none"}}],
+    double: [{$score: {score: "$double", normalization: "none"}}]
 };
 
 const coll = db[jsTestName()];
@@ -45,22 +45,17 @@ const coll = db[jsTestName()];
     assert.commandWorked(bulk.execute());
 })();
 
-// Test Explanation: Neither of the document's score fields (single and double) will be normalized
-// because the $score's normalization value is "none" and $scoreFusion's default normalization field
-// is "none." Each document's score value will be summed per the combination.method.
+(function testScorePipelinesWithMinMaxScalerNormalization() {
+    const pipelines = {
+        single: [{$score: {score: "$single", normalization: "minMaxScaler"}}],
+        double: [{$score: {score: "$double", normalization: "none"}}]
+    };
 
-// The $scoreFusion pipeline sorts the documents in descending order by score (documents with
-// the highest computed scores ranked first). Assert that the documents are in the correct order
-// and have the correct values by asserting that the single, double, and score field's values match
-// the expected values which are computed via adding the non-normalized input scores.
-
-(function testCombinationMethodSumOnMultiplePipelinesWithNoNormalization() {
-    // Pipeline returns an array of documents, each with the score that $scoreFusion computed.
     const actualResults =
         coll.aggregate([
                 {
                     $scoreFusion:
-                        {input: {pipelines, normalization: "none"}, combination: {method: "sum"}}
+                        {input: {pipelines, normalization: "none"}, combination: {method: "avg"}}
                 },
                 {$project: {_id: 1, single: 1, double: 1, score: {$meta: "score"}}}
             ])
@@ -70,13 +65,105 @@ const coll = db[jsTestName()];
     // $scoreFusion should have computed.
     const expectedResults =
         coll.aggregate([
-                {$project: {_id: 1, single: 1, double: 1, score: {$add: ["$single", "$double"]}}},
+                {
+                    $setWindowFields: {
+                        output: {
+                            single_score: {
+                                $minMaxScaler: {input: "$single"},
+                            }
+                        }
+                    }
+                },
+                {
+                    $project:
+                        {_id: 1, single: 1, double: 1, score: {$avg: ["$single_score", "$double"]}}
+                },
                 {$sort: {score: -1, _id: 1}}
             ])
             .toArray();
 
     // Assert that every document returned by $scoreFusion is scored as expected using the
-    // "sum" combination.method.
+    // "avg" combination.method.
+    assert.eq(actualResults, expectedResults);
+})();
+
+(function testScorePipelinesWithMinMaxScalerNormalizationAndScoreDetails() {
+    const pipelines = {
+        single: [{$score: {score: "$single", normalization: "minMaxScaler", scoreDetails: true}}],
+        double: [{$score: {score: "$double", normalization: "none", scoreDetails: true}}]
+    };
+
+    const actualResults =
+        coll.aggregate([
+                {
+                    $scoreFusion: {
+                        input: {pipelines, normalization: "none"},
+                        combination: {method: "avg"},
+                        scoreDetails: true
+                    }
+                },
+                {$project: {_id: 1, single: 1, double: 1, score: {$meta: "score"}}}
+            ])
+            .toArray();
+
+    // Pipeline returns an array of documents, each with the calculated expected score that
+    // $scoreFusion should have computed.
+    const expectedResults =
+        coll.aggregate([
+                {
+                    $setWindowFields: {
+                        output: {
+                            single_score: {
+                                $minMaxScaler: {input: "$single"},
+                            }
+                        }
+                    }
+                },
+                {
+                    $project:
+                        {_id: 1, single: 1, double: 1, score: {$avg: ["$single_score", "$double"]}}
+                },
+                {$sort: {score: -1, _id: 1}}
+            ])
+            .toArray();
+
+    // Assert that every document returned by $scoreFusion is scored as expected using the
+    // "avg" combination.method.
+    assert.eq(actualResults, expectedResults);
+})();
+
+// Test Explanation: Neither of the document's score fields (single and double) will be normalized
+// because the $score's normalization value is "none" and $scoreFusion's default normalization field
+// is "none." Each document's score value will be averaged per the combination.method.
+
+// The $scoreFusion pipeline sorts the documents in descending order by score (documents with
+// the highest computed scores ranked first). Assert that the documents are in the correct order
+// and have the correct values by asserting that the single, double, and score field's values match
+// the expected values which are computed via adding the non-normalized input scores.
+
+(function testCombinationMethodAvgOnMultiplePipelinesWithNoNormalization() {
+    // Pipeline returns an array of documents, each with the score that $scoreFusion computed.
+    const actualResults =
+        coll.aggregate([
+                {
+                    $scoreFusion:
+                        {input: {pipelines, normalization: "none"}, combination: {method: "avg"}}
+                },
+                {$project: {_id: 1, single: 1, double: 1, score: {$meta: "score"}}}
+            ])
+            .toArray();
+
+    // Pipeline returns an array of documents, each with the calculated expected score that
+    // $scoreFusion should have computed.
+    const expectedResults =
+        coll.aggregate([
+                {$project: {_id: 1, single: 1, double: 1, score: {$avg: ["$single", "$double"]}}},
+                {$sort: {score: -1, _id: 1}}
+            ])
+            .toArray();
+
+    // Assert that every document returned by $scoreFusion is scored as expected using the
+    // "avg" combination.method.
     assert.eq(actualResults, expectedResults);
 })();
 

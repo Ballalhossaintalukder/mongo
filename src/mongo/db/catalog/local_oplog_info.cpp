@@ -33,9 +33,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <mutex>
-#include <utility>
-
 #include "mongo/db/admission/flow_control.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/repl/oplog.h"
@@ -43,12 +40,15 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/storage_options.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/db/vector_clock_mutable.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
-#include "mongo/util/duration.h"
 #include "mongo/util/scopeguard.h"
+
+#include <mutex>
+#include <utility>
 
 
 namespace mongo {
@@ -80,15 +80,31 @@ OplogSlotTimeContext& LocalOplogInfo::getOplogSlotTimeContext(OperationContext* 
 }
 
 RecordStore* LocalOplogInfo::getRecordStore() const {
+    stdx::lock_guard<stdx::mutex> lk(_rsMutex);
     return _rs;
 }
 
-void LocalOplogInfo::setRecordStore(RecordStore* rs) {
+void LocalOplogInfo::setRecordStore(OperationContext* opCtx, RecordStore* rs) {
+    stdx::lock_guard<stdx::mutex> lk(_rsMutex);
     _rs = rs;
+    // If the server was started in read-only mode or if we are restoring the node, skip
+    // calculating the oplog truncate markers. The OplogCapMaintainerThread does not get started
+    // in this instance.
+    bool needsTruncateMarkers = opCtx->getServiceContext()->userWritesAllowed() &&
+        !storageGlobalParams.repair && !repl::ReplSettings::shouldSkipOplogSampling();
+    if (needsTruncateMarkers) {
+        _truncateMarkers = OplogTruncateMarkers::createOplogTruncateMarkers(opCtx, *rs);
+    }
 }
 
 void LocalOplogInfo::resetRecordStore() {
+    stdx::lock_guard<stdx::mutex> lk(_rsMutex);
     _rs = nullptr;
+}
+
+std::shared_ptr<OplogTruncateMarkers> LocalOplogInfo::getTruncateMarkers() const {
+    stdx::lock_guard<stdx::mutex> lk(_rsMutex);
+    return _truncateMarkers;
 }
 
 void LocalOplogInfo::setNewTimestamp(ServiceContext* service, const Timestamp& newTime) {

@@ -29,13 +29,13 @@
 
 #pragma once
 
+#include "mongo/base/string_data.h"
+#include "mongo/util/dynamic_bitset.h"
+
 #include <initializer_list>
 #include <iosfwd>
 #include <string>
 #include <vector>
-
-#include "mongo/base/string_data.h"
-#include "mongo/util/dynamic_bitset.h"
 
 namespace mongo::boolean_simplification {
 
@@ -61,7 +61,7 @@ struct BitsetTerm {
     BitsetTerm(Bitset bitset, Bitset mask) : predicates(bitset), mask(mask) {}
 
     BitsetTerm(StringData bits, StringData mask)
-        : BitsetTerm{Bitset{bits.toString()}, Bitset{mask.toString()}} {}
+        : BitsetTerm{Bitset{std::string{bits}}, Bitset{std::string{mask}}} {}
 
     BitsetTerm(size_t nbits, size_t bitIndex, bool val) : predicates(nbits), mask(nbits) {
         set(bitIndex, val);

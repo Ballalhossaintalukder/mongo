@@ -27,16 +27,15 @@
  *    it in the license file.
  */
 
-#include <memory>
-
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/config.h"  // IWYU pragma: keep
+#include "mongo/db/admission/ingress_request_rate_limiter.h"
 #include "mongo/db/commands/server_status.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/platform/atomic_word.h"
@@ -49,6 +48,8 @@
 #include "mongo/util/net/socket_utils.h"
 #include "mongo/util/net/ssl_manager.h"
 #include "mongo/util/net/ssl_types.h"
+
+#include <memory>
 
 namespace mongo {
 namespace {
@@ -69,6 +70,11 @@ public:
         networkCounter.append(b);
         appendMessageCompressionStats(&b);
 
+
+        if (gFeatureFlagIngressRateLimiting.isEnabled()) {
+            appendIngressRequestRateLimiterStats(&b, opCtx->getServiceContext());
+        }
+
         auto svcCtx = opCtx->getServiceContext();
 
         {
@@ -80,6 +86,14 @@ public:
             tl->appendStatsForServerStatus(&b);
 
         return b.obj();
+    }
+
+    void appendIngressRequestRateLimiterStats(BSONObjBuilder* b, ServiceContext* service) const {
+        auto ingressRequestRateLimiterBuilder =
+            BSONObjBuilder{b->subobjStart("ingressRequestRateLimiter")};
+        const auto& ingressRequestRateLimeter = IngressRequestRateLimiter::get(service);
+        ingressRequestRateLimeter.appendStats(&ingressRequestRateLimiterBuilder);
+        ingressRequestRateLimiterBuilder.done();
     }
 };
 auto& network = *ServerStatusSectionBuilder<Network>("network");

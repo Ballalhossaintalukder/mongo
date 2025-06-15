@@ -28,20 +28,23 @@
  */
 
 
-#include <boost/filesystem.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
+#include <boost/filesystem.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+
 #ifndef _WIN32
 #include <malloc.h>
 #include <procfs.h>
+
 #include <sys/lgrp_user.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/systeminfo.h>
 #include <sys/utsname.h>
 #endif
@@ -204,6 +207,13 @@ void ProcessInfo::SystemInfo::collectSystemInfo() {
     // 1. Pre-Oracle Solaris 11.2 releases
     // 2. Illumos kernel releases (which is all non Oracle Solaris releases)
     preferMsyncOverFSync = false;
+
+    // The proper way to set `defaultListenBacklog` is to use `libkstat` to
+    // look up the value of the [tcp_conn_req_max_q][1] tuning parameter.
+    // That would require users of `ProcessInfo` to link `libkstat`.
+    // Instead, use the compile-time constant `SOMAXCONN`.
+    // [1]: https://docs.oracle.com/cd/E19159-01/819-3681/abeir/index.html
+    defaultListenBacklog = SOMAXCONN;
 
     if (str::startsWith(osName, "Oracle Solaris")) {
         std::vector<std::string> versionComponents;

@@ -29,14 +29,6 @@
 
 #include "mongo/db/exec/timeseries_modify.h"
 
-#include <fmt/format.h>
-#include <string>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -60,11 +52,12 @@
 #include "mongo/db/shard_id.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/storage/snapshot.h"
-#include "mongo/db/timeseries/bucket_catalog/bucket_catalog_internal.h"
+#include "mongo/db/timeseries/bucket_catalog/bucket_catalog.h"
 #include "mongo/db/timeseries/bucket_catalog/global_bucket_catalog.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/timeseries/timeseries_write_util.h"
+#include "mongo/db/timeseries/write_ops/timeseries_write_ops_utils.h"
 #include "mongo/db/update/path_support.h"
 #include "mongo/db/update/update_util.h"
 #include "mongo/s/shard_key_pattern.h"
@@ -72,6 +65,14 @@
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/s/would_change_owning_shard_exception.h"
 #include "mongo/util/decorable.h"
+
+#include <string>
+#include <tuple>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kWrite
 
@@ -143,8 +144,7 @@ TimeseriesModifyStage::TimeseriesModifyStage(ExpressionContext* expCtx,
 TimeseriesModifyStage::~TimeseriesModifyStage() {
     if (_sideBucketCatalog && !_insertedBucketIds.empty()) {
         auto [collectionUUID, collStats] =
-            timeseries::bucket_catalog::internal::getSideBucketCatalogCollectionStats(
-                *_sideBucketCatalog);
+            timeseries::bucket_catalog::getSideBucketCatalogCollectionStats(*_sideBucketCatalog);
         // Finishes tracking the newly inserted buckets in the main bucket catalog as direct
         // writes when the whole update operation is done.
         auto& bucketCatalog =
@@ -154,7 +154,7 @@ TimeseriesModifyStage::~TimeseriesModifyStage() {
                                                           bucketId);
         }
         // Merges the execution stats of the side bucket catalog to the main one.
-        timeseries::bucket_catalog::internal::mergeExecutionStatsToBucketCatalog(
+        timeseries::bucket_catalog::mergeExecutionStatsToBucketCatalog(
             bucketCatalog, collStats, collectionUUID);
     }
 }
@@ -193,9 +193,9 @@ const std::vector<std::unique_ptr<FieldRef>>& TimeseriesModifyStage::_getUserLev
             _immutablePaths.emplace_back(std::move(userMetaFieldRef));
         } else if (auto timeField = tsFields->getTimeField();
                    shardKeyField->isPrefixOfOrEqualTo(
-                       FieldRef{timeseries::kControlMinFieldNamePrefix + timeField.toString()}) ||
+                       FieldRef{timeseries::kControlMinFieldNamePrefix + std::string{timeField}}) ||
                    shardKeyField->isPrefixOfOrEqualTo(
-                       FieldRef{timeseries::kControlMaxFieldNamePrefix + timeField.toString()})) {
+                       FieldRef{timeseries::kControlMaxFieldNamePrefix + std::string{timeField}})) {
             _immutablePaths.emplace_back(std::make_unique<FieldRef>(timeField));
         } else {
             tasserted(7687100,
@@ -476,11 +476,11 @@ TimeseriesModifyStage::_writeToTimeseriesBuckets(ScopeGuard<F>& bucketFreer,
     // performing the check needed for a single-update.
     if (isUpdate && _isUserInitiatedUpdate && !modifiedMeasurements.empty()) {
         _checkUpdateChangesShardKeyFields(
-            timeseries::makeBucketDocument({modifiedMeasurements[0]},
-                                           collectionPtr()->ns(),
-                                           collectionPtr()->uuid(),
-                                           *collectionPtr()->getTimeseriesOptions(),
-                                           collectionPtr()->getDefaultCollator()),
+            timeseries::write_ops::makeBucketDocument({modifiedMeasurements[0]},
+                                                      collectionPtr()->ns(),
+                                                      collectionPtr()->uuid(),
+                                                      *collectionPtr()->getTimeseriesOptions(),
+                                                      collectionPtr()->getDefaultCollator()),
             _bucketUnpacker.bucket(),
             modifiedMeasurements[0],
             matchedMeasurements[0]);

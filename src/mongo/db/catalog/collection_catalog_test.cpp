@@ -33,11 +33,9 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <map>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
+#include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/oid.h"
@@ -47,6 +45,8 @@
 #include "mongo/db/catalog/collection_mock.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_yield_restore.h"
+#include "mongo/db/catalog/durable_catalog.h"
+#include "mongo/db/catalog/durable_catalog_entry_metadata.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/uncommitted_catalog_updates.h"
 #include "mongo/db/catalog_raii.h"
@@ -65,9 +65,8 @@
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context_d_test_fixture.h"
-#include "mongo/db/storage/bson_collection_catalog_entry.h"
-#include "mongo/db/storage/durable_catalog.h"
 #include "mongo/db/storage/ident.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
@@ -80,6 +79,9 @@
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <map>
 
 namespace mongo {
 namespace {
@@ -1204,11 +1206,12 @@ private:
             ident::generateNewCollectionIdent(nss.dbName(),
                                               storageEngine->isUsingDirectoryPerDb(),
                                               storageEngine->isUsingDirectoryForIndexes());
+        auto mdbCatalog = storageEngine->getMDBCatalog();
         std::pair<RecordId, std::unique_ptr<RecordStore>> catalogIdRecordStorePair =
             uassertStatusOK(
-                storageEngine->getDurableCatalog()->createCollection(opCtx, nss, ident, options));
+                durable_catalog::createCollection(opCtx, nss, ident, options, mdbCatalog));
         auto& catalogId = catalogIdRecordStorePair.first;
-        auto catalogEntry = DurableCatalog::get(opCtx)->getParsedCatalogEntry(opCtx, catalogId);
+        auto catalogEntry = durable_catalog::getParsedCatalogEntry(opCtx, catalogId, mdbCatalog);
         auto metadata = catalogEntry->metadata;
         std::shared_ptr<Collection> ownedCollection = Collection::Factory::get(opCtx)->make(
             opCtx, nss, catalogId, metadata, std::move(catalogIdRecordStorePair.second));
@@ -1247,8 +1250,8 @@ private:
 
         // Drops the collection from the durable catalog.
         auto storageEngine = getServiceContext()->getStorageEngine();
-        uassertStatusOK(storageEngine->getDurableCatalog()->dropCollection(
-            opCtx, writableCollection->getCatalogId()));
+        uassertStatusOK(durable_catalog::dropCollection(
+            opCtx, writableCollection->getCatalogId(), storageEngine->getMDBCatalog()));
 
         // Drops the collection from the in-memory catalog.
         CollectionCatalog::get(opCtx)->dropCollection(
@@ -1483,6 +1486,7 @@ private:
 
 
         auto catalog = CollectionCatalog::get(opCtx);
+        auto mdbCatalog = MDBCatalog::get(opCtx);
         if (expectedExistence) {
             ASSERT(coll);
 
@@ -1496,7 +1500,7 @@ private:
             ASSERT_EQ(coll->getIndexCatalog()->numIndexesTotal(), expectedNumIndexes);
 
             auto catalogEntry =
-                DurableCatalog::get(opCtx)->getParsedCatalogEntry(opCtx, coll->getCatalogId());
+                durable_catalog::getParsedCatalogEntry(opCtx, coll->getCatalogId(), mdbCatalog);
             ASSERT(catalogEntry);
             ASSERT(coll->isMetadataEqual(catalogEntry->metadata->toBSON()));
 
@@ -1507,7 +1511,7 @@ private:
             ASSERT(!coll);
             if (nssOrUUID.isNamespaceString()) {
                 auto catalogEntry =
-                    DurableCatalog::get(opCtx)->scanForCatalogEntryByNss(opCtx, nssOrUUID.nss());
+                    durable_catalog::scanForCatalogEntryByNss(opCtx, nssOrUUID.nss(), mdbCatalog);
                 ASSERT(!catalogEntry);
 
                 // Lookups from the catalog should return the newly opened collection (in this case
@@ -1515,7 +1519,7 @@ private:
                 ASSERT_EQ(catalog->lookupCollectionByNamespace(opCtx, nssOrUUID.nss()), coll.get());
             } else {
                 auto catalogEntry =
-                    DurableCatalog::get(opCtx)->scanForCatalogEntryByUUID(opCtx, nssOrUUID.uuid());
+                    durable_catalog::scanForCatalogEntryByUUID(opCtx, nssOrUUID.uuid(), mdbCatalog);
                 ASSERT(!catalogEntry);
 
                 // Lookups from the catalog should return the newly opened collection (in this case
@@ -3432,10 +3436,10 @@ TEST_F(CollectionCatalogTimestampTest, OpenCollectionAfterDropAndCreateWithSameN
     const Timestamp firstCollectionDropTs = Timestamp(20, 20);
     createCollectionWithUUID(opCtx.get(), nss, createCollectionTs, collUUID);
 
-    const auto firstIdent = CollectionCatalog::get(opCtx.get())
-                                ->lookupCollectionByNamespace(opCtx.get(), nss)
-                                ->getRecordStore()
-                                ->getIdent();
+    const auto firstIdent = std::string{CollectionCatalog::get(opCtx.get())
+                                            ->lookupCollectionByNamespace(opCtx.get(), nss)
+                                            ->getRecordStore()
+                                            ->getIdent()};
 
     dropCollection(opCtx.get(), nss, firstCollectionDropTs);
 

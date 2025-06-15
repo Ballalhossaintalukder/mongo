@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/collection_routing_info_targeter.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -56,10 +49,8 @@
 #include "mongo/s/catalog_cache_mock.h"
 #include "mongo/s/catalog_cache_test_fixture.h"
 #include "mongo/s/chunk.h"
-#include "mongo/s/collection_routing_info_targeter.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/unittest/unittest.h"
@@ -67,6 +58,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -369,10 +369,7 @@ void CollectionRoutingInfoTargeterTest::testTargetUpdateWithRangePrefixHashedSha
     // When update targets using replacement object.
     auto request = buildUpdate(
         kNss, fromjson("{'a.b': {$gt : 2}}"), fromjson("{a: {b: -1}}"), /*upsert=*/false);
-    auto res = criTargeter.targetUpdate(operationContext(),
-                                        BatchItemRef(&request, 0),
-                                        nullptr /* useTwoPhaseWriteProtocol */,
-                                        nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    auto res = criTargeter.targetUpdate(operationContext(), BatchItemRef(&request, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 2);
     ASSERT_EQUALS(res[0].shardName, "3");
     ASSERT_EQUALS(res[1].shardName, "4");
@@ -382,39 +379,28 @@ void CollectionRoutingInfoTargeterTest::testTargetUpdateWithRangePrefixHashedSha
                                      fromjson("{$and: [{'a.b': {$gte : 0}}, {'a.b': {$lt: 99}}]}"),
                                      fromjson("{$set: {p : 1}}"),
                                      false);
-    res = criTargeter.targetUpdate(operationContext(),
-                                   BatchItemRef(&requestAndSet, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestAndSet, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "3");
 
     auto requestLT =
         buildUpdate(kNss, fromjson("{'a.b': {$lt : -101}}"), fromjson("{a: {b: 111}}"), false);
-    res = criTargeter.targetUpdate(operationContext(),
-                                   BatchItemRef(&requestLT, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestLT, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "1");
 
     // For op-style updates, query on _id gets targeted to all shards.
     auto requestOpUpdate =
         buildUpdate(kNss, fromjson("{_id: 1}"), fromjson("{$set: {p: 111}}"), false);
-    res = criTargeter.targetUpdate(operationContext(),
-                                   BatchItemRef(&requestOpUpdate, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestOpUpdate, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 5);
 
     // For replacement style updates, query on _id uses replacement doc to target. If the
     // replacement doc doesn't have shard key fields, then update should be routed to the shard
     // holding 'null' shard key documents.
     auto requestReplUpdate = buildUpdate(kNss, fromjson("{_id: 1}"), fromjson("{p: 111}"), false);
-    res = criTargeter.targetUpdate(operationContext(),
-                                   BatchItemRef(&requestReplUpdate, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res =
+        criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestReplUpdate, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "1");
 
@@ -422,20 +408,14 @@ void CollectionRoutingInfoTargeterTest::testTargetUpdateWithRangePrefixHashedSha
     auto requestFullKey =
         buildUpdate(kNss, fromjson("{'a.b':  100}"), fromjson("{a: {b: -111}}"), true);
     auto resUpsert =
-        criTargeter.targetUpdate(operationContext(),
-                                 BatchItemRef(&requestFullKey, 0),
-                                 nullptr /* useTwoPhaseWriteProtocol */,
-                                 nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+        criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestFullKey, 0)).endpoints;
     ASSERT_EQUALS(resUpsert.size(), 1);
     ASSERT_EQUALS(resUpsert[0].shardName, "4");
 
     // Upsert with full shard key.
     auto requestSuccess =
         buildUpdate(kNss, fromjson("{'a.b': 100, 'c.d': 'val'}"), fromjson("{a: {b: -111}}"), true);
-    res = criTargeter.targetUpdate(operationContext(),
-                                   BatchItemRef(&requestSuccess, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestSuccess, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "4");
 }
@@ -465,10 +445,7 @@ void CollectionRoutingInfoTargeterTest::testTargetUpdateWithHashedPrefixHashedSh
         // 'updateQueryObj'.
         auto request = buildUpdate(kNss, updateQueryObj, fromjson("{$set: {p: 1}}"), false);
         const auto res =
-            criTargeter.targetUpdate(operationContext(),
-                                     BatchItemRef(&request, 0),
-                                     nullptr /* useTwoPhaseWriteProtocol */,
-                                     nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+            criTargeter.targetUpdate(operationContext(), BatchItemRef(&request, 0)).endpoints;
         ASSERT_EQUALS(res.size(), 1);
         auto chunk = findChunk(updateQueryObj["a"]["b"]);
         ASSERT_EQUALS(res[0].shardName, chunk.getShardId());
@@ -477,10 +454,8 @@ void CollectionRoutingInfoTargeterTest::testTargetUpdateWithHashedPrefixHashedSh
     // Range queries will be able to target using the two phase write protocol.
     const auto updateObj = fromjson("{a: {b: -1}}");
     auto requestUpdate = buildUpdate(kNss, fromjson("{'a.b': {$gt : 101}}"), updateObj, false);
-    auto res = criTargeter.targetUpdate(operationContext(),
-                                        BatchItemRef(&requestUpdate, 0),
-                                        nullptr /* useTwoPhaseWriteProtocol */,
-                                        nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    auto res =
+        criTargeter.targetUpdate(operationContext(), BatchItemRef(&requestUpdate, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 4);
 }
 
@@ -494,10 +469,7 @@ void CollectionRoutingInfoTargeterTest::testTargetDeleteWithExactId() {
     auto criTargeter = prepare(BSON("a.b" << 1), splitPoints);
 
     auto requestId = buildDelete(kNss, fromjson("{_id: 68755000}"));
-    auto res = criTargeter.targetDelete(operationContext(),
-                                        BatchItemRef(&requestId, 0),
-                                        nullptr /* useTwoPhaseWriteProtocol */,
-                                        nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    auto res = criTargeter.targetDelete(operationContext(), BatchItemRef(&requestId, 0)).endpoints;
     ASSERT_EQUALS(res[0].shardName, "0");
 }
 
@@ -517,20 +489,16 @@ void CollectionRoutingInfoTargeterTest::testTargetDeleteWithRangePrefixHashedSha
 
     // Can delete wih partial shard key in the query if the query only targets one shard.
     auto requestPartialKey = buildDelete(kNss, fromjson("{'a.b': {$gt : 101}}"));
-    auto res = criTargeter.targetDelete(operationContext(),
-                                        BatchItemRef(&requestPartialKey, 0),
-                                        nullptr /* useTwoPhaseWriteProtocol */,
-                                        nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    auto res =
+        criTargeter.targetDelete(operationContext(), BatchItemRef(&requestPartialKey, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "4");
 
     // Test delete with range query.
     auto requestPartialKey2 = buildDelete(kNss, fromjson("{'a.b': {$gt: 0}}"));
     auto resMultipleShards =
-        criTargeter.targetDelete(operationContext(),
-                                 BatchItemRef(&requestPartialKey2, 0),
-                                 nullptr /* useTwoPhaseWriteProtocol */,
-                                 nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+        criTargeter.targetDelete(operationContext(), BatchItemRef(&requestPartialKey2, 0))
+            .endpoints;
     ASSERT_EQUALS(resMultipleShards.size(), 2);
     ASSERT_EQUALS(resMultipleShards[0].shardName, "3");
     ASSERT_EQUALS(resMultipleShards[1].shardName, "4");
@@ -538,36 +506,24 @@ void CollectionRoutingInfoTargeterTest::testTargetDeleteWithRangePrefixHashedSha
     // Test delete with no shard key.
     auto requestNoShardKey = buildDelete(kNss, fromjson("{'k': 0}"));
     auto resNoShardKey =
-        criTargeter.targetDelete(operationContext(),
-                                 BatchItemRef(&requestNoShardKey, 0),
-                                 nullptr /* useTwoPhaseWriteProtocol */,
-                                 nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+        criTargeter.targetDelete(operationContext(), BatchItemRef(&requestNoShardKey, 0)).endpoints;
     ASSERT_EQUALS(resNoShardKey.size(), 5);
 
     // Delete targeted correctly with full shard key in query.
     auto requestFullKey = buildDelete(kNss, fromjson("{'a.b': -101, 'c.d': 5}"));
-    res = criTargeter.targetDelete(operationContext(),
-                                   BatchItemRef(&requestFullKey, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetDelete(operationContext(), BatchItemRef(&requestFullKey, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "1");
 
     // Query with MinKey value should go to chunk '0' because MinKey is smaller than BSONNULL.
     auto requestMinKey =
         buildDelete(kNss, BSONObjBuilder().appendMinKey("a.b").append("c.d", 4).obj());
-    res = criTargeter.targetDelete(operationContext(),
-                                   BatchItemRef(&requestMinKey, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetDelete(operationContext(), BatchItemRef(&requestMinKey, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "0");
 
     auto requestMinKey2 = buildDelete(kNss, fromjson("{'a.b':  0, 'c.d': 5}"));
-    res = criTargeter.targetDelete(operationContext(),
-                                   BatchItemRef(&requestMinKey2, 0),
-                                   nullptr /* useTwoPhaseWriteProtocol */,
-                                   nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+    res = criTargeter.targetDelete(operationContext(), BatchItemRef(&requestMinKey2, 0)).endpoints;
     ASSERT_EQUALS(res.size(), 1);
     ASSERT_EQUALS(res[0].shardName, "3");
 }
@@ -597,10 +553,7 @@ void CollectionRoutingInfoTargeterTest::testTargetDeleteWithHashedPrefixHashedSh
         // 'queryObj'.
         auto request = buildDelete(kNss, queryObj);
         const auto res =
-            criTargeter.targetDelete(operationContext(),
-                                     BatchItemRef(&request, 0),
-                                     nullptr /* useTwoPhaseWriteProtocol */,
-                                     nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+            criTargeter.targetDelete(operationContext(), BatchItemRef(&request, 0)).endpoints;
         ASSERT_EQUALS(res.size(), 1);
         auto chunk = findChunk(queryObj["a"]["b"]);
         ASSERT_EQUALS(res[0].shardName, chunk.getShardId());
@@ -609,10 +562,7 @@ void CollectionRoutingInfoTargeterTest::testTargetDeleteWithHashedPrefixHashedSh
     // Range queries on hashed field can target using the two phase write protocol.
     auto request = buildDelete(kNss, fromjson("{'a.b': {$gt : 101}}"));
     auto resRangeQuery =
-        criTargeter.targetDelete(operationContext(),
-                                 BatchItemRef(&request, 0),
-                                 nullptr /* useTwoPhaseWriteProtocol */,
-                                 nullptr /* isNonTargetedWriteWithoutShardKeyWithExactId */);
+        criTargeter.targetDelete(operationContext(), BatchItemRef(&request, 0)).endpoints;
     ASSERT_EQUALS(resRangeQuery.size(), 4);
 }
 
@@ -710,35 +660,32 @@ TEST_F(CollectionRoutingInfoTargeterUntrackedTest, InsertIsTargetedToDbPrimarySh
     ASSERT_EQ(primaryShard, shardEndpoint.shardName);
     ASSERT_EQ(dbVersion, shardEndpoint.databaseVersion);
     ASSERT_EQ(ChunkVersion::UNSHARDED(), shardEndpoint.shardVersion->placementVersion());
-    ASSERT_EQ(boost::none, shardEndpoint.shardVersion->indexVersion());
 }
 
 TEST_F(CollectionRoutingInfoTargeterUntrackedTest, UpdateIsTargetedToDbPrimaryShard) {
     const auto targeter = prepare();
     const auto update = buildUpdate(kNss, fromjson("{}"), fromjson("{$set: {p : 1}}"), false);
     const auto shardEndpoints =
-        targeter.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+        targeter.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
 
     ASSERT_EQ(1, shardEndpoints.size());
     const auto& shardEndpoint = shardEndpoints.front();
     ASSERT_EQ(primaryShard, shardEndpoint.shardName);
     ASSERT_EQ(dbVersion, shardEndpoint.databaseVersion);
     ASSERT_EQ(ChunkVersion::UNSHARDED(), shardEndpoint.shardVersion->placementVersion());
-    ASSERT_EQ(boost::none, shardEndpoint.shardVersion->indexVersion());
 }
 
 TEST_F(CollectionRoutingInfoTargeterUntrackedTest, DeleteIsTargetedToDbPrimaryShard) {
     const auto targeter = prepare();
     const auto deleteOp = buildDelete(kNss, fromjson("{}"));
     const auto shardEndpoints =
-        targeter.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+        targeter.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
 
     ASSERT_EQ(1, shardEndpoints.size());
     const auto& shardEndpoint = shardEndpoints.front();
     ASSERT_EQ(primaryShard, shardEndpoint.shardName);
     ASSERT_EQ(dbVersion, shardEndpoint.databaseVersion);
     ASSERT_EQ(ChunkVersion::UNSHARDED(), shardEndpoint.shardVersion->placementVersion());
-    ASSERT_EQ(boost::none, shardEndpoint.shardVersion->indexVersion());
 }
 
 /**
@@ -776,7 +723,7 @@ TEST_F(CollectionRoutingInfoTargeterUnshardedTest, UpdateIsTargetedToOwningShard
     const auto targeter = prepare();
     const auto update = buildUpdate(kNss, fromjson("{}"), fromjson("{$set: {p : 1}}"), false);
     const auto shardEndpoints =
-        targeter.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+        targeter.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
 
     ASSERT_EQ(1, shardEndpoints.size());
     const auto& shardEndpoint = shardEndpoints.front();
@@ -789,7 +736,7 @@ TEST_F(CollectionRoutingInfoTargeterUnshardedTest, DeleteIsTargetedToOwningShard
     const auto targeter = prepare();
     const auto deleteOp = buildDelete(kNss, fromjson("{}"));
     const auto shardEndpoints =
-        targeter.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+        targeter.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
 
     ASSERT_EQ(1, shardEndpoints.size());
     const auto& shardEndpoint = shardEndpoints.front();
@@ -897,7 +844,6 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToUntrackedTimes
         ASSERT_EQ(_dbPrimaryShard, shardEndpoint.shardName);
         ASSERT_EQ(_dbVersion, shardEndpoint.databaseVersion);
         ASSERT_EQ(ChunkVersion::UNSHARDED(), shardEndpoint.shardVersion->placementVersion());
-        ASSERT_EQ(boost::none, shardEndpoint.shardVersion->indexVersion());
     };
 
     CollectionRoutingInfoTargeter cri(operationContext(), _untrackedTimeseriesNss);
@@ -909,14 +855,14 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToUntrackedTimes
     // Update
     const auto update = buildUpdate(kNss, fromjson("{}"), fromjson("{$set: {p : 1}}"), false);
     const auto endpointUpdate =
-        cri.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+        cri.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
     ASSERT_EQ(1, endpointUpdate.size());
     checkEndpoint(endpointUpdate.front());
 
     // Delete
     const auto deleteOp = buildDelete(kNss, fromjson("{}"));
     const auto endpointDelete =
-        cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+        cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
     ASSERT_EQ(1, endpointDelete.size());
     checkEndpoint(endpointDelete.front());
 }
@@ -949,14 +895,14 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToUnsplittableTi
     // Update
     const auto update = buildUpdate(kNss, fromjson("{}"), fromjson("{$set: {p : 1}}"), false);
     const auto endpointUpdate =
-        cri.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+        cri.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
     ASSERT_EQ(1, endpointUpdate.size());
     checkEndpoint(endpointUpdate.front());
 
     // Delete
     const auto deleteOp = buildDelete(kNss, fromjson("{}"));
     const auto endpointDelete =
-        cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+        cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
     ASSERT_EQ(1, endpointDelete.size());
     checkEndpoint(endpointDelete.front());
 }
@@ -1007,7 +953,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToShardedTimeser
         const auto update = buildUpdate(
             kNss, BSON(_metaField << -1), fromjson("{$set: {p : 1}}"), false, true /*multi*/);
         const auto endpoints =
-            cri.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+            cri.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
         checkEndpoints(endpoints, {_shard0});
     }
 
@@ -1018,7 +964,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToShardedTimeser
                                         false,
                                         true /*multi*/);
         const auto endpoints =
-            cri.targetUpdate(operationContext(), BatchItemRef(&update, 0), nullptr);
+            cri.targetUpdate(operationContext(), BatchItemRef(&update, 0)).endpoints;
         checkEndpoints(endpoints, {_shard0, _shard1});
     }
 
@@ -1026,7 +972,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToShardedTimeser
     {
         const auto deleteOp = buildDelete(kNss, BSON(_metaField << -1), true /*multi*/);
         const auto endpoints =
-            cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+            cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
         checkEndpoints(endpoints, {_shard0});
     }
 
@@ -1034,7 +980,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, TargetWritesToShardedTimeser
         const auto deleteOp = buildDelete(
             kNss, BSON(_metaField << BSON("$gte" << -10 << "$lt" << 10)), true /*multi*/);
         const auto endpoints =
-            cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0), nullptr);
+            cri.targetDelete(operationContext(), BatchItemRef(&deleteOp, 0)).endpoints;
         checkEndpoints(endpoints, {_shard0, _shard1});
     }
 }
@@ -1076,7 +1022,7 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, RefreshOnStaleResponse) {
 
     auto sci = StaleConfigInfo(bucketsNss, ShardVersion::UNSHARDED(), boost::none, _shard0);
 
-    // No need to refresh
+    // No need to refresh when no stale info or targeting error is present.
     ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
 
     // Setup new metadata on the CatalogCache representing nss is now a sharded time series.
@@ -1116,6 +1062,111 @@ TEST_F(CollectionRoutingInfoTargeterTimeseriesTest, RefreshOnStaleResponse) {
     ASSERT_EQ(nss, cri.getNS());
     ASSERT_EQ(false, cri.isTrackedTimeSeriesBucketsNamespace());
     ASSERT_FALSE(cri.timeseriesNamespaceNeedsRewrite(nss));
+}
+
+/*
+ * Verifies that refreshIfNeeded() compares StaleConfigInfo metadata against refreshed routing
+ * information as expected.
+ */
+TEST_F(ShardingTestFixtureWithMockCatalogCache, TestRefreshIfNeededAgainstUntrackedCollection) {
+    const auto dbName = DatabaseName::createDatabaseName_forTest(boost::none, "testDB");
+    const auto nss = NamespaceString::createNamespaceString_forTest(dbName, "testColl");
+    const ShardId shard0{"shard0"};
+    const ShardId shard1{"shard1"};
+    const ShardId primaryShard{shard0};
+
+    DatabaseVersion dbVersion{UUID::gen(), Timestamp(0, 1)};
+    getCatalogCacheMock()->setDatabaseReturnValue(
+        dbName, CatalogCacheMock::makeDatabaseInfo(dbName, primaryShard, dbVersion));
+
+    const StaleConfigInfo dummyStaleConfigInfo(nss, ShardVersion::UNSHARDED(), boost::none, shard0);
+
+    // Install metadata for an untracked collection - then verify against:
+    const auto initialCollVersion =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, initialCollVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    initialCollVersion);
+    CollectionRoutingInfoTargeter cri(operationContext(), nss);
+
+    // 1) No error noted.
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 2) An error notification, but with no changes in the metadata returned by the catalog cache.
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 3) An error notification, plus an updated unsharded version returned by the catalog cache.
+    dbVersion = dbVersion.makeUpdated();
+    const auto collVersionWithBumpedDbVersion =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, collVersionWithBumpedDbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    collVersionWithBumpedDbVersion);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+
+    // 4) An error notification, plus an updated tracked version returned by the catalog cache.
+    const ShardId dataShard{shard1};
+    const auto versionAfterSimulatedMoveCollection =
+        CatalogCacheMock::makeCollectionRoutingInfoUnsplittable(
+            nss, primaryShard, dbVersion, dataShard);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, versionAfterSimulatedMoveCollection);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+}
+
+TEST_F(ShardingTestFixtureWithMockCatalogCache, TestRefreshIfNeededAgainstTrackedCollection) {
+    const auto dbName = DatabaseName::createDatabaseName_forTest(boost::none, "testDB");
+    const auto nss = NamespaceString::createNamespaceString_forTest(dbName, "testColl");
+    const ShardId shard0{"shard0"};
+    const ShardId shard1{"shard1"};
+    const ShardId primaryShard{"shard0"};
+    const ShardId dataShard{"shard1"};
+
+    DatabaseVersion dbVersion{UUID::gen(), Timestamp(0, 1)};
+    getCatalogCacheMock()->setDatabaseReturnValue(
+        dbName, CatalogCacheMock::makeDatabaseInfo(dbName, primaryShard, dbVersion));
+
+    const StaleConfigInfo dummyStaleConfigInfo(nss, ShardVersion::UNSHARDED(), boost::none, shard0);
+
+    // Install metadata for a tracked collection - then verify against:
+    const auto initialCollVersion = CatalogCacheMock::makeCollectionRoutingInfoUnsplittable(
+        nss, primaryShard, dbVersion, dataShard);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, initialCollVersion);
+    CollectionRoutingInfoTargeter cri(operationContext(), nss);
+
+    // 1) No error noted.
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 2) An error notification, but with no changes in the metadata returned by the catalog cache.
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_FALSE(cri.refreshIfNeeded(operationContext()));
+
+    // 3) An error notification, plus an updated tracked version returned by the catalog cache.
+    const auto collVersionWhenSharded = CatalogCacheMock::makeCollectionRoutingInfoSharded(
+        nss,
+        primaryShard,
+        dbVersion,
+        KeyPattern(BSON("_id" << 1)),
+        {{ChunkRange(BSON("_id" << MINKEY), BSON("_id" << 0)), shard0},
+         {ChunkRange(BSON("_id" << 0), BSON("_id" << MAXKEY)), shard1}});
+    getCatalogCacheMock()->setCollectionReturnValue(nss, collVersionWhenSharded);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
+
+    // 4) An error notification, plus an updated unsharded version returned by the catalog cache.
+    const auto versionAfterUntrackCollection =
+        CatalogCacheMock::makeCollectionRoutingInfoUntracked(nss, primaryShard, dbVersion);
+    getCatalogCacheMock()->setCollectionReturnValue(nss, versionAfterUntrackCollection);
+    getCatalogCacheMock()->setCollectionReturnValue(nss.makeTimeseriesBucketsNamespace(),
+                                                    versionAfterUntrackCollection);
+
+    cri.noteStaleCollVersionResponse(operationContext(), dummyStaleConfigInfo);
+    ASSERT_TRUE(cri.refreshIfNeeded(operationContext()));
 }
 
 }  // namespace

@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <dlfcn.h>
-#include <memory>
-#include <string>
-
-#include <boost/filesystem/path.hpp>
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -41,6 +34,14 @@
 #include "mongo/logv2/log.h"
 #include "mongo/platform/shared_library.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <string>
+
+#include <dlfcn.h>
+
+#include <boost/filesystem/path.hpp>
+#include <boost/move/utility_core.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -78,7 +79,7 @@ StatusWith<void*> SharedLibrary::getSymbol(StringData name) {
     dlerror();
 
     // StringData is not assued to be null-terminated
-    std::string symbolName = name.toString();
+    std::string symbolName = std::string{name};
 
     void* symbol = dlsym(_handle, symbolName.c_str());
 

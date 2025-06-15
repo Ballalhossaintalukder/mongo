@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <deque>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
+#include "mongo/db/commands/parse_log_component_settings.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -39,9 +36,13 @@
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/commands/parse_log_component_settings.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/util/str.h"
+
+#include <deque>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace {
@@ -126,7 +127,7 @@ StatusWith<std::vector<LogComponentSetting>> parseLogComponentSettings(const BSO
             levelsToSet.push_back((LogComponentSetting(curr, swVerbosity.getValue())));
             continue;
         }
-        if (elem.type() != Object) {
+        if (elem.type() != BSONType::object) {
             return StatusWith<Result>(
                 ErrorCodes::BadValue,
                 str::stream() << "Invalid type " << typeName(elem.type()) << "for component "

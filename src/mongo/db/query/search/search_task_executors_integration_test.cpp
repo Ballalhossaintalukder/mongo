@@ -26,15 +26,14 @@
  *    exception statement from all source files in the program, then also delete
  *    it in the license file.
  */
-#include "mongo/platform/basic.h"
-
-#include "search_task_executors.h"
 
 #include "mongo/db/service_context.h"
 #include "mongo/executor/pinned_connection_task_executor_factory.h"
 #include "mongo/unittest/integration_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/future.h"
+
+#include "search_task_executors.h"
 
 namespace mongo {
 namespace executor {

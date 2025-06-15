@@ -29,15 +29,15 @@
 
 #include "mongo/client/replica_set_monitor.h"
 
-#include <limits>
-#include <vector>
-
 #include "mongo/client/connection_string.h"
 #include "mongo/client/connpool.h"
 #include "mongo/client/global_conn_pool.h"
 #include "mongo/client/replica_set_monitor_manager.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/fail_point.h"
+
+#include <limits>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -98,7 +98,7 @@ void ReplicaSetMonitor::cleanup() {
 }
 
 std::function<void()> ReplicaSetMonitor::_getCleanupCallback(StringData name) {
-    return [n = name.toString()] {
+    return [n = std::string{name}] {
         LOGV2(5046701, "ReplicaSetMonitor cleanup callback invoked", "name"_attr = n);
         // This callback should never invoke ReplicaSetMonitorManager::removeMonitor() because it's
         // a race: the RSM stored in ReplicaSetMonitorManager could be a new one. However, we can

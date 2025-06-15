@@ -27,20 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <cstdint>
-#include <initializer_list>
-#include <limits>
-#include <memory>
-#include <ostream>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -89,6 +75,7 @@
 #include "mongo/db/s/resharding/resharding_oplog_application.h"
 #include "mongo/db/s/resharding/resharding_oplog_applier_metrics.h"
 #include "mongo/db/s/resharding/resharding_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_d_test_fixture.h"
@@ -107,14 +94,26 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 

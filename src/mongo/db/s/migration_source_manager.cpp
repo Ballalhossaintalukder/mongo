@@ -29,13 +29,6 @@
 
 #include "mongo/db/s/migration_source_manager.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <string>
-#include <tuple>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -101,6 +94,14 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 
+#include <string>
+#include <tuple>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kShardingMigration
 
 namespace mongo {
@@ -119,14 +120,14 @@ const char kWriteConcernField[] = "writeConcern";
  * a max bound if needMaxBound is true and a min bound if forward is false.
  */
 BSONObj computeOtherBound(OperationContext* opCtx,
-                          const NamespaceString& nss,
+                          const CollectionAcquisition& acquisition,
                           const BSONObj& min,
                           const BSONObj& max,
                           const ShardKeyPattern& skPattern,
                           const long long maxChunkSizeBytes,
                           bool needMaxBound) {
     auto [splitKeys, _] = autoSplitVector(
-        opCtx, nss, skPattern.toBSON(), min, max, maxChunkSizeBytes, 1, needMaxBound);
+        opCtx, acquisition, skPattern.toBSON(), min, max, maxChunkSizeBytes, 1, needMaxBound);
     if (splitKeys.size()) {
         return std::move(splitKeys.front());
     }
@@ -195,12 +196,20 @@ MigrationSourceManager MigrationSourceManager::createMigrationSourceManager(
 
     // Compute the max or min bound in case only one is set (moveRange)
     if (!args.getMax().has_value() || !args.getMin().has_value()) {
+        auto acquisition =
+            acquireCollection(opCtx,
+                              CollectionAcquisitionRequest::fromOpCtx(
+                                  opCtx, nss, AcquisitionPrerequisites::OperationType::kRead),
+                              MODE_IS);
         const auto metadata = [&]() {
-            AutoGetCollection autoColl(opCtx, nss, MODE_IS);
             const auto scopedCsr =
                 CollectionShardingRuntime::assertCollectionLockedAndAcquireShared(opCtx, nss);
-            const auto [metadata, _] = checkCollectionIdentity(
-                opCtx, nss, args.getEpoch(), args.getCollectionTimestamp(), *autoColl, *scopedCsr);
+            const auto metadata = checkCollectionIdentity(opCtx,
+                                                          nss,
+                                                          boost::none /* epoch */,
+                                                          args.getCollectionTimestamp(),
+                                                          acquisition.getCollectionPtr(),
+                                                          *scopedCsr);
             return metadata;
         }();
 
@@ -210,7 +219,7 @@ MigrationSourceManager MigrationSourceManager::createMigrationSourceManager(
             const auto cm = metadata.getChunkManager();
             const auto owningChunk = cm->findIntersectingChunkWithSimpleCollation(min);
             const auto max = computeOtherBound(opCtx,
-                                               nss,
+                                               acquisition,
                                                min,
                                                owningChunk.getMax(),
                                                cm->getShardKeyPattern(),
@@ -224,7 +233,7 @@ MigrationSourceManager MigrationSourceManager::createMigrationSourceManager(
             const auto cm = metadata.getChunkManager();
             const auto owningChunk = getChunkForMaxBound(*cm, max);
             const auto min = computeOtherBound(opCtx,
-                                               nss,
+                                               acquisition,
                                                owningChunk.getMin(),
                                                max,
                                                cm->getShardKeyPattern(),
@@ -259,7 +268,8 @@ MigrationSourceManager::MigrationSourceManager(OperationContext* opCtx,
                         _args.getMax(),
                         6,  // Total number of steps
                         _args.getToShard(),
-                        _args.getFromShard()) {
+                        _args.getFromShard()),
+      _collectionTimestamp(_args.getCollectionTimestamp()) {
     // Since the MigrationSourceManager is registered on the CSR from the constructor, another
     // thread can get it and abort the migration (and get a reference to the completion promise's
     // future). When this happens, since we throw an exception from the constructor, the destructor
@@ -272,15 +282,19 @@ MigrationSourceManager::MigrationSourceManager(OperationContext* opCtx,
 
     // Snapshot the committed metadata from the time the migration starts and register the
     // MigrationSourceManager on the CSR.
-    const auto [collectionMetadata, collectionIndexInfo, collectionUUID] = [&] {
+    const auto [collectionMetadata, collectionUUID] = [&] {
         // TODO (SERVER-71444): Fix to be interruptible or document exception.
         UninterruptibleLockGuard noInterrupt(_opCtx);  // NOLINT.
         AutoGetCollection autoColl(_opCtx, nss(), MODE_IS);
         auto scopedCsr =
             CollectionShardingRuntime::assertCollectionLockedAndAcquireExclusive(opCtx, nss());
 
-        auto [metadata, indexInfo] = checkCollectionIdentity(
-            _opCtx, nss(), _args.getEpoch(), _args.getCollectionTimestamp(), *autoColl, *scopedCsr);
+        auto metadata = checkCollectionIdentity(_opCtx,
+                                                nss(),
+                                                boost::none /* epoch */,
+                                                _args.getCollectionTimestamp(),
+                                                *autoColl,
+                                                *scopedCsr);
 
         UUID collectionUUID = autoColl.getCollection()->uuid();
 
@@ -294,8 +308,7 @@ MigrationSourceManager::MigrationSourceManager(OperationContext* opCtx,
 
         _scopedRegisterer.emplace(this, *scopedCsr);
 
-        return std::make_tuple(
-            std::move(metadata), std::move(indexInfo), std::move(collectionUUID));
+        return std::make_pair(std::move(metadata), std::move(collectionUUID));
     }();
 
     // Drain the execution/cancellation of any existing range deletion task overlapping with the
@@ -339,20 +352,12 @@ MigrationSourceManager::MigrationSourceManager(OperationContext* opCtx,
         opCtx->sleepFor(Milliseconds(1000));
     }
 
-    checkShardKeyPattern(_opCtx,
-                         nss(),
-                         collectionMetadata,
-                         collectionIndexInfo,
-                         ChunkRange(*_args.getMin(), *_args.getMax()));
-    checkRangeWithinChunk(_opCtx,
-                          nss(),
-                          collectionMetadata,
-                          collectionIndexInfo,
-                          ChunkRange(*_args.getMin(), *_args.getMax()));
+    checkShardKeyPattern(
+        _opCtx, nss(), collectionMetadata, ChunkRange(*_args.getMin(), *_args.getMax()));
+    checkRangeWithinChunk(
+        _opCtx, nss(), collectionMetadata, ChunkRange(*_args.getMin(), *_args.getMax()));
 
-    _collectionEpoch = _args.getEpoch();
     _collectionUUID = collectionUUID;
-    _collectionTimestamp = _args.getCollectionTimestamp();
 
     _chunkVersion = collectionMetadata.getChunkManager()
                         ->findIntersectingChunkWithSimpleCollation(*_args.getMin())
@@ -776,27 +781,16 @@ CollectionMetadata MigrationSourceManager::_getCurrentMetadataAndCheckForConflic
                 optMetadata);
         return *optMetadata;
     }();
-    if (_collectionTimestamp) {
-        uassert(ErrorCodes::ConflictingOperationInProgress,
-                str::stream()
-                    << "The collection's timestamp has changed since the migration began. Expected "
-                       "timestamp: "
-                    << _collectionTimestamp->toStringPretty() << ", but found: "
-                    << (metadata.isSharded()
-                            ? metadata.getCollPlacementVersion().getTimestamp().toStringPretty()
-                            : "unsharded collection"),
-                metadata.isSharded() &&
-                    *_collectionTimestamp == metadata.getCollPlacementVersion().getTimestamp());
-    } else {
-        uassert(
-            ErrorCodes::ConflictingOperationInProgress,
+    uassert(ErrorCodes::ConflictingOperationInProgress,
             str::stream()
-                << "The collection's epoch has changed since the migration began. Expected epoch: "
-                << _collectionEpoch->toString() << ", but found: "
-                << (metadata.isSharded() ? metadata.getCollPlacementVersion().toString()
-                                         : "unsharded collection"),
-            metadata.isSharded() && metadata.getCollPlacementVersion().epoch() == _collectionEpoch);
-    }
+                << "The collection's timestamp has changed since the migration began. Expected "
+                   "timestamp: "
+                << _collectionTimestamp.toStringPretty() << ", but found: "
+                << (metadata.isSharded()
+                        ? metadata.getCollPlacementVersion().getTimestamp().toStringPretty()
+                        : "unsharded collection"),
+            metadata.isSharded() &&
+                _collectionTimestamp == metadata.getCollPlacementVersion().getTimestamp());
 
     return metadata;
 }

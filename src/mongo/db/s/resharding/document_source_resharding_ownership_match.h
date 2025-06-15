@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -50,6 +43,13 @@
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/shard_key_pattern.h"
 
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -58,7 +58,8 @@ namespace mongo {
  * resharding pipelines which need to be able to answer this question very quickly. To do so, it
  * re-uses pieces of sharding infrastructure rather than applying a MatchExpression.
  */
-class DocumentSourceReshardingOwnershipMatch final : public DocumentSource {
+class DocumentSourceReshardingOwnershipMatch final : public DocumentSource,
+                                                     public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalReshardingOwnershipMatch"_sd;
 
@@ -86,7 +87,7 @@ public:
     }
 
     const char* getSourceName() const final {
-        return DocumentSourceReshardingOwnershipMatch::kStageName.rawData();
+        return DocumentSourceReshardingOwnershipMatch::kStageName.data();
     }
 
     static const Id& id;

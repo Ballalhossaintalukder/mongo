@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
@@ -44,9 +42,10 @@
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/resharding/common_types_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/util/functional.h"
 #include "mongo/util/uuid.h"
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 

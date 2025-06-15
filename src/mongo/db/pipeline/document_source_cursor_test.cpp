@@ -28,24 +28,25 @@
  */
 
 
-#include <cstddef>
-#include <fmt/format.h>
-#include <string>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_cursor.h"
 
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
-#include "mongo/db/pipeline/document_source_cursor.h"
 #include "mongo/db/query/plan_explainer.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/random.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -188,7 +189,7 @@ public:
         _isDisposed = true;
     }
 
-    void forceSpill() override {
+    void forceSpill(PlanYieldPolicy* yieldPolicy) override {
         MONGO_UNREACHABLE;
     }
 
@@ -221,13 +222,6 @@ public:
 
     const PlanExplainer& getPlanExplainer() const override {
         return _mockExplainer;
-    }
-
-    void enableSaveRecoveryUnitAcrossCommandsIfSupported() override {
-        MONGO_UNREACHABLE;
-    }
-    bool isSaveRecoveryUnitAcrossCommandsEnabled() const override {
-        MONGO_UNREACHABLE;
     }
 
     boost::optional<StringData> getExecutorType() const override {

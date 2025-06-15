@@ -32,15 +32,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <set>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -76,6 +67,15 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <set>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -176,14 +176,6 @@ TEST_F(ClusterExchangeTest, SingleMergeStageNotEligibleForExchangeIfOutputCollec
     expectGetDatabase(kTestTargetNss);
     // Pretend there are no collections in this database.
     expectFindSendBSONObjVector(kConfigHostAndPort, std::vector<BSONObj>());
-    if (feature_flags::gGlobalIndexesShardingCatalog.isEnabledAndIgnoreFCVUnsafe()) {
-        onCommand([&](const executor::RemoteCommandRequest& request) {
-            ASSERT_EQ(request.target, kConfigHostAndPort);
-            ASSERT_EQ(request.dbname, DatabaseName::kConfig);
-            return CursorResponse(CollectionType::ConfigNS, CursorId{0}, {})
-                .toBSON(CursorResponse::ResponseType::InitialResponse);
-        });
-    }
 
     future.default_timed_get();
 }

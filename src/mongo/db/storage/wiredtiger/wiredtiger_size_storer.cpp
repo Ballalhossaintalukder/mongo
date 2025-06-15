@@ -27,26 +27,27 @@
  *    it in the license file.
  */
 
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_size_storer.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_begin_transaction_block.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_customization_hooks.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_error_util.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_size_storer.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/timer.h"
+
+#include <wiredtiger.h>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -86,7 +87,8 @@ void WiredTigerSizeStorer::store(StringData uri, std::shared_ptr<SizeInfo> sizeI
                 "entryUseCount"_attr = entry.use_count());
 }
 
-std::shared_ptr<WiredTigerSizeStorer::SizeInfo> WiredTigerSizeStorer::load(StringData uri) const {
+std::shared_ptr<WiredTigerSizeStorer::SizeInfo> WiredTigerSizeStorer::load(
+    WiredTigerSession& session, StringData uri) const {
     {
         // Check if we can satisfy the read from the buffer.
         stdx::lock_guard<stdx::mutex> bufferLock(_bufferMutex);
@@ -95,11 +97,11 @@ std::shared_ptr<WiredTigerSizeStorer::SizeInfo> WiredTigerSizeStorer::load(Strin
             return it->second ? it->second : std::make_shared<SizeInfo>();
     }
 
-    WiredTigerSession session{_conn};
     auto cursor = session.getNewCursor(_storageUri);
+    ON_BLOCK_EXIT([&] { session.closeCursor(cursor); });
 
     {
-        WT_ITEM key = {uri.rawData(), uri.size()};
+        WT_ITEM key = {uri.data(), uri.size()};
         cursor->set_key(cursor, &key);
         int ret = cursor->search(cursor);
         if (ret == WT_NOTFOUND)

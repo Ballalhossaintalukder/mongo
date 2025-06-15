@@ -27,27 +27,28 @@
  *    it in the license file.
  */
 
-#include <string>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/current_date_node.h"
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/json.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/update/current_date_node.h"
 #include "mongo/db/update/update_executor.h"
 #include "mongo/db/update/update_node_test_fixture.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 namespace {
 
 void assertOplogEntryIsUpdateOfExpectedType(const BSONObj& obj,
                                             StringData fieldName,
-                                            BSONType expectedType = BSONType::Date) {
+                                            BSONType expectedType = BSONType::date) {
     ASSERT_EQUALS(obj.nFields(), 2);
     ASSERT_EQUALS(obj["$v"].numberInt(), 2);
     ASSERT_EQUALS(obj["diff"]["u"][fieldName].type(), expectedType);
@@ -149,7 +150,7 @@ TEST_F(CurrentDateNodeTest, ApplyTrue) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::Date);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::date);
 
     assertOplogEntryIsUpdateOfExpectedType(getOplogEntry(), "a");
 }
@@ -169,7 +170,7 @@ TEST_F(CurrentDateNodeTest, ApplyFalse) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::Date);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::date);
 
     assertOplogEntryIsUpdateOfExpectedType(getOplogEntry(), "a");
 }
@@ -189,7 +190,7 @@ TEST_F(CurrentDateNodeTest, ApplyDate) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::Date);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::date);
 
     assertOplogEntryIsUpdateOfExpectedType(getOplogEntry(), "a");
 }
@@ -209,9 +210,9 @@ TEST_F(CurrentDateNodeTest, ApplyTimestamp) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::bsonTimestamp);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::timestamp);
 
-    assertOplogEntryIsUpdateOfExpectedType(getOplogEntry(), "a", BSONType::bsonTimestamp);
+    assertOplogEntryIsUpdateOfExpectedType(getOplogEntry(), "a", BSONType::timestamp);
 }
 
 TEST_F(CurrentDateNodeTest, ApplyFieldDoesNotExist) {
@@ -229,11 +230,11 @@ TEST_F(CurrentDateNodeTest, ApplyFieldDoesNotExist) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::Date);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::date);
 
     ASSERT_EQUALS(getOplogEntry().nFields(), 2);
     ASSERT_EQUALS(getOplogEntry()["$v"].numberInt(), 2);
-    ASSERT_EQUALS(getOplogEntry()["diff"]["i"]["a"].type(), BSONType::Date);
+    ASSERT_EQUALS(getOplogEntry()["diff"]["i"]["a"].type(), BSONType::date);
 }
 
 TEST_F(CurrentDateNodeTest, ApplyIndexesNotAffected) {
@@ -267,7 +268,7 @@ TEST_F(CurrentDateNodeTest, ApplyNoIndexDataOrLogBuilder) {
 
     ASSERT_EQUALS(doc.root().countChildren(), 1U);
     ASSERT_TRUE(doc.root()["a"].ok());
-    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::Date);
+    ASSERT_EQUALS(doc.root()["a"].getType(), BSONType::date);
 }
 
 }  // namespace

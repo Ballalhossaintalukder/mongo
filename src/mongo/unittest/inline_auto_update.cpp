@@ -27,11 +27,14 @@
  *    it in the license file.
  */
 
-#include "mongo/unittest/inline_auto_update.h"
 
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
+#include "mongo/unittest/assert.h"
+#include "mongo/unittest/framework.h"
+#include "mongo/util/str_escape.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -41,9 +44,6 @@
 #include <map>
 #include <memory>
 #include <utility>
-
-#include "mongo/unittest/framework.h"
-#include "mongo/util/str_escape.h"
 
 namespace mongo::unittest {
 namespace {

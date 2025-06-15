@@ -27,8 +27,7 @@
  *    it in the license file.
  */
 
-#include <utility>
-#include <variant>
+#include "mongo/db/exec/express/express_plan.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -41,7 +40,6 @@
 #include "mongo/db/collection_crud/collection_write_path.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/curop.h"
-#include "mongo/db/exec/express/express_plan.h"
 #include "mongo/db/index/index_constants.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/namespace_string.h"
@@ -53,6 +51,9 @@
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <utility>
+#include <variant>
 
 namespace mongo::express {
 namespace {
@@ -258,7 +259,7 @@ TEST_F(ExpressPlanTest, TestLookupViaUserIndexWithMatchingQuery) {
     CollatorInterface* collator = nullptr;
     LookupViaUserIndex<const CollectionPtr*> iterator(filter.firstElement(),
                                                       indexDescriptor->getEntry()->getIdent(),
-                                                      indexName.toString(),
+                                                      std::string{indexName},
                                                       collator);
     iterator.open(operationContext(), &collectionPtr, &iteratorStats);
 
@@ -297,7 +298,7 @@ TEST_F(ExpressPlanTest, TestLookupViaUserIndexWithMatchingQueryUsingCollator) {
     auto filter = fromjson("{a: 'iii'}");
     LookupViaUserIndex<const CollectionPtr*> iterator(filter.firstElement(),
                                                       indexDescriptor->getEntry()->getIdent(),
-                                                      indexName.toString(),
+                                                      std::string{indexName},
                                                       collator);
     iterator.open(operationContext(), &collectionPtr, &iteratorStats);
 
@@ -333,7 +334,7 @@ TEST_F(ExpressPlanTest, TestLookupViaUserIndexWWithNonMatchingQuery) {
     CollatorInterface* collator = nullptr;
     LookupViaUserIndex<const CollectionPtr*> iterator(filter.firstElement(),
                                                       indexDescriptor->getEntry()->getIdent(),
-                                                      indexName.toString(),
+                                                      std::string{indexName},
                                                       collator);
     iterator.open(operationContext(), &collectionPtr, &iteratorStats);
 
@@ -380,7 +381,7 @@ TEST_F(ExpressPlanTest, TestLookupViaUserIndexNullCollectionOnRestoreThrows) {
     CollatorInterface* collator = nullptr;
     LookupViaUserIndex<const CollectionPtr*> iterator(filter.firstElement(),
                                                       indexDescriptor->getEntry()->getIdent(),
-                                                      indexName.toString(),
+                                                      std::string{indexName},
                                                       collator);
     iterator.open(operationContext(), &collectionPtr, &iteratorStats);
     auto nss = NamespaceString::createNamespaceString_forTest("ExpressPlanTest.TestCollection");

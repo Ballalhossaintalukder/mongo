@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/client/replica_set_change_notifier.h"
@@ -51,6 +43,15 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/synchronized_value.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -116,6 +117,8 @@ public:
         AtomicWord<int> pendingTimeoutMS;
         AtomicWord<int> toRefreshTimeoutMS;
 
+        AtomicWord<int> connectionRequestsMaxQueueDepth;
+
         synchronized_value<std::string> matchingStrategyString;
         AtomicWord<MatchingStrategy> matchingStrategy;
 
@@ -158,6 +161,9 @@ public:
     Milliseconds hostTimeout() const override;
     Milliseconds pendingTimeout() const override;
     Milliseconds toRefreshTimeout() const override;
+
+    size_t connectionRequestsMaxQueueDepth() const override;
+    size_t maxConnections() const override;
 
     StringData name() const override {
         return "ShardingTaskExecutorPoolController"_sd;

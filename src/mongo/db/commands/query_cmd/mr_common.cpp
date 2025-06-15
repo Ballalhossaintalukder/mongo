@@ -29,22 +29,6 @@
 
 #include "mongo/db/commands/query_cmd/mr_common.h"
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <set>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -84,6 +68,22 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <set>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo::map_reduce_common {
 
@@ -173,6 +173,7 @@ auto translateReduce(boost::intrusive_ptr<ExpressionContext> expCtx, std::string
     return DocumentSourceGroup::create(expCtx,
                                        std::move(groupKeyExpression),
                                        makeVector<AccumulationStatement>(std::move(jsReduce)),
+                                       false,
                                        boost::none);
 }
 
@@ -306,10 +307,10 @@ OutputOptions parseOutputOptions(const DatabaseName& dbName, const BSONObj& cmdO
     OutputOptions outputOptions;
 
     outputOptions.outNonAtomic = true;
-    if (cmdObj["out"].type() == String) {
+    if (cmdObj["out"].type() == BSONType::string) {
         outputOptions.collectionName = cmdObj["out"].String();
         outputOptions.outType = OutputType::Replace;
-    } else if (cmdObj["out"].type() == Object) {
+    } else if (cmdObj["out"].type() == BSONType::object) {
         BSONObj o = cmdObj["out"].embeddedObject();
 
         if (o.hasElement("normal")) {
@@ -385,7 +386,7 @@ Status checkAuthForMapReduce(const BasicCommand* commandTemplate,
 
     auto mapReduceField = cmdObj.firstElement();
     const auto emptyNss =
-        mapReduceField.type() == mongo::String && mapReduceField.valueStringData().empty();
+        mapReduceField.type() == BSONType::string && mapReduceField.valueStringData().empty();
     uassert(ErrorCodes::InvalidNamespace,
             str::stream() << "Invalid input namespace "
                           << inputResource.dbNameToMatch().toStringForErrorMsg() << "."
@@ -429,7 +430,7 @@ Status checkAuthForMapReduce(const BasicCommand* commandTemplate,
 bool mrSupportsWriteConcern(const BSONObj& cmd) {
     if (!cmd.hasField("out")) {
         return false;
-    } else if (cmd["out"].type() == Object && cmd["out"].Obj().hasField("inline")) {
+    } else if (cmd["out"].type() == BSONType::object && cmd["out"].Obj().hasField("inline")) {
         return false;
     } else {
         return true;

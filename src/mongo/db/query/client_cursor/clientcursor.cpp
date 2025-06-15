@@ -29,21 +29,12 @@
 
 #include "mongo/db/query/client_cursor/clientcursor.h"
 
-#include <boost/cstdint.hpp>
-#include <fmt/format.h>
-#include <iosfwd>
-#include <mutex>
-#include <ratio>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/catalog/external_data_source_scope_guard.h"
 #include "mongo/db/client.h"
 #include "mongo/db/commands/server_status_metric.h"
 #include "mongo/db/curop.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/query/client_cursor/cursor_manager.h"
 #include "mongo/db/query/client_cursor/cursor_server_params.h"
 #include "mongo/db/query/plan_explainer.h"
@@ -56,6 +47,16 @@
 #include "mongo/util/clock_source.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
 #include "mongo/util/exit.h"
+
+#include <iosfwd>
+#include <mutex>
+#include <ratio>
+#include <string>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -152,12 +153,6 @@ ClientCursor::~ClientCursor() {
     invariant(!_operationUsingCursor);
     invariant(_disposed);
 
-    if (_stashedRecoveryUnit) {
-        // Now that the associated PlanExecutor is being destroyed, the recovery unit no longer
-        // needs to keep data pinned.
-        _stashedRecoveryUnit->setAbandonSnapshotMode(RecoveryUnit::AbandonSnapshotMode::kAbort);
-    }
-
     // We manually dispose of the PlanExecutor here to release all acquisitions. This must be
     // deleted before the yielded acquisitions since the execution plan may maintain pointers to the
     // TransactionResources.
@@ -214,6 +209,14 @@ GenericCursor ClientCursor::toGenericCursor() const {
     gc.setLastAccessDate(getLastUseDate());
     gc.setCreatedDate(getCreatedDate());
     gc.setNBatchesReturned(getNBatches());
+    if (_memoryUsageTracker) {
+        if (auto inUseMemBytes = _memoryUsageTracker->currentMemoryBytes()) {
+            gc.setInUseMemBytes(inUseMemBytes);
+        }
+        if (auto maxUsedMemBytes = _memoryUsageTracker->maxMemoryBytes()) {
+            gc.setMaxUsedMemBytes(maxUsedMemBytes);
+        }
+    }
     gc.setPlanSummary(getPlanSummary());
     if (auto opCtx = _operationUsingCursor) {
         gc.setOperationUsingCursorId(opCtx->getOpID());
@@ -236,21 +239,20 @@ ClientCursorPin::ClientCursorPin(OperationContext* opCtx,
     invariant(_cursor);
     invariant(_cursor->_operationUsingCursor);
     invariant(!_cursor->_disposed);
-    _shouldSaveRecoveryUnit = _cursor->getExecutor()->isSaveRecoveryUnitAcrossCommandsEnabled();
-
     // We keep track of the number of cursors currently pinned. The cursor can become unpinned
     // either by being released back to the cursor manager or by being deleted. A cursor may be
     // transferred to another pin object via move construction or move assignment, but in this case
     // it is still considered pinned.
     cursorStats().openPinned.increment();
+    OperationMemoryUsageTracker::moveToOpCtxIfAvailable(opCtx,
+                                                        std::move(_cursor->_memoryUsageTracker));
 }
 
 ClientCursorPin::ClientCursorPin(ClientCursorPin&& other)
     : _opCtx(other._opCtx),
       _cursor(other._cursor),
       _cursorManager(other._cursorManager),
-      _interruptibleLockGuard(std::move(other._interruptibleLockGuard)),
-      _shouldSaveRecoveryUnit(other._shouldSaveRecoveryUnit) {
+      _interruptibleLockGuard(std::move(other._interruptibleLockGuard)) {
     // The pinned cursor is being transferred to us from another pin. The 'other' pin must have a
     // pinned cursor.
     invariant(other._cursor);
@@ -260,7 +262,6 @@ ClientCursorPin::ClientCursorPin(ClientCursorPin&& other)
     other._cursor = nullptr;
     other._opCtx = nullptr;
     other._cursorManager = nullptr;
-    other._shouldSaveRecoveryUnit = false;
 }
 
 ClientCursorPin& ClientCursorPin::operator=(ClientCursorPin&& other) {
@@ -288,9 +289,6 @@ ClientCursorPin& ClientCursorPin::operator=(ClientCursorPin&& other) {
 
     _interruptibleLockGuard = std::move(other._interruptibleLockGuard);
 
-    _shouldSaveRecoveryUnit = other._shouldSaveRecoveryUnit;
-    other._shouldSaveRecoveryUnit = false;
-
     return *this;
 }
 
@@ -300,17 +298,14 @@ ClientCursorPin::~ClientCursorPin() {
 
 void ClientCursorPin::release() {
     if (!_cursor) {
-        invariant(!_shouldSaveRecoveryUnit);
         return;
     }
 
     invariant(_cursor->_operationUsingCursor);
     invariant(_cursorManager);
 
-    if (_shouldSaveRecoveryUnit) {
-        stashResourcesFromOperationContext();
-        _shouldSaveRecoveryUnit = false;
-    }
+    _cursor->_memoryUsageTracker =
+        OperationMemoryUsageTracker::moveFromOpCtxIfAvailable(_cursor->_operationUsingCursor);
 
     // Unpin the cursor. This must be done by calling into the cursor manager, since the cursor
     // manager must acquire the appropriate mutex in order to safely perform the unpin operation.
@@ -330,32 +325,10 @@ void ClientCursorPin::deleteUnderlying() {
     _cursorManager->deregisterAndDestroyCursor(_opCtx, std::move(ownedCursor));
 
     cursorStats().openPinned.decrement();
-    _shouldSaveRecoveryUnit = false;
 }
 
 ClientCursor* ClientCursorPin::getCursor() const {
     return _cursor;
-}
-
-void ClientCursorPin::unstashResourcesOntoOperationContext() {
-    invariant(_cursor);
-    invariant(_cursor->_operationUsingCursor);
-    invariant(_opCtx == _cursor->_operationUsingCursor);
-
-    if (auto& ru = _cursor->_stashedRecoveryUnit) {
-        _shouldSaveRecoveryUnit = true;
-        invariant(!shard_role_details::getRecoveryUnit(_opCtx)->isActive());
-        shard_role_details::setRecoveryUnit(
-            _opCtx, std::move(ru), WriteUnitOfWork::RecoveryUnitState::kNotInUnitOfWork);
-    }
-}
-
-void ClientCursorPin::stashResourcesFromOperationContext() {
-    // Move the recovery unit from the operation context onto the cursor and create a new RU for
-    // the current OperationContext.
-    ClientLock clientLock(_opCtx->getClient());
-    _cursor->stashRecoveryUnit(
-        shard_role_details::releaseAndReplaceRecoveryUnit(_opCtx, clientLock));
 }
 
 namespace {

@@ -28,9 +28,6 @@
  */
 
 
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -54,6 +51,7 @@
 #include "mongo/db/s/shard_filtering_metadata_refresh.h"
 #include "mongo/db/s/sharded_collmod_gen.h"
 #include "mongo/db/s/sharding_recovery_service.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/timeseries/catalog_helper.h"
 #include "mongo/db/timeseries/timeseries_collmod.h"
@@ -63,10 +61,12 @@
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/out_of_line_executor.h"
+
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -140,15 +140,32 @@ public:
                                                           opCtx->getWriteConcern());
 
             opCtx->setAlwaysInterruptAtStepDownOrUp_UNSAFE();
-            // If the needsUnblock flag is set, we must have blocked the CRUD operations in the
-            // previous phase of collMod operation for granularity updates. Unblock it now after we
-            // have updated the granularity.
             if (request().getNeedsUnblock()) {
-                // This is only ever used for time-series collection as of now.
-                uassert(6102802,
-                        "collMod unblocking should always be on a time-series collection",
-                        timeseries::getTimeseriesOptions(opCtx, ns(), true));
-                auto bucketNs = ns().makeTimeseriesBucketsNamespace();
+                // If the needsUnblock flag is set, we must have blocked the CRUD operations in the
+                // previous phase of collMod operation for granularity updates. Unblock it now after
+                // we have updated the granularity.
+
+                // TODO SERVER-105548 remove bucketNs and always use namespace from request `ns()`
+                // once 9.0 becomes lastLTS
+                const auto bucketNs = [&] {
+                    auto [collAcq, _] = timeseries::acquireCollectionWithBucketsLookup(
+                        opCtx,
+                        CollectionAcquisitionRequest::fromOpCtx(
+                            opCtx, ns(), AcquisitionPrerequisites::OperationType::kRead),
+                        LockMode::MODE_IS);
+
+                    uassert(10332301,
+                            fmt::format("Received collMod participant command for collection '{}', "
+                                        "but collection was not found in shard catalog",
+                                        ns().toStringForErrorMsg()),
+                            collAcq.exists());
+
+                    // This is only ever used for time-series collection as of now.
+                    uassert(6102802,
+                            "collMod unblocking should always be on a time-series collection",
+                            collAcq.getCollectionPtr()->getTimeseriesOptions());
+                    return collAcq.nss();
+                }();
 
                 auto service = ShardingRecoveryService::get(opCtx);
                 const auto reason =

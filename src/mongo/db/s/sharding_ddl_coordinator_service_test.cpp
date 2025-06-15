@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
+#include "mongo/db/s/sharding_ddl_coordinator_service.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/client.h"
@@ -42,7 +37,6 @@
 #include "mongo/db/s/forwardable_operation_metadata.h"
 #include "mongo/db/s/migration_blocking_operation/migration_blocking_operation_coordinator.h"
 #include "mongo/db/s/sharding_ddl_coordinator_external_state_for_test.h"
-#include "mongo/db/s/sharding_ddl_coordinator_service.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/db/version_context.h"
 #include "mongo/executor/network_interface_factory.h"
@@ -56,6 +50,13 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
 #include "mongo/util/time_support.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -430,7 +431,7 @@ TEST_F(ShardingDDLCoordinatorServiceTest, TrackCoordinatorsWithGivenOfcvAndType)
     mbocTasks.push_back({spawnMigrationBlockingOperationCoordinator(
         opCtx,
         NamespaceString::createNamespaceString_forTest("testDB.collA"),
-        multiversion::GenericFCV::kLastLTS)});
+        multiversion::GenericFCV::kDowngradingFromLatestToLastLTS)});
     mbocTasks.push_back({spawnMigrationBlockingOperationCoordinator(
         opCtx,
         NamespaceString::createNamespaceString_forTest("testDB.collB"),
@@ -450,7 +451,8 @@ TEST_F(ShardingDDLCoordinatorServiceTest, TrackCoordinatorsWithGivenOfcvAndType)
 
     // (Generic FCV reference): used for testing, should exist across LTS binary versions
     assertNumActiveCoordinatorsWithGivenOfcv(multiversion::GenericFCV::kLatest, 2);
-    assertNumActiveCoordinatorsWithGivenOfcv(multiversion::GenericFCV::kLastLTS, 1);
+    assertNumActiveCoordinatorsWithGivenOfcv(
+        multiversion::GenericFCV::kDowngradingFromLatestToLastLTS, 1);
     assertNumActiveCoordinatorsWithGivenOfcv(boost::none, 1);
 
     PseudoRandom prng(Date_t::now().asInt64());
@@ -465,7 +467,7 @@ TEST_F(ShardingDDLCoordinatorServiceTest, TrackCoordinatorsWithGivenOfcvAndType)
     // (Generic FCV reference): used for testing, should exist across LTS binary versions
     ddlService()->waitForCoordinatorsOfGivenOfcvToComplete(
         opCtx, [](boost::optional<FCV> ofcv) -> bool {
-            return ofcv != multiversion::GenericFCV::kLastLTS;
+            return ofcv != multiversion::GenericFCV::kDowngradingFromLatestToLastLTS;
         });
 
     ASSERT_FALSE(mbocTasks[0].instance->getCompletionFuture().isReady());
@@ -475,7 +477,8 @@ TEST_F(ShardingDDLCoordinatorServiceTest, TrackCoordinatorsWithGivenOfcvAndType)
 
     // (Generic FCV reference): used for testing, should exist across LTS binary versions
     assertNumActiveCoordinatorsWithGivenOfcv(multiversion::GenericFCV::kLatest, 0);
-    assertNumActiveCoordinatorsWithGivenOfcv(multiversion::GenericFCV::kLastLTS, 1);
+    assertNumActiveCoordinatorsWithGivenOfcv(
+        multiversion::GenericFCV::kDowngradingFromLatestToLastLTS, 1);
     assertNumActiveCoordinatorsWithGivenOfcv(boost::none, 0);
 
     endLatestAndNoOfcvTasksThread.join();
@@ -488,7 +491,7 @@ TEST_F(ShardingDDLCoordinatorServiceTest, TrackCoordinatorsWithGivenOfcvAndType)
     // (Generic FCV reference): used for testing, should exist across LTS binary versions
     ddlService()->waitForCoordinatorsOfGivenOfcvToComplete(
         opCtx, [](boost::optional<FCV> ofcv) -> bool {
-            return ofcv == multiversion::GenericFCV::kLastLTS;
+            return ofcv == multiversion::GenericFCV::kDowngradingFromLatestToLastLTS;
         });
 
     ASSERT_TRUE(mbocTasks[0].instance->getCompletionFuture().isReady());

@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -94,6 +84,16 @@
 #include "mongo/util/decorable.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -322,7 +322,8 @@ private:
 
         incrementRead();
 
-        auto loc = _indexCursor->seekExact(kb.finishAndGetBuffer());
+        auto& ru = *shard_role_details::getRecoveryUnit(_opCtx);
+        auto loc = _indexCursor->seekExact(ru, kb.finishAndGetBuffer());
         if (!loc) {
             return boost::none;
         }
@@ -422,8 +423,27 @@ processFLEFindAndModifyHelper(OperationContext* opCtx,
         "Encrypted index operations are only supported on replica sets",
         repl::ReplicationCoordinator::get(opCtx->getServiceContext())->getSettings().isReplSet());
 
+    // TODO: SERVER-103506 remove this once TypedCommands can handle write concern errors better
+    auto onErrorWithWCE = [&opCtx](const WriteConcernErrorDetail& wce) {
+        // When a FLE2 findAndModify in mongod encounters a write error, the internal transaction
+        // that tried to perform the encrypted writes may abort with a write concern error.
+        // In such cases, the internal write concern error is lost because only the write error
+        // gets thrown up to the command dispatch layer. Moreover, since the internal transaction's
+        // writes were conducted under a different Client, the command's opCtx's Client's lastOpTime
+        // never gets advanced, and so the command dispatch skips waiting for write concern.
+        // Here, we set the opCtx's Client's lastOpTime to the system lastOpTime to indicate the
+        // need to wait for write concern again at the command dispatch layer.
+        if (!opCtx->inMultiDocumentTransaction()) {
+            repl::ReplClientInfo::forClient(opCtx->getClient()).setLastOpToSystemLastOpTime(opCtx);
+        }
+    };
+
     auto reply = processFindAndModifyRequest<write_ops::FindAndModifyCommandReply>(
-        opCtx, findAndModifyRequest, &getTransactionWithRetriesForMongoD);
+        opCtx,
+        findAndModifyRequest,
+        &getTransactionWithRetriesForMongoD,
+        processFindAndModify,
+        onErrorWithWCE);
 
     return reply;
 }
@@ -566,7 +586,8 @@ std::vector<std::vector<FLEEdgeCountInfo>> getTagsFromStorage(
             auto indexCatalogEntry = indexDescriptor->getEntry()->shared_from_this();
 
             auto sdi = indexCatalogEntry->accessMethod()->asSortedData();
-            auto indexCursor = sdi->newCursor(opCtx, true);
+            auto indexCursor =
+                sdi->newCursor(opCtx, *shard_role_details::getRecoveryUnit(opCtx), true);
 
             StorageEngineIndexCollectionReader reader(opCtx,
                                                       docCount,

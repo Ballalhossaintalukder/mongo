@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <exception>
-#include <string>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -58,6 +50,15 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/future.h"
+
+#include <exception>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -98,6 +99,10 @@ public:
         return std::visit(
             [](const auto& choice) -> const RecordStore* { return recordStore(choice); },
             _collectionPtrOrAcquisition);
+    }
+
+    bool exists() const {
+        return static_cast<bool>(getCollectionPtr());
     }
 
 private:
@@ -483,9 +488,11 @@ public:
     virtual void dispose(OperationContext* opCtx) = 0;
 
     /**
-     * Forces all stages in the execution plan that are able to spill their data.
+     * Forces all stages in the execution plan that are able to spill their data. Accepts a custom
+     * yield policy, because it can be called on an executor in a "saved" state without calling
+     * restoreState(). Can be nullptr if executor acquires locks internally.
      */
-    virtual void forceSpill() = 0;
+    virtual void forceSpill(PlanYieldPolicy* yieldPolicy) = 0;
 
     /**
      * Stash the BSONObj so that it gets returned from the PlanExecutor a subsequent call to
@@ -527,13 +534,6 @@ public:
      * query execution.
      */
     virtual const PlanExplainer& getPlanExplainer() const = 0;
-
-    /*
-     * Virtual methods to enable using save/restore logic that stashes the RecoveryUnit on the
-     * ClientCursor for future getMore commands in order to retain valid and positioned cursors.
-     */
-    virtual void enableSaveRecoveryUnitAcrossCommandsIfSupported() = 0;
-    virtual bool isSaveRecoveryUnitAcrossCommandsEnabled() const = 0;
 
     /**
      * For queries that have multiple executors, this can be used to differentiate between them.

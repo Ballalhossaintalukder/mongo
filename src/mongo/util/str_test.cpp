@@ -27,20 +27,21 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <bitset>
-#include <fmt/format.h>
-#include <limits>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/util/str.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/ctype.h"
 #include "mongo/util/hex.h"
-#include "mongo/util/str.h"
 #include "mongo/util/str_escape.h"
+
+#include <algorithm>
+#include <bitset>
+#include <limits>
+
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo::str {
 namespace {
@@ -268,6 +269,16 @@ TEST(StringUtilsTest, ConvertDoubleToStringWithProperPrecision) {
     ASSERT_EQUALS(std::string("6e-07"), convertDoubleToString(6E-7, 6));
     ASSERT_EQUALS(std::string("0.1000000006"), convertDoubleToString(0.1 + 6E-10, 10));
     ASSERT_EQUALS(std::string("0.1"), convertDoubleToString(0.1 + 6E-8, 6));
+}
+
+TEST(StringUtilsTest, EqualCaseInsensitive) {
+    ASSERT(str::equalCaseInsensitive(StringData("abc"), "abc"));
+    ASSERT(str::equalCaseInsensitive(StringData("abc"), "ABC"));
+    ASSERT(str::equalCaseInsensitive(StringData("ABC"), "abc"));
+    ASSERT(str::equalCaseInsensitive(StringData("ABC"), "ABC"));
+    ASSERT(str::equalCaseInsensitive(StringData("ABC"), "AbC"));
+    ASSERT(!str::equalCaseInsensitive(StringData("ABC"), "AbCd"));
+    ASSERT(!str::equalCaseInsensitive(StringData("ABC"), "AdC"));
 }
 
 TEST(StringUtilsTest, UTF8SafeTruncation) {

@@ -29,23 +29,10 @@
 
 #include "mongo/db/s/config/sharding_catalog_manager.h"
 
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <iterator>
-#include <mutex>
-#include <tuple>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bson_field.h"
 #include "mongo/bson/bsonelement.h"
+#include "mongo/bson/json.h"
 #include "mongo/bson/util/builder.h"
 #include "mongo/db/auth/authorization_session.h"
 #include "mongo/db/cancelable_operation_context.h"
@@ -59,7 +46,6 @@
 #include "mongo/db/error_labels.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/generic_argument_util.h"
-#include "mongo/db/json.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
@@ -119,6 +105,21 @@
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/scopeguard.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <mutex>
+#include <tuple>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -477,10 +478,10 @@ AggregateCommandRequest createInitPlacementHistoryAggregationRequest(
     using Project = DocumentSourceProject;
 
     // Aliases for the field names of the the final projections
-    const auto kNss = NamespacePlacementType::kNssFieldName.toString();
-    const auto kUuid = NamespacePlacementType::kUuidFieldName.toString();
-    const auto kShards = NamespacePlacementType::kShardsFieldName.toString();
-    const auto kTimestamp = NamespacePlacementType::kTimestampFieldName.toString();
+    const auto kNss = std::string{NamespacePlacementType::kNssFieldName};
+    const auto kUuid = std::string{NamespacePlacementType::kUuidFieldName};
+    const auto kShards = std::string{NamespacePlacementType::kShardsFieldName};
+    const auto kTimestamp = std::string{NamespacePlacementType::kTimestampFieldName};
 
     auto pipeline = PipelineBuilder(opCtx,
                                     CollectionType::ConfigNS,
@@ -1284,9 +1285,9 @@ void ShardingCatalogManager::withTransaction(
         try {
             startTransactionWithNoopFind(asr.opCtx(), namespaceForInitialFind, txnNumber);
             func(asr.opCtx(), txnNumber);
-        } catch (const ExceptionForCat<ErrorCategory::NotPrimaryError>&) {
+        } catch (const ExceptionFor<ErrorCategory::NotPrimaryError>&) {
             throw;
-        } catch (const ExceptionForCat<ErrorCategory::ShutdownError>&) {
+        } catch (const ExceptionFor<ErrorCategory::ShutdownError>&) {
             throw;
         } catch (const DBException& ex) {
             if (isTransientTransactionError(
@@ -1434,7 +1435,7 @@ void ShardingCatalogManager::initializePlacementHistory(OperationContext* opCtx)
                        allShardsQueryResponse.docs.end(),
                        std::back_inserter(shardsAtInitializationTime),
                        [](const BSONObj& doc) {
-                           return ShardId(doc.getStringField(ShardType::name.name()).toString());
+                           return ShardId(std::string{doc.getStringField(ShardType::name.name())});
                        });
     }
 

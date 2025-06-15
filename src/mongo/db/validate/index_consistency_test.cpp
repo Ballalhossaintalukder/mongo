@@ -27,12 +27,13 @@
  *    it in the license file.
  */
 
+#include "mongo/db/validate/index_consistency.h"
+
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/catalog/catalog_test_fixture.h"
 #include "mongo/db/collection_crud/collection_write_path.h"
 #include "mongo/db/validate/collection_validation.h"
-#include "mongo/db/validate/index_consistency.h"
 #include "mongo/db/validate/validate_gen.h"
 #include "mongo/db/validate/validate_options.h"
 #include "mongo/unittest/unittest.h"
@@ -60,7 +61,7 @@ ValidateResults validate(OperationContext* opCtx) {
 }
 
 // Clears the collection without updating indexes, this creates extra index entries.
-void clearCollection(OperationContext* opCtx, AutoGetCollection& coll) {
+void clearCollection(OperationContext* opCtx, const CollectionPtr& coll) {
     RecordStore* rs = coll->getRecordStore();
     ASSERT_OK(rs->truncate(opCtx));
 }
@@ -90,6 +91,7 @@ void clearIndexOfEntriesFoundInCollection(OperationContext* opCtx,
                      nullptr,
                      record->id);
         ASSERT_OK(iam->removeKeys(opCtx,
+                                  *shard_role_details::getRecoveryUnit(opCtx),
                                   descriptor->getEntry(),
                                   std::move(keys),
                                   InsertDeleteOptions{.dupsAllowed = true},
@@ -115,7 +117,7 @@ TEST_F(IndexConsistencyTest, ExtraIndexEntriesLimitedByMemoryBounds) {
                 operationContext(), *coll, InsertStatement(doc), nullptr));
         }
 
-        clearCollection(operationContext(), coll);
+        clearCollection(operationContext(), *coll);
         wuow.commit();
     }
 
@@ -149,7 +151,7 @@ TEST_F(IndexConsistencyTest, MissingIndexEntriesLimitedByMemoryBounds) {
         for (int i = 0; i < 10; ++i) {
             BSONObj doc = BSON("_id" << i);
             ASSERT_OK(collection_internal::insertDocument(
-                operationContext(), *coll, InsertStatement(doc), nullptr));
+                operationContext(), writer.get(), InsertStatement(doc), nullptr));
         }
 
         IndexCatalog* indexCatalog =
@@ -198,10 +200,10 @@ TEST_F(IndexConsistencyTest, ExtraEntryPartialFindingsWithNonzeroMemoryLimit) {
         for (int i = 0; i < 10; ++i) {
             BSONObj doc = BSON("_id" << i << "a" << std::string(600 * 1024, 'a' + i));
             ASSERT_OK(collection_internal::insertDocument(
-                operationContext(), *coll, InsertStatement(doc), nullptr));
+                operationContext(), writer.get(), InsertStatement(doc), nullptr));
         }
 
-        clearCollection(operationContext(), coll);
+        clearCollection(operationContext(), writer.get());
         wuow.commit();
     }
 
@@ -253,7 +255,7 @@ TEST_F(IndexConsistencyTest, MissingEntryPartialFindingsWithNonzeroMemoryLimit) 
         for (int i = 0; i < 10; ++i) {
             BSONObj doc = BSON("_id" << i << "a" << std::string(600 * 1024, 'a' + i));
             ASSERT_OK(collection_internal::insertDocument(
-                operationContext(), *coll, InsertStatement(doc), nullptr));
+                operationContext(), writer.get(), InsertStatement(doc), nullptr));
         }
 
         IndexCatalog* indexCatalog =
@@ -305,15 +307,15 @@ TEST_F(IndexConsistencyTest, MemoryLimitSharedBetweenMissingAndExtra) {
         for (int i = 0; i < 10; ++i) {
             BSONObj doc = BSON("_id" << i);
             ASSERT_OK(collection_internal::insertDocument(
-                operationContext(), *coll, InsertStatement(doc), nullptr));
+                operationContext(), writer.get(), InsertStatement(doc), nullptr));
         }
-        clearCollection(operationContext(), coll);
+        clearCollection(operationContext(), writer.get());
 
         // The second 10 entries are collection-only.
         for (int i = 10; i < 20; ++i) {
             BSONObj doc = BSON("_id" << i);
             ASSERT_OK(collection_internal::insertDocument(
-                operationContext(), *coll, InsertStatement(doc), nullptr));
+                operationContext(), writer.get(), InsertStatement(doc), nullptr));
         }
         IndexCatalog* indexCatalog =
             writer.getWritableCollection(operationContext())->getIndexCatalog();

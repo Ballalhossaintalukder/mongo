@@ -32,10 +32,19 @@
 #include "mongo/base/status.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
+#include "mongo/db/transaction_resources.h"
 #include "mongo/s/catalog_cache.h"
 #include "mongo/util/assert_util.h"
 
 namespace mongo {
+/**
+ * Holds a routing table and whether it has been validated by a shard.
+ */
+struct RoutingInfoEntry {
+    CollectionRoutingInfo cri;
+    bool validated;
+};
+
 /**
  * RoutingContext provides a structured interface for accessing routing table information via the
  * CatalogCache during a routing operation. It should be instantiated at the start of a query
@@ -52,16 +61,22 @@ public:
                        nssList,  // list of required namespaces for the routing operation
                    bool allowLocks = false);
 
+    // TODO SERVER-102931: Integrate the RouterAcquisitionSnapshot
+    /**
+     * Constructs a RoutingContext from pre-acquired routing tables.
+     */
+    RoutingContext(OperationContext* opCtx,
+                   const stdx::unordered_map<NamespaceString, CollectionRoutingInfo>& nssToCriMap);
+
     // Non-copyable, non-movable
     RoutingContext(const RoutingContext&) = delete;
     RoutingContext& operator=(const RoutingContext&) = delete;
 
-    ~RoutingContext();
-
     /**
-     * Create a RoutingContext without using a CatalogCache, for testing
+     * Create a RoutingContext with a synthetic routing table (without using a CatalogCache). Use
+     * this for testing or specific cases where fetching from the cache is not required.
      */
-    static RoutingContext createForTest(
+    static std::unique_ptr<RoutingContext> createSynthetic(
         stdx::unordered_map<NamespaceString, CollectionRoutingInfo> nssMap);
 
     /**
@@ -71,19 +86,39 @@ public:
     const CollectionRoutingInfo& getCollectionRoutingInfo(const NamespaceString& nss) const;
 
     /**
-     * Record that a versioned request for a namespace was accepted by a shard. The namespace is
+     * Record that a versioned request for a namespace was sent to a shard. The namespace is
      * considered validated.
      */
-    void onResponseReceivedForNss(const NamespaceString& nss, const Status& status);
+    void onRequestSentForNss(const NamespaceString& nss);
 
     /**
      * Utility to trigger CatalogCache refreshes for staleness errors directly from the
      * RoutingContext.
      */
-    bool onStaleError(const NamespaceString& nss, const Status& status);
+    void onStaleError(const NamespaceString& nss, const Status& status);
+
+    /**
+     * By default, the RoutingContext should be validated by running validateOnContextEnd() at the
+     * end of a routing operation. This sets _skipValidation to true if it is not a correctness bug
+     * for the RoutingContext to terminate without sending a request to a shard.
+     */
+    void skipValidation();
+
+    /**
+     * Validate the RoutingContext prior to destruction to ensure that either:
+     * 1. All declared namespaces have had their routing tables validated by sending a versioned
+     * request to a shard. Each namespace should have a corresponding Status value recording this.
+     * 2. An exception is thrown (i.e. if the collection generation has changed) and will be
+     * propagated up the stack.
+     *
+     * It is considered a logic bug if a RoutingContext goes out of scope and neither of the above
+     * are true, unless skipValidation() is explicitly set.
+     */
+    void validateOnContextEnd() const;
 
 private:
     RoutingContext(stdx::unordered_map<NamespaceString, CollectionRoutingInfo> nssMap);
+
     /**
      * Obtain the routing table associated with a namespace from the CatalogCache. This returns the
      * latest routing table unless the read concern is snapshot with "atClusterTime" set. If an
@@ -94,10 +129,73 @@ private:
                                                                 bool allowLocks) const;
 
     CatalogCache* _catalogCache;
-    // Map from _nss -> (CollectionRoutingInfo, Status).
-    using NssCriMap =
-        stdx::unordered_map<NamespaceString,
-                            std::pair<const CollectionRoutingInfo, boost::optional<Status>>>;
-    NssCriMap _nssToCriMap;
+
+    using NssRoutingInfoMap = stdx::unordered_map<NamespaceString, RoutingInfoEntry>;
+    NssRoutingInfoMap _nssRoutingInfoMap;
+
+    // If set, skip validation prior to destruction that the RoutingContext has had its routing
+    // tables validated by sending a versioned request to a shard
+    bool _skipValidation = false;
 };
+
+namespace routing_context_utils {
+/*
+ * Invoke a callback with a RoutingContext and call validateOnContextEnd() if it successfully
+ * finishes to ensure every declared namespace had its routing table validated by sending a
+ * versioned request to a shard.
+ */
+template <class Fn>
+auto runAndValidate(RoutingContext& routingCtx, Fn&& fn) {
+    using ReturnType = std::invoke_result_t<Fn, RoutingContext&>;
+    if constexpr (std::is_void_v<ReturnType>) {
+        fn(routingCtx);
+        routingCtx.validateOnContextEnd();
+    } else {
+        ReturnType res = fn(routingCtx);
+        routingCtx.validateOnContextEnd();
+        return res;
+    }
+}
+
+/*
+ * Construct a RoutingContext directly for a list of namespaces, run the callback, and check that
+ * all acquired routing tables were validated against a shard.
+ */
+template <class Fn>
+auto withValidatedRoutingContext(OperationContext* opCtx,
+                                 const std::vector<NamespaceString>& nssList,
+                                 Fn&& fn) {
+    RoutingContext routingCtx(opCtx, nssList);
+    return runAndValidate(routingCtx, std::forward<Fn>(fn));
+}
+
+/*
+ * Same as above, but checks whether locks are allowed if we are in a transaction.
+ */
+template <class Fn>
+auto withValidatedRoutingContextForTxnCmd(OperationContext* opCtx,
+                                          const std::vector<NamespaceString>& nssList,
+                                          Fn&& fn) {
+    // When in a multi-document transaction, allow getting routing info from the
+    // CatalogCache even though locks may be held. The CatalogCache will throw
+    // CannotRefreshDueToLocksHeld if the entry is not already cached.
+    const auto allowLocks =
+        opCtx->inMultiDocumentTransaction() && shard_role_details::getLocker(opCtx)->isLocked();
+    RoutingContext routingCtx(opCtx, nssList, allowLocks);
+    return runAndValidate(routingCtx, std::forward<Fn>(fn));
+}
+
+/*
+ * Construct a RoutingContext directly from a pre-computed map of nss->CollectionRoutingInfo pairs,
+ * run the callback, and check that all acquired routing tables were validated against a shard.
+ */
+template <class Fn>
+auto withValidatedRoutingContext(
+    OperationContext* opCtx,
+    const stdx::unordered_map<NamespaceString, CollectionRoutingInfo>& nssToCriMap,
+    Fn&& fn) {
+    RoutingContext routingCtx(opCtx, nssToCriMap);
+    return runAndValidate(routingCtx, std::forward<Fn>(fn));
+}
+}  // namespace routing_context_utils
 }  // namespace mongo

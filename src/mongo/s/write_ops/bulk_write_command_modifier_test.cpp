@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/none.hpp>
-#include <initializer_list>
-#include <memory>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/write_ops/bulk_write_command_modifier.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -46,10 +40,16 @@
 #include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/db/query/write_ops/write_ops_parsers_test_helpers.h"
 #include "mongo/s/chunk_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_version_factory.h"
-#include "mongo/s/write_ops/bulk_write_command_modifier.h"
 #include "mongo/unittest/unittest.h"
+
+#include <initializer_list>
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -144,9 +144,7 @@ TEST(BulkWriteCommandModifier, InsertWithShardVersion) {
         ASSERT_EQ("TestDB", nsInfo[0].getNs().db_forTest());
         ASSERT_EQ("test", nsInfo[0].getNs().coll());
         ASSERT_NE(boost::none, nsInfo[0].getShardVersion());
-        ASSERT_EQ(ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 2}),
-                                            boost::optional<CollectionIndexes>(boost::none))
-                      .toString(),
+        ASSERT_EQ(ShardVersionFactory::make(ChunkVersion({epoch, timestamp}, {1, 2})).toString(),
                   (*nsInfo[0].getShardVersion()).toString());
     }
 }

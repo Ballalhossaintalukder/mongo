@@ -28,16 +28,6 @@
  */
 #include "mongo/db/s/resharding/resharding_metrics.h"
 
-#include "mongo/util/duration.h"
-#include <absl/container/node_hash_map.h>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -48,7 +38,19 @@
 #include "mongo/db/server_options.h"
 #include "mongo/s/resharding/resharding_feature_flag_gen.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/duration.h"
 #include "mongo/util/namespace_string_util.h"
+
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -273,6 +275,14 @@ BSONObj ReshardingMetrics::reportForCurrentOp() const {
 
 void ReshardingMetrics::restoreRecipientSpecificFields(
     const ReshardingRecipientDocument& document) {
+    const auto& donorShards = document.getDonorShards();
+    std::vector<ShardId> donorShardIds(donorShards.size());
+    std::transform(donorShards.begin(),
+                   donorShards.end(),
+                   donorShardIds.begin(),
+                   [](auto donorShard) { return donorShard.getShardId(); });
+    registerDonors(donorShardIds);
+
     auto metrics = document.getMetrics();
     if (!metrics) {
         return;
@@ -359,19 +369,19 @@ void ReshardingMetrics::updateRecipientCtx(RecipientShardContext& recipientCtx) 
 }
 
 void ReshardingMetrics::onStarted() {
-    getReshardingCumulativeMetrics()->onStarted(_isSameKeyResharding.load());
+    getReshardingCumulativeMetrics()->onStarted(_isSameKeyResharding.load(), _instanceId);
 }
 
 void ReshardingMetrics::onSuccess() {
-    getReshardingCumulativeMetrics()->onSuccess(_isSameKeyResharding.load());
+    getReshardingCumulativeMetrics()->onSuccess(_isSameKeyResharding.load(), _instanceId);
 }
 
 void ReshardingMetrics::onFailure() {
-    getReshardingCumulativeMetrics()->onFailure(_isSameKeyResharding.load());
+    getReshardingCumulativeMetrics()->onFailure(_isSameKeyResharding.load(), _instanceId);
 }
 
 void ReshardingMetrics::onCanceled() {
-    getReshardingCumulativeMetrics()->onCanceled(_isSameKeyResharding.load());
+    getReshardingCumulativeMetrics()->onCanceled(_isSameKeyResharding.load(), _instanceId);
 }
 
 void ReshardingMetrics::setIsSameKeyResharding(bool isSameKeyResharding) {

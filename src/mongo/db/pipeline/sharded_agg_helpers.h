@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <utility>
-#include <variant>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonobj.h"
@@ -58,6 +48,17 @@
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/query/exec/owned_remote_cursor.h"
+
+#include <cstddef>
+#include <memory>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace sharded_agg_helpers {
@@ -119,11 +120,10 @@ enum class PipelineDataSource {
 
 /**
  * Targets shards for the pipeline and returns a struct with the remote cursors or results, and the
- * pipeline that will need to be executed to merge the results from the remotes. If a stale shard
- * version is encountered, refreshes the routing table and tries again. If the command is eligible
- * for sampling, attaches a unique sample id to the request for one of the targeted shards if the
- * collection has query sampling enabled and the rate-limited sampler successfully generates a
- * sample id for it.
+ * pipeline that will need to be executed to merge the results from the remotes. If the command is
+ * eligible for sampling, attaches a unique sample id to the request for one of the targeted shards
+ * if the collection has query sampling enabled and the rate-limited sampler successfully generates
+ * a sample id for it.
  *
  * Although the 'pipeline' has an 'ExpressionContext' which indicates whether this operation is an
  * explain (and if it is an explain what the verbosity is), the caller must explicitly indicate
@@ -137,6 +137,9 @@ enum class PipelineDataSource {
  * The explain works by first executing the inner and outer subpipelines in order to gather runtime
  * statistics. While dispatching the inner pipeline, we must dispatch it not as an explain but as a
  * regular agg command so that the runtime stats are accurate.
+ *
+ * The caller of this function must handle any stale shard version error error thrown by
+ * `dispatchShardPipeline`.
  */
 DispatchShardPipelineResults dispatchShardPipeline(
     Document serializedCommand,

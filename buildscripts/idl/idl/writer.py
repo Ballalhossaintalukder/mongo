@@ -27,8 +27,6 @@
 #
 """Text Writing Utilites."""
 
-from . import common
-
 # Number of spaces to indent code
 _INDENT_SPACE_COUNT = 4
 
@@ -101,7 +99,6 @@ class IndentedTextWriter(object):
         """Create an indented text writer."""
         self._stream = stream
         self._indent = 0
-        self._template_context = None  # type: Mapping[str, str]
 
     def write_unindented_line(self, msg):
         # type: (str) -> None
@@ -126,49 +123,10 @@ class IndentedTextWriter(object):
         self._stream.write(_indent_text(self._indent, msg))
         self._stream.write("\n")
 
-    def set_template_mapping(self, template_params):
-        # type: (Mapping[str,str]) -> None
-        """Set the current template mapping parameters for string.Template formatting."""
-        assert not self._template_context
-        self._template_context = template_params
-
-    def clear_template_mapping(self):
-        # type: () -> None
-        """Clear the current template mapping parameters for string.Template formatting."""
-        assert self._template_context
-        self._template_context = None
-
-    def write_template(self, template):
-        # type: (str) -> None
-        """Write a template to the stream."""
-        msg = common.template_format(template, self._template_context)
-        self._stream.write(_indent_text(self._indent, msg))
-        self._stream.write("\n")
-
     def write_empty_line(self):
         # type: () -> None
         """Write a line to the stream."""
         self._stream.write("\n")
-
-
-class TemplateContext(object):
-    """Set the template context for the writer."""
-
-    def __init__(self, writer, template_params):
-        # type: (IndentedTextWriter, Mapping[str,str]) -> None
-        """Create a template context."""
-        self._writer = writer
-        self._template_context = template_params
-
-    def __enter__(self):
-        # type: () -> None
-        """Set the template mapping for the writer."""
-        self._writer.set_template_mapping(self._template_context)
-
-    def __exit__(self, *args):
-        # type: (*str) -> None
-        """Clear the template mapping for the writer."""
-        self._writer.clear_template_mapping()
 
 
 class WriterBlock(object):
@@ -217,30 +175,33 @@ class IndentedScopedBlock(WriterBlock):
     def __enter__(self):
         # type: () -> None
         """Write the beginning of the block and then indent."""
-        self._writer.write_template(self._opening)
+        self._writer.write_line(self._opening)
         self._writer.indent()
 
     def __exit__(self, *args):
         # type: (*str) -> None
         """Unindent the block and print the ending."""
         self._writer.unindent()
-        self._writer.write_template(self._closing)
+        self._writer.write_line(self._closing)
 
 
 class NamespaceScopeBlock(WriterBlock):
     """Generate an unindented blocks for a list of namespaces, and do not indent the contents."""
 
-    def __init__(self, indented_writer, namespaces):
+    def __init__(
+        self, indented_writer: IndentedTextWriter, namespaces: list[str], mod_vis_str: str = ""
+    ):
         # type: (IndentedTextWriter, List[str]) -> None
         """Create a block."""
         self._writer = indented_writer
         self._namespaces = namespaces
+        self._mod_vis_str = mod_vis_str
 
     def __enter__(self):
         # type: () -> None
         """Write the beginning of the block and do not indent."""
         for namespace in self._namespaces:
-            self._writer.write_unindented_line("namespace %s {" % (namespace))
+            self._writer.write_unindented_line(f"namespace {self._mod_vis_str}{namespace} {{")
 
     def __exit__(self, *args):
         # type: (*str) -> None
@@ -248,7 +209,7 @@ class NamespaceScopeBlock(WriterBlock):
         self._namespaces.reverse()
 
         for namespace in self._namespaces:
-            self._writer.write_unindented_line("}  // namespace %s" % (namespace))
+            self._writer.write_unindented_line(f"}}  // namespace {self._mod_vis_str}{namespace}")
 
 
 class UnindentedBlock(WriterBlock):
@@ -352,7 +313,7 @@ def _gen_trie(prefix, words, writer, callback):
 
         predicate = (
             f"fieldName.size() == {len(word_to_check)} && "
-            + f'std::char_traits<char>::compare(fieldName.rawData() + {prefix_len}, "{suffix}", {suffix_len}) == 0'
+            + f'std::char_traits<char>::compare(fieldName.data() + {prefix_len}, "{suffix}", {suffix_len}) == 0'
         )
 
         # If there is no trailing text, we just need to check length to validate we matched
@@ -367,7 +328,7 @@ def _gen_trie(prefix, words, writer, callback):
         elif suffix_len % 4 == 3:
             predicate = (
                 f"fieldName.size() == {len(word_to_check)} && "
-                + f' memcmp(fieldName.rawData() + {prefix_len}, "{suffix}\\0", {suffix_len + 1}) == 0'
+                + f' memcmp(fieldName.data() + {prefix_len}, "{suffix}\\0", {suffix_len + 1}) == 0'
             )
 
         with IndentedScopedBlock(writer, f"if ({predicate}) {{", "}"):
@@ -399,7 +360,7 @@ def _gen_trie(prefix, words, writer, callback):
         with IndentedScopedBlock(
             writer,
             f"if (fieldName.size() >= {gcp_len} && "
-            + f'std::char_traits<char>::compare(fieldName.rawData() + {prefix_len}, "{gcp}", {gcp_len}) == 0) {{',
+            + f'std::char_traits<char>::compare(fieldName.data() + {prefix_len}, "{gcp}", {gcp_len}) == 0) {{',
             "}",
         ):
             _gen_trie(prefix + gcp, suffix_words, writer, callback)

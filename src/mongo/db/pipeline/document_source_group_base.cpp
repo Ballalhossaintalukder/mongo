@@ -36,10 +36,6 @@
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <memory>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -62,6 +58,10 @@
 #include "mongo/db/stats/counters.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
 
 namespace mongo {
 
@@ -131,10 +131,14 @@ Value DocumentSourceGroupBase::serialize(const SerializationOptions& opts) const
             opts.serializeLiteral(static_cast<long long>(stats.spillingStats.getSpills()));
         out["spilledDataStorageSize"] = opts.serializeLiteral(
             static_cast<long long>(stats.spillingStats.getSpilledDataStorageSize()));
-        out["numBytesSpilledEstimate"] =
+        out["spilledBytes"] =
             opts.serializeLiteral(static_cast<long long>(stats.spillingStats.getSpilledBytes()));
         out["spilledRecords"] =
             opts.serializeLiteral(static_cast<long long>(stats.spillingStats.getSpilledRecords()));
+        if (feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled()) {
+            out["maxUsedMemBytes"] =
+                opts.serializeLiteral(static_cast<long long>(stats.maxUsedMemoryBytes));
+        }
     }
 
     return out.freezeToValue();
@@ -260,6 +264,7 @@ DocumentSourceGroupBase::DocumentSourceGroupBase(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     boost::optional<int64_t> maxMemoryUsageBytes)
     : DocumentSource(stageName, expCtx),
+      exec::agg::Stage(stageName, expCtx),
       _groupProcessor(expCtx,
                       maxMemoryUsageBytes ? *maxMemoryUsageBytes
                                           : internalDocumentSourceGroupMaxMemoryBytes.load()),
@@ -271,7 +276,7 @@ boost::intrusive_ptr<Expression> parseIdExpression(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     BSONElement groupField,
     const VariablesParseState& vps) {
-    if (groupField.type() == Object) {
+    if (groupField.type() == BSONType::object) {
         // {_id: {}} is treated as grouping on a constant, not an expression
         if (groupField.Obj().isEmpty()) {
             return ExpressionConstant::create(expCtx.get(), Value(groupField));
@@ -285,7 +290,7 @@ boost::intrusive_ptr<Expression> parseIdExpression(
             for (auto&& field : idKeyObj) {
                 uassert(17390,
                         "$group does not support inclusion-style expressions",
-                        !field.isNumber() && field.type() != Bool);
+                        !field.isNumber() && field.type() != BSONType::boolean);
             }
             return ExpressionObject::parse(expCtx.get(), idKeyObj, vps);
         }
@@ -301,7 +306,8 @@ boost::intrusive_ptr<Expression> DocumentSourceGroupBase::getIdExpression() cons
 }
 
 void DocumentSourceGroupBase::initializeFromBson(BSONElement elem) {
-    uassert(15947, "a group's fields must be specified in an object", elem.type() == Object);
+    uassert(
+        15947, "a group's fields must be specified in an object", elem.type() == BSONType::object);
 
     const auto& idExpressions = _groupProcessor.getIdExpressions();
     BSONObj groupObj(elem.Obj());
@@ -643,7 +649,7 @@ DocumentSourceGroupBase::pipelineDependentDistributedPlanLogic(
     }
 
     // TODO SERVER-97135: Refactor so we can remove the following check.
-    auto mergeStage = ctx.pipelineSuffix.getSources().empty()
+    auto mergeStage = ctx.pipelineSuffix.empty()
         ? nullptr
         : dynamic_cast<DocumentSourceMerge*>(ctx.pipelineSuffix.getSources().back().get());
     if (mergeStage) {
@@ -708,7 +714,7 @@ DocumentSourceGroupBase::distributedPlanLogic() {
 
     // When merging, we always use generic hash based algorithm.
     boost::intrusive_ptr<DocumentSourceGroup> mergingGroup = DocumentSourceGroup::create(
-        pExpCtx, std::move(mergerGroupByExpression), std::move(mergerAccumulators));
+        pExpCtx, std::move(mergerGroupByExpression), std::move(mergerAccumulators), false);
     mergingGroup->_groupProcessor.setDoingMerge(true);
 
     static_cast<DocumentSourceGroup*>(clone.get())->_groupProcessor.setWillBeMerged(true);

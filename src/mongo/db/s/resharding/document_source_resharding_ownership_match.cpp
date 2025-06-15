@@ -28,11 +28,7 @@
  */
 
 
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/s/resharding/document_source_resharding_ownership_match.h"
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
@@ -40,7 +36,6 @@
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
-#include "mongo/db/s/resharding/document_source_resharding_ownership_match.h"
 #include "mongo/db/s/resharding/resharding_util.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/s/catalog_cache.h"
@@ -50,6 +45,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -80,7 +81,7 @@ DocumentSourceReshardingOwnershipMatch::createFromBson(
     BSONElement elem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(8423307,
             str::stream() << "Argument to " << kStageName << " must be an object",
-            elem.type() == Object);
+            elem.type() == BSONType::object);
 
     auto parsed = DocumentSourceReshardingOwnershipMatchSpec::parse(
         IDLParserContext{"DocumentSourceReshardingOwnershipMatchSpec"}, elem.embeddedObject());
@@ -97,6 +98,7 @@ DocumentSourceReshardingOwnershipMatch::DocumentSourceReshardingOwnershipMatch(
     boost::optional<NamespaceString> temporaryReshardingNamespace,
     const boost::intrusive_ptr<ExpressionContext>& expCtx)
     : DocumentSource(kStageName, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _recipientShardId{std::move(recipientShardId)},
       _reshardingKey{std::move(reshardingKey)},
       _temporaryReshardingNamespace{std::move(temporaryReshardingNamespace)} {}
@@ -129,7 +131,7 @@ Value DocumentSourceReshardingOwnershipMatch::serialize(const SerializationOptio
 DepsTracker::State DocumentSourceReshardingOwnershipMatch::getDependencies(
     DepsTracker* deps) const {
     for (const auto& skElem : _reshardingKey.toBSON()) {
-        deps->fields.insert(skElem.fieldNameStringData().toString());
+        deps->fields.insert(std::string{skElem.fieldNameStringData()});
     }
 
     return DepsTracker::State::SEE_NEXT;

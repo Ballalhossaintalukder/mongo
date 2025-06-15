@@ -236,6 +236,8 @@ selector:
     - jstests/core/query/plan_cache/cache_correctness_pbt.js
     - jstests/core/query/index_correctness_pbt.js
     - jstests/core/query/partial_index_pbt.js
+    - jstests/core/query/query_knob_correctness_pbt.js
+    - jstests/core/query/or/subplanning_pbt.js
     # Time-series collections have different indexes from regular collections.
     - jstests/core/query/array/arrayfind4.js
     - jstests/core/query/array/arrayfind9.js
@@ -292,6 +294,8 @@ selector:
     - jstests/core/query/bson_size_limit.js
     # Test relying on document ordering that can be different for time-series collections.
     - jstests/core/query/update/update_fail_halts_modifications.js
+    # geoNear requires setup such as a optimizations to be enabled for TS. See timeseries_geonear.js
+    - jstests/core/query/geo/geo_extra_fields.js
 
   exclude_with_any_tags:
     - requires_sharding

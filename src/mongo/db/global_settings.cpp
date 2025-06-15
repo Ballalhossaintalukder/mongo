@@ -29,11 +29,6 @@
 
 #include "mongo/db/global_settings.h"
 
-#include <mutex>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -48,6 +43,11 @@
 #include "mongo/db/tenant_id.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/decorable.h"
+
+#include <mutex>
+#include <utility>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -98,10 +98,10 @@ Status AllowListedClusterNetworkSetting::set(const mongo::BSONElement& e,
     std::shared_ptr<std::vector<std::string>> allowlistedClusterNetwork;
     if (e.isNull()) {
         // noop
-    } else if (e.type() == mongo::Array) {
+    } else if (e.type() == BSONType::array) {
         allowlistedClusterNetwork = std::make_shared<std::vector<std::string>>();
         for (const auto& sub : e.Array()) {
-            if (sub.type() != mongo::String) {
+            if (sub.type() != BSONType::string) {
                 return {ErrorCodes::BadValue, "Expected array of strings"};
             }
             allowlistedClusterNetwork->push_back(sub.str());

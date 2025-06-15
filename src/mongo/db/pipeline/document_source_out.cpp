@@ -28,14 +28,7 @@
  */
 
 
-#include <fmt/format.h>
-#include <iterator>
-#include <mutex>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_out.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -46,7 +39,6 @@
 #include "mongo/db/curop_failpoint_helpers.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/pipeline/document_source_out.h"
 #include "mongo/db/pipeline/writer_util.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/db/query/query_feature_flags_gen.h"
@@ -61,6 +53,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
+
+#include <iterator>
+#include <mutex>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -164,11 +165,11 @@ StageConstraints DocumentSourceOut::constraints(Pipeline::SplitState pipeState) 
 DocumentSourceOutSpec DocumentSourceOut::parseOutSpecAndResolveTargetNamespace(
     const BSONElement& spec, const DatabaseName& defaultDB) {
     DocumentSourceOutSpec outSpec;
-    if (spec.type() == BSONType::String) {
+    if (spec.type() == BSONType::string) {
         outSpec.setColl(spec.valueStringData());
         // TODO SERVER-77000: access a SerializationContext object to serialize properly
         outSpec.setDb(defaultDB.serializeWithoutTenantPrefix_UNSAFE());
-    } else if (spec.type() == BSONType::Object) {
+    } else if (spec.type() == BSONType::object) {
         // TODO SERVER-77000: access a SerializationContext object to pass into the IDLParserContext
         outSpec = mongo::DocumentSourceOutSpec::parse(IDLParserContext(kStageName),
                                                       spec.embeddedObject());
@@ -177,7 +178,7 @@ DocumentSourceOutSpec DocumentSourceOut::parseOutSpecAndResolveTargetNamespace(
                 fmt::format("{} only supports a string or object argument, but found {}",
                             kStageName,
                             typeName(spec.type())),
-                spec.type() == BSONType::String);
+                spec.type() == BSONType::string);
     }
 
     return outSpec;
@@ -383,7 +384,7 @@ void DocumentSourceOut::renameTemporaryCollection() {
             pExpCtx->getMongoProcessInterface()->fetchCollectionUUIDFromPrimary(
                 pExpCtx->getOperationContext(), _tempNs);
         uassert((CollectionUUIDMismatchInfo{
-                    _tempNs.dbName(), currentTempNsUUID, _tempNs.coll().toString(), boost::none}),
+                    _tempNs.dbName(), currentTempNsUUID, std::string{_tempNs.coll()}, boost::none}),
                 "$out cannot complete as the temp collection was dropped while executing",
                 currentTempNsUUID == _tempNsUUID);
     }

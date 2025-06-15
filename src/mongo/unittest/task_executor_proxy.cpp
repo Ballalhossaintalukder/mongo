@@ -27,9 +27,9 @@
  *    it in the license file.
  */
 
-#include <utility>
-
 #include "mongo/unittest/task_executor_proxy.h"
+
+#include <utility>
 
 namespace mongo {
 namespace unittest {
@@ -137,8 +137,8 @@ void TaskExecutorProxy::appendConnectionStats(executor::ConnectionPoolStats* sta
     _executor.load()->appendConnectionStats(stats);
 }
 
-void TaskExecutorProxy::dropConnections(const HostAndPort& hostAndPort) {
-    _executor.load()->dropConnections(hostAndPort);
+void TaskExecutorProxy::dropConnections(const HostAndPort& target, const Status& status) {
+    _executor.load()->dropConnections(target, status);
 }
 
 void TaskExecutorProxy::appendNetworkInterfaceStats(BSONObjBuilder& bob) const {

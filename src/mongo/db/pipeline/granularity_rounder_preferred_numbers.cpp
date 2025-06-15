@@ -27,14 +27,6 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <cmath>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/expression_context.h"
@@ -43,6 +35,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -182,7 +182,7 @@ Value GranularityRounderPreferredNumbers::roundUp(Value value) {
         return value;
     }
 
-    if (value.getType() == BSONType::NumberDecimal) {
+    if (value.getType() == BSONType::numberDecimal) {
         Decimal128 number = value.getDecimal();
         Decimal128 multiplier = Decimal128(1);
 
@@ -267,7 +267,7 @@ Value GranularityRounderPreferredNumbers::roundDown(Value value) {
         return value;
     }
 
-    if (value.getType() == BSONType::NumberDecimal) {
+    if (value.getType() == BSONType::numberDecimal) {
         Decimal128 number = value.getDecimal();
         Decimal128 multiplier = Decimal128(1);
 

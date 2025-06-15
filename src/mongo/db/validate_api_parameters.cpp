@@ -29,13 +29,6 @@
 
 #include "mongo/db/validate_api_parameters.h"
 
-#include <memory>
-#include <set>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -53,6 +46,13 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
+
+#include <memory>
+#include <set>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -80,7 +80,7 @@ void validateAPIParameters(const CommandInvocation& invocation) {
 
     if (genericArgs.getApiStrict().value_or(false)) {
         auto& cmdApiVersions = command->apiVersions();
-        auto apiVersionFromClient = genericArgs.getApiVersion()->toString();
+        auto apiVersionFromClient = std::string{*genericArgs.getApiVersion()};
         bool strictAssert = (cmdApiVersions.find(apiVersionFromClient) != cmdApiVersions.end());
         uassert(ErrorCodes::APIStrictError,
                 fmt::format("Provided apiStrict:true, but the command {} is not in API Version {}. "
@@ -103,7 +103,7 @@ void validateAPIParameters(const CommandInvocation& invocation) {
 
     if (genericArgs.getApiDeprecationErrors().value_or(false)) {
         auto& cmdDepApiVersions = command->deprecatedApiVersions();
-        auto apiVersionFromClient = genericArgs.getApiVersion()->toString();
+        auto apiVersionFromClient = std::string{*genericArgs.getApiVersion()};
         bool deprecationAssert =
             (cmdDepApiVersions.find(apiVersionFromClient) == cmdDepApiVersions.end());
         uassert(ErrorCodes::APIDeprecationError,

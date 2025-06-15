@@ -27,8 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/process_interface/shardsvr_process_interface.h"
 
 #include "mongo/base/shim.h"
 #include "mongo/base/string_data.h"
@@ -36,11 +35,11 @@
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/client.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/index/index_constants.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_out.h"
 #include "mongo/db/pipeline/document_source_queue.h"
-#include "mongo/db/pipeline/process_interface/shardsvr_process_interface.h"
 #include "mongo/db/query/client_cursor/cursor_id.h"
 #include "mongo/db/query/client_cursor/cursor_response.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
@@ -50,6 +49,9 @@
 #include "mongo/s/query/exec/sharded_agg_test_fixture.h"
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
 #include "mongo/unittest/unittest.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -86,6 +88,7 @@ TEST_F(ShardsvrProcessInterfaceTest, TestInsert) {
     const NamespaceString kOutNss =
         NamespaceString::createNamespaceString_forTest("unittests-out", "sharded_agg_test");
     auto outStage = DocumentSourceOut::create(kOutNss, expCtx());
+    auto stage = exec::agg::buildStage(outStage);
 
     // Attach a write concern, and make sure it is forwarded below.
     WriteConcernOptions wco{WriteConcernOptions::kMajority,
@@ -95,9 +98,9 @@ TEST_F(ShardsvrProcessInterfaceTest, TestInsert) {
 
     expCtx()->setMongoProcessInterface(std::make_shared<ShardServerProcessInterface>(executor()));
     auto queue = DocumentSourceQueue::create(expCtx());
-    outStage->setSource(queue.get());
+    stage->setSource(queue.get());
 
-    auto future = launchAsync([&] { ASSERT_TRUE(outStage->getNext().isEOF()); });
+    auto future = launchAsync([&] { ASSERT_TRUE(stage->getNext().isEOF()); });
 
     expectGetDatabase(kOutNss);
 

@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <cmath>
-#include <string>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -43,6 +38,11 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <cmath>
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -77,12 +77,11 @@ Value GranularityRounderPowersOfTwo::roundUp(Value value) {
     }
 
     Value exp;
-    if (value.getType() == BSONType::NumberDouble) {
+    if (value.getType() == BSONType::numberDouble) {
         exp = Value(static_cast<int>(std::floor(std::log2(value.getDouble())) + 1.0));
-    } else if (value.getType() == BSONType::NumberDecimal) {
+    } else if (value.getType() == BSONType::numberDecimal) {
         Decimal128 input = value.getDecimal();
-        exp = Value(Decimal128(
-            static_cast<int>((std::floor(input.logarithm(Decimal128(2)).toDouble()) + 1.0))));
+        exp = Value(Decimal128(static_cast<int>((std::floor(input.log2().toDouble()) + 1.0))));
     } else {
         long long number = value.getLong();
 
@@ -103,12 +102,11 @@ Value GranularityRounderPowersOfTwo::roundDown(Value value) {
     }
 
     Value exp;
-    if (value.getType() == BSONType::NumberDouble) {
+    if (value.getType() == BSONType::numberDouble) {
         exp = Value(static_cast<int>(std::ceil(std::log2(value.getDouble())) - 1.0));
-    } else if (value.getType() == BSONType::NumberDecimal) {
+    } else if (value.getType() == BSONType::numberDecimal) {
         Decimal128 input = value.getDecimal();
-        exp = Value(Decimal128(
-            static_cast<int>((std::ceil(input.logarithm(Decimal128(2)).toDouble()) - 1.0))));
+        exp = Value(Decimal128(static_cast<int>((std::ceil(input.log2().toDouble()) - 1.0))));
     } else {
         long long number = value.getLong();
 

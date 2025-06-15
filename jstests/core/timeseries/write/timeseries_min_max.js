@@ -11,7 +11,6 @@
  *   # Buckets being closed during moveCollection can cause more buckets with different min-max
  *   # ranges than the test expects.
  *   assumes_balancer_off,
- *   known_query_shape_computation_problem,  # TODO (SERVER-103069): Remove this tag.
  * ]
  */
 import {getTimeseriesCollForRawOps} from "jstests/core/libs/raw_operation_utils.js";
@@ -48,18 +47,12 @@ TimeseriesTest.run((insert) => {
 
         // Find the bucket the measurement belongs to.
         const bucketDocs = getTimeseriesCollForRawOps(coll)
-                               .find({
-                                   $and: [
-                                       {"control.min._id": {$lte: measurementId}},
-                                       {"control.max._id": {$gte: measurementId}}
-                                   ]
-                               },
-                                     {
-                                         'control.min._id': 0,
-                                         'control.max._id': 0,
-                                         ['control.min.' + timeFieldName]: 0,
-                                         ['control.max.' + timeFieldName]: 0
-                                     })
+                               .find({}, {
+                                   'control.min._id': 0,
+                                   'control.max._id': 0,
+                                   ['control.min.' + timeFieldName]: 0,
+                                   ['control.max.' + timeFieldName]: 0
+                               })
                                .rawData()
                                .toArray();
         assert.eq(bucketDocs.length, 1);
@@ -90,7 +83,8 @@ TimeseriesTest.run((insert) => {
     runTest(
         {a: {x: 2, y: 1}, b: [2, 1]}, {a: {x: 1, y: 1}, b: [1, 1]}, {a: {x: 2, y: 2}, b: [2, 2]});
 
-    // Schema change, new bucket.
+    clearColl();
+    // Multiple levels of nesting are also updated element-wise.
     runTest({a: {x: {z: [3, 4]}}, b: [{x: 3, y: 4}]},
             {a: {x: {z: [3, 4]}}, b: [{x: 3, y: 4}]},
             {a: {x: {z: [3, 4]}}, b: [{x: 3, y: 4}]});
@@ -98,20 +92,6 @@ TimeseriesTest.run((insert) => {
     runTest({a: {x: {z: [4, 3]}}, b: [{x: 4, y: 3}, 3, 1]},
             {a: {x: {z: [3, 3]}}, b: [{x: 3, y: 3}, 3, 1]},
             {a: {x: {z: [4, 4]}}, b: [{x: 4, y: 4}, 3, 1]});
-    clearColl();
-
-    // If the two types being compared are not both objects or both arrays, we'll detect a schema
-    // change and open a new bucket.
-    runTest({a: 1}, {a: 1}, {a: 1});
-    runTest({a: {b: 1}}, {a: {b: 1}}, {a: {b: 1}});
-    runTest({a: []}, {a: []}, {a: []});
-    runTest({a: [5]}, {a: [5]}, {a: [5]});
-    clearColl();
-
-    // We correctly detect schema changes from Array to Object and back
-    runTest({a: []}, {a: []}, {a: []});
-    runTest({a: {b: 1}}, {a: {b: 1}}, {a: {b: 1}});
-    runTest({a: [5]}, {a: [5]}, {a: [5]});
     clearColl();
 
     // Sparse measurements only affect the min/max for the fields present.

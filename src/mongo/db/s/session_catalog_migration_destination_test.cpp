@@ -27,15 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <vector>
+#include "mongo/db/s/session_catalog_migration_destination.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -68,7 +60,6 @@
 #include "mongo/db/s/collection_sharding_runtime.h"
 #include "mongo/db/s/migration_session_id.h"
 #include "mongo/db/s/session_catalog_migration.h"
-#include "mongo/db/s/session_catalog_migration_destination.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/session/logical_session_cache.h"
@@ -92,6 +83,17 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -198,6 +200,14 @@ public:
 
     repl::OplogEntry getOplog(OperationContext* opCtx, const repl::OpTime& opTime) {
         DBDirectClient client(opCtx);
+
+        auto storageEngine = opCtx->getServiceContext()->getStorageEngine();
+        LocalOplogInfo* oplogInfo = LocalOplogInfo::get(opCtx);
+
+        // Oplog should be available in this test.
+        invariant(oplogInfo);
+        storageEngine->waitForAllEarlierOplogWritesToBeVisible(opCtx, oplogInfo->getRecordStore());
+
         auto oplogBSON = client.findOne(NamespaceString::kRsOplogNamespace, opTime.asQuery());
 
         ASSERT_FALSE(oplogBSON.isEmpty());
@@ -2327,6 +2337,12 @@ TEST_F(SessionCatalogMigrationDestinationTest,
     auto ocs = mongoDSessionCatalog->checkOutSession(opCtx);
     auto txnParticipant = TransactionParticipant::get(opCtx);
 
+    auto storageEngine = opCtx->getServiceContext()->getStorageEngine();
+    LocalOplogInfo* oplogInfo = LocalOplogInfo::get(opCtx);
+
+    // Oplog should be available in this test.
+    invariant(oplogInfo);
+    storageEngine->waitForAllEarlierOplogWritesToBeVisible(opCtx, oplogInfo->getRecordStore());
     TransactionHistoryIterator historyIter(txnParticipant.getLastWriteOpTime());
 
     ASSERT_TRUE(historyIter.hasNext());

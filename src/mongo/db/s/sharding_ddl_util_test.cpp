@@ -27,12 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/cstdint.hpp>
-#include <cstdint>
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/sharding_ddl_util.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/error_extra_info.h"
@@ -50,11 +45,11 @@
 #include "mongo/db/read_write_concern_defaults.h"
 #include "mongo/db/read_write_concern_defaults_cache_lookup_mock.h"
 #include "mongo/db/s/config/config_server_test_fixture.h"
-#include "mongo/db/s/sharding_ddl_util.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
 #include "mongo/db/session/logical_session_cache.h"
 #include "mongo/db/session/logical_session_cache_noop.h"
 #include "mongo/db/session/session_catalog_mongod.h"
+#include "mongo/idl/error_status_idl.h"
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_shard.h"
@@ -62,6 +57,13 @@
 #include "mongo/s/chunk_version.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstdint>
+#include <string>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -146,11 +148,10 @@ TEST_F(ShardingDDLUtilTest, SerializeDeserializeErrorStatusWithoutExtraInfo) {
     const Status sample{ErrorCodes::ForTestingOptionalErrorExtraInfo, "Dummy reason"};
 
     BSONObjBuilder bsonBuilder;
-    sharding_ddl_util_serializeErrorStatusToBSON(sample, "status", &bsonBuilder);
+    idl::serializeErrorStatus(sample, "status", &bsonBuilder);
     const auto serialized = bsonBuilder.done();
 
-    const auto deserialized =
-        sharding_ddl_util_deserializeErrorStatusFromBSON(serialized.firstElement());
+    const auto deserialized = idl::deserializeErrorStatus(serialized.firstElement());
 
     ASSERT_EQ(sample.code(), deserialized.code());
     ASSERT_EQ(sample.reason(), deserialized.reason());
@@ -164,11 +165,10 @@ TEST_F(ShardingDDLUtilTest, SerializeDeserializeErrorStatusWithExtraInfo) {
         ErrorCodes::ForTestingOptionalErrorExtraInfo, "Dummy reason", fromjson("{data: 123}")};
 
     BSONObjBuilder bsonBuilder;
-    sharding_ddl_util_serializeErrorStatusToBSON(sample, "status", &bsonBuilder);
+    idl::serializeErrorStatus(sample, "status", &bsonBuilder);
     const auto serialized = bsonBuilder.done();
 
-    const auto deserialized =
-        sharding_ddl_util_deserializeErrorStatusFromBSON(serialized.firstElement());
+    const auto deserialized = idl::deserializeErrorStatus(serialized.firstElement());
 
     ASSERT_EQ(sample.code(), deserialized.code());
     ASSERT_EQ(sample.reason(), deserialized.reason());
@@ -180,31 +180,27 @@ TEST_F(ShardingDDLUtilTest, SerializeDeserializeErrorStatusWithExtraInfo) {
 TEST_F(ShardingDDLUtilTest, SerializeDeserializeErrorStatusInvalid) {
     BSONObjBuilder bsonBuilder;
     ASSERT_THROWS_CODE(
-        sharding_ddl_util_serializeErrorStatusToBSON(Status::OK(), "status", &bsonBuilder),
-        DBException,
-        7418500);
+        idl::serializeErrorStatus(Status::OK(), "status", &bsonBuilder), DBException, 7418500);
 
     const auto okStatusBSON =
         BSON("status" << BSON("code" << ErrorCodes::OK << "codeName"
                                      << ErrorCodes::errorString(ErrorCodes::OK)));
     ASSERT_THROWS_CODE(
-        sharding_ddl_util_deserializeErrorStatusFromBSON(okStatusBSON.firstElement()),
-        DBException,
-        7418501);
+        idl::deserializeErrorStatus(okStatusBSON.firstElement()), DBException, 7418501);
 }
 
-TEST_F(ShardingDDLUtilTest, SerializeErrorStatusTooBig) {
+TEST_F(ShardingDDLUtilTest, TruncateBigErrorStatus) {
     const std::string longReason(1024 * 3, 'x');
     const Status sample{ErrorCodes::ForTestingOptionalErrorExtraInfo, longReason};
 
     BSONObjBuilder bsonBuilder;
-    sharding_ddl_util_serializeErrorStatusToBSON(sample, "status", &bsonBuilder);
+    idl::serializeErrorStatus(sample, "status", &bsonBuilder);
     const auto serialized = bsonBuilder.done();
 
-    const auto deserialized =
-        sharding_ddl_util_deserializeErrorStatusFromBSON(serialized.firstElement());
+    const auto deserialized = idl::deserializeErrorStatus(serialized.firstElement());
+    const auto truncated = sharding_ddl_util::possiblyTruncateErrorStatus(deserialized);
 
-    ASSERT_EQ(ErrorCodes::TruncatedSerialization, deserialized.code());
+    ASSERT_EQ(ErrorCodes::TruncatedSerialization, truncated.code());
     ASSERT_EQ(
         "ForTestingOptionalErrorExtraInfo: "
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -230,8 +226,8 @@ TEST_F(ShardingDDLUtilTest, SerializeErrorStatusTooBig) {
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        deserialized.reason());
-    ASSERT(!deserialized.extraInfo());
+        truncated.reason());
+    ASSERT(!truncated.extraInfo());
 }
 
 // Test all combinations of rename acceptable preconditions:

@@ -32,12 +32,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <array>
-#include <mutex>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -88,9 +82,9 @@
 #include "mongo/db/s/range_deletion_task_gen.h"
 #include "mongo/db/s/range_deletion_util.h"
 #include "mongo/db/s/shard_filtering_metadata_refresh.h"
-#include "mongo/db/s/sharding_index_catalog_ddl_util.h"
 #include "mongo/db/s/sharding_recovery_service.h"
 #include "mongo/db/s/sharding_runtime_d_params_gen.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/sharding_statistics.h"
 #include "mongo/db/s/start_chunk_clone_request.h"
 #include "mongo/db/server_options.h"
@@ -110,17 +104,13 @@
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/s/catalog/sharding_catalog_client.h"
 #include "mongo/s/catalog/type_chunk.h"
-#include "mongo/s/catalog/type_index_catalog_gen.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/cluster_commands_helpers.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/database_name_util.h"
@@ -134,6 +124,12 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <array>
+#include <mutex>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kShardingMigration
 
@@ -226,7 +222,7 @@ std::string stateToString(MigrationDestinationManager::State state) {
         case MigrationDestinationManager::kAbort:
             return "abort";
         default:
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083523);
     }
 }
 
@@ -339,23 +335,6 @@ bool isFirstMigration(OperationContext* opCtx, const NamespaceString& nss) {
     return false;
 }
 
-void replaceShardingIndexCatalogInShardIfNeeded(OperationContext* opCtx,
-                                                const NamespaceString& nss,
-                                                const UUID& uuid) {
-    auto currentShardHasAnyChunks = [&]() -> bool {
-        const auto csr = CollectionShardingRuntime::acquireShared(opCtx, nss);
-        const auto optMetadata = csr->getCurrentMetadataIfKnown();
-        return optMetadata && optMetadata->currentShardHasAnyChunks();
-    }();
-
-    // Early return, this shard already contains chunks, so there is no need for consolidate.
-    if (currentShardHasAnyChunks) {
-        return;
-    }
-
-    clearCollectionShardingIndexCatalog(opCtx, nss, uuid);
-}
-
 // Throws if this configShard is currently draining.
 void checkConfigShardIsNotDraining(OperationContext* opCtx) {
     DBDirectClient dbClient(opCtx);
@@ -415,7 +394,7 @@ void MigrationDestinationManager::_setStateFail(StringData msg) {
     LOGV2(21998, "Error during migration", "error"_attr = redact(msg));
     {
         stdx::lock_guard<stdx::mutex> sl(_mutex);
-        _errmsg = msg.toString();
+        _errmsg = std::string{msg};
         _state = kFail;
         _stateChangedCV.notify_all();
     }
@@ -429,7 +408,7 @@ void MigrationDestinationManager::_setStateFailWarn(StringData msg) {
     LOGV2_WARNING(22010, "Error during migration", "error"_attr = redact(msg));
     {
         stdx::lock_guard<stdx::mutex> sl(_mutex);
-        _errmsg = msg.toString();
+        _errmsg = std::string{msg};
         _state = kFail;
         _stateChangedCV.notify_all();
     }
@@ -922,7 +901,7 @@ MigrationDestinationManager::IndexesAndIdIndex MigrationDestinationManager::getC
         }
 
         if (auto indexNameElem = spec[IndexDescriptor::kIndexNameFieldName];
-            indexNameElem.type() == BSONType::String &&
+            indexNameElem.type() == BSONType::string &&
             indexNameElem.valueStringData() == IndexConstants::kIdIndexName) {
             // The _id index always uses the collection's default collation and so there is no need
             // to add the collation field to attempt to disambiguate.
@@ -1061,7 +1040,7 @@ void _dropLocalIndexes(OperationContext* opCtx,
         }
         // If the local index doesn't exist on the donor and isn't the _id index, drop it.
         auto indexNameElem = recipientIndex[IndexDescriptor::kIndexNameFieldName];
-        if (indexNameElem.type() == BSONType::String && dropIndex &&
+        if (indexNameElem.type() == BSONType::string && dropIndex &&
             !IndexDescriptor::isIdIndexPattern(
                 recipientIndex[IndexDescriptor::kKeyPatternFieldName].Obj())) {
             BSONObj info;
@@ -1176,9 +1155,13 @@ void _cloneCollectionIndexesAndOptions(
 
         // Acquire the exclusive collection lock to eventually create the collection and clone the
         // remaining indexes.
-        AutoGetDb autoDb(opCtx, nss.dbName(), MODE_IX);
-        Lock::CollectionLock collLock(opCtx, nss, MODE_X);
-        auto db = autoDb.ensureDbExists(opCtx);
+        AutoGetCollection autoColl(opCtx,
+                                   nss,
+                                   MODE_X,
+                                   AutoGetCollection::Options{}.deadline(
+                                       opCtx->getServiceContext()->getPreciseClockSource()->now() +
+                                       Milliseconds(migrationLockAcquisitionMaxWaitMS.load())));
+        auto db = autoColl.ensureDbExists(opCtx);
 
         auto collection = CollectionCatalog::get(opCtx)->lookupCollectionByNamespace(opCtx, nss);
         if (collection) {
@@ -1466,14 +1449,6 @@ void MigrationDestinationManager::_migrateDriver(OperationContext* outerOpCtx,
             bool strictIndexSync = isFirstMigration(altOpCtx.get(), _nss);
             _cloneCollectionIndexesAndOptions(
                 altOpCtx.get(), _nss, donorCollectionOptionsAndIndexes, strictIndexSync);
-
-            // Get the global indexes and install them.
-            if (feature_flags::gGlobalIndexesShardingCatalog.isEnabled(
-                    VersionContext::getDecoration(altOpCtx.get()),
-                    serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
-                replaceShardingIndexCatalogInShardIfNeeded(
-                    altOpCtx.get(), _nss, donorCollectionOptionsAndIndexes.uuid);
-            }
 
             timing->done(2);
             migrateThreadHangAtStep2.pauseWhileSet();

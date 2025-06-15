@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -67,6 +62,12 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 namespace QueryStageIxscan {
 namespace {
@@ -76,8 +77,7 @@ const auto kIndexVersion = IndexDescriptor::IndexVersion::kV2;
 class IndexScanTest {
 public:
     IndexScanTest()
-        : _dbLock(&_opCtx, nss().dbName(), MODE_X),
-          _ctx(&_opCtx, nss()),
+        : _autodb(&_opCtx, nss().dbName(), MODE_X),
           _coll(nullptr),
           _expCtx(ExpressionContextBuilder{}.opCtx(&_opCtx).ns(nss()).build()) {}
 
@@ -85,9 +85,9 @@ public:
 
     virtual void setup() {
         WriteUnitOfWork wunit(&_opCtx);
-
-        _ctx.db()->dropCollection(&_opCtx, nss()).transitional_ignore();
-        _coll = _ctx.db()->createCollection(&_opCtx, nss());
+        _autodb.ensureDbExists(&_opCtx);
+        _autodb.getDb()->dropCollection(&_opCtx, nss()).transitional_ignore();
+        _coll = _autodb.getDb()->createCollection(&_opCtx, nss());
         // TODO(SERVER-103409): Investigate usage validity of CollectionPtr::CollectionPtr_UNSAFE
         _collPtr = CollectionPtr::CollectionPtr_UNSAFE(_coll);
 
@@ -200,8 +200,7 @@ protected:
     const ServiceContext::UniqueOperationContext _opCtxPtr = cc().makeOperationContext();
     OperationContext& _opCtx = *_opCtxPtr;
 
-    Lock::DBLock _dbLock;
-    OldClientContext _ctx;
+    AutoGetDb _autodb;
     Collection* _coll;
     CollectionPtr _collPtr;
 

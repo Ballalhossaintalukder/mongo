@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <string>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -46,6 +42,11 @@
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/unittest/unittest.h"
 
+#include <string>
+#include <vector>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 namespace ExpressionTests {
 namespace {
@@ -56,14 +57,15 @@ static BSONObj constify(const BSONObj& obj, bool parentIsArray = false) {
     BSONObjBuilder bob;
     for (BSONObjIterator itr(obj); itr.more(); itr.next()) {
         BSONElement elem = *itr;
-        if (elem.type() == Object) {
+        if (elem.type() == BSONType::object) {
             bob << elem.fieldName() << constify(elem.Obj(), false);
-        } else if (elem.type() == Array && !parentIsArray) {
+        } else if (elem.type() == BSONType::array && !parentIsArray) {
             // arrays within arrays are treated as constant values by the real
             // parser
             bob << elem.fieldName() << BSONArray(constify(elem.Obj(), true));
         } else if (elem.fieldNameStringData() == "$const" ||
-                   (elem.type() == mongo::String && elem.valueStringDataSafe().startsWith("$"))) {
+                   (elem.type() == BSONType::string &&
+                    elem.valueStringDataSafe().starts_with("$"))) {
             bob.append(elem);
         } else {
             bob.append(elem.fieldName(), BSON("$const" << elem));

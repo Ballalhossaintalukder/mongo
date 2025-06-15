@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <s2cellid.h>
-#include <set>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -52,13 +44,23 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <memory>
+#include <set>
+#include <string>
+
+#include <s2cellid.h>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * This is an internal stage that computes the distance between the given centroid and the value of
  * '_field' of the input Document.
  */
-class DocumentSourceInternalGeoNearDistance final : public DocumentSource {
+class DocumentSourceInternalGeoNearDistance final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalComputeGeoNearDistance"_sd;
     static constexpr StringData kNearFieldName = "near"_sd;
@@ -77,7 +79,7 @@ public:
                                           double distanceMultiplier);
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;

@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <functional>
-#include <list>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -72,6 +61,18 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/time_support.h"
+
+#include <functional>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 
@@ -311,6 +312,7 @@ private:
     // Take action on error for the given host.
     void _doErrorActions(
         const HostAndPort& host,
+        StringData reason,
         const StreamableReplicaSetMonitorErrorHandler::ErrorActions& errorActions) const;
 
     void _failedHost(const HostAndPort& host,

@@ -27,27 +27,27 @@
  *    it in the license file.
  */
 
-#include "mongo/db/pipeline/name_expression.h"
-
-#include <fmt/format.h>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
+#include "mongo/db/pipeline/name_expression.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+
+#include <fmt/format.h>
 
 namespace mongo {
 NameExpression::NameExpression(const BSONElement& nameElem) : _name(nameElem) {
     auto type = nameElem.type();
     uassert(8117100,
             fmt::format("Invalid name expression: {}", nameElem.toString()),
-            type == BSONType::String || type == BSONType::Object);
+            type == BSONType::string || type == BSONType::object);
 
-    _isLiteral = (type == BSONType::String && !nameElem.str().starts_with('$'));
+    _isLiteral = (type == BSONType::string && !nameElem.str().starts_with('$'));
 }
 
 std::string NameExpression::toString() const {

@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -48,11 +43,17 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/shared_buffer.h"
 
+#include <memory>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 namespace {
 
 // Insert a record and try to perform an in-place update on it.
-TEST(RecordStoreTestHarness, UpdateWithDamages) {
+TEST(RecordStoreTest, UpdateWithDamages) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -117,7 +118,7 @@ TEST(RecordStoreTestHarness, UpdateWithDamages) {
 
 // Insert a record and try to perform an in-place update on it with a DamageVector
 // containing overlapping DamageEvents.
-TEST(RecordStoreTestHarness, UpdateWithOverlappingDamageEvents) {
+TEST(RecordStoreTest, UpdateWithOverlappingDamageEvents) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -179,7 +180,7 @@ TEST(RecordStoreTestHarness, UpdateWithOverlappingDamageEvents) {
 // Insert a record and try to perform an in-place update on it with a DamageVector
 // containing overlapping DamageEvents. The changes should be applied in the order
 // specified by the DamageVector, and not -- for instance -- by the targetOffset.
-TEST(RecordStoreTestHarness, UpdateWithOverlappingDamageEventsReversed) {
+TEST(RecordStoreTest, UpdateWithOverlappingDamageEventsReversed) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -239,7 +240,7 @@ TEST(RecordStoreTestHarness, UpdateWithOverlappingDamageEventsReversed) {
 }
 
 // Insert a record and try to call updateWithDamages() with an empty DamageVector.
-TEST(RecordStoreTestHarness, UpdateWithNoDamages) {
+TEST(RecordStoreTest, UpdateWithNoDamages) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -290,7 +291,7 @@ TEST(RecordStoreTestHarness, UpdateWithNoDamages) {
 }
 
 // Insert a record and try to perform inserts and updates on it.
-TEST(RecordStoreTestHarness, UpdateWithDamagesScalar) {
+TEST(RecordStoreTest, UpdateWithDamagesScalar) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -367,7 +368,7 @@ TEST(RecordStoreTestHarness, UpdateWithDamagesScalar) {
 }
 
 // Insert a record with nested documents and try to perform updates on it.
-TEST(RecordStoreTestHarness, UpdateWithDamagesNested) {
+TEST(RecordStoreTest, UpdateWithDamagesNested) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 
@@ -429,7 +430,7 @@ TEST(RecordStoreTestHarness, UpdateWithDamagesNested) {
 }
 
 // Insert a record with nested arrays and try to perform updates on it.
-TEST(RecordStoreTestHarness, UpdateWithDamagesArray) {
+TEST(RecordStoreTest, UpdateWithDamagesArray) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 

@@ -29,23 +29,12 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/auth/privilege.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/plan_stats.h"
 #include "mongo/db/namespace_string.h"
@@ -65,6 +54,20 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <cstddef>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 class BSONElement;
@@ -82,7 +85,7 @@ class NamespaceString;
  * stage which will produce a document like the following:
  * {facetA: [<all input documents except the first one>], facetB: [<the first document>]}.
  */
-class DocumentSourceFacet final : public DocumentSource {
+class DocumentSourceFacet final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$facet"_sd;
     static constexpr StringData kTeeConsumerStageName = "$internalFacetTeeConsumer"_sd;
@@ -90,8 +93,28 @@ public:
         FacetPipeline(std::string name, std::unique_ptr<Pipeline, PipelineDeleter> pipeline)
             : name(std::move(name)), pipeline(std::move(pipeline)) {}
 
+
+        // TODO SERVER-105370: Remove this lazy 'exec::agg::Pipeline' creation during the
+        // refactoring of this stage.
+        exec::agg::Pipeline& getExecPipeline() {
+            if (!execPipeline) {
+                execPipeline =
+                    exec::agg::buildPipeline(this->pipeline->getSources(), pipeline->getContext());
+            }
+            return *execPipeline;
+        }
+
+        const exec::agg::Pipeline& getExecPipeline() const {
+            if (!execPipeline) {
+                execPipeline =
+                    exec::agg::buildPipeline(this->pipeline->getSources(), pipeline->getContext());
+            }
+            return *execPipeline;
+        }
+
         std::string name;
         std::unique_ptr<Pipeline, PipelineDeleter> pipeline;
+        mutable std::unique_ptr<exec::agg::Pipeline> execPipeline;
     };
 
     class LiteParsed final : public LiteParsedDocumentSourceNestedPipelines {
@@ -131,7 +154,7 @@ public:
     void addVariableRefs(std::set<Variables::Id>* refs) const final;
 
     const char* getSourceName() const final {
-        return DocumentSourceFacet::kStageName.rawData();
+        return DocumentSourceFacet::kStageName.data();
     }
 
     static const Id& id;

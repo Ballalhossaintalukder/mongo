@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/util/net/http_client_mock.h"
 
@@ -39,13 +38,13 @@ namespace mongo {
 HttpClient::HttpReply MockHttpClient::request(HttpMethod method,
                                               StringData url,
                                               ConstDataRange data) const {
-    if (url.startsWith("http://") && !url.startsWith("http://localhost")) {
+    if (url.starts_with("http://") && !url.starts_with("http://localhost")) {
         uassert(ErrorCodes::IllegalOperation,
                 "Unsafe and unexpected HTTP operation performed with mock HttpClient",
                 _allow);
     }
 
-    auto it = _expectations.find(Request{method, url.toString()});
+    auto it = _expectations.find(Request{method, std::string{url}});
     uassert(ErrorCodes::OperationFailed,
             "Unexpected request submitted to mock HttpClient",
             it != _expectations.end());

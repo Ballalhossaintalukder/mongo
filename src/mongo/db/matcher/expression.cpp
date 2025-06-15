@@ -29,12 +29,6 @@
 
 #include "mongo/db/matcher/expression.h"
 
-#include <algorithm>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/matcher/expression_leaf.h"
@@ -42,6 +36,11 @@
 #include "mongo/db/matcher/expression_simplifier.h"
 #include "mongo/db/matcher/schema/json_schema_parser.h"
 #include "mongo/db/query/tree_walker.h"
+
+#include <algorithm>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -150,7 +149,7 @@ std::unique_ptr<MatchExpression> MatchExpression::optimize(
         auto optimizedExpr = optimizer(std::move(expression));
         if (enableSimplification && !isTriviallySimple(*optimizedExpr) &&
             internalQueryEnableBooleanExpressionsSimplifier.load()) {
-            ExpressionSimlifierSettings settings{
+            ExpressionSimplifierSettings settings{
                 static_cast<size_t>(internalQueryMaximumNumberOfUniquePredicatesToSimplify.load()),
                 static_cast<size_t>(internalQueryMaximumNumberOfMintermsInSimplifier.load()),
                 internalQueryMaxSizeFactorToSimplify.load(),
@@ -307,12 +306,12 @@ bool MatchExpression::isInternalNodeWithPath(MatchType m) {
 MatchExpression::ErrorAnnotation::SchemaAnnotations::SchemaAnnotations(
     const BSONObj& jsonSchemaElement) {
     auto title = jsonSchemaElement[JSONSchemaParser::kSchemaTitleKeyword];
-    if (title.type() == BSONType::String) {
+    if (title.type() == BSONType::string) {
         this->title = {title.String()};
     }
 
     auto description = jsonSchemaElement[JSONSchemaParser::kSchemaDescriptionKeyword];
-    if (description.type() == BSONType::String) {
+    if (description.type() == BSONType::string) {
         this->description = {description.String()};
     }
 }

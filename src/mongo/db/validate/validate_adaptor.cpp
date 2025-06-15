@@ -28,15 +28,7 @@
  */
 
 
-#include <absl/container/flat_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <climits>
-#include <fmt/format.h>
-#include <memory>
-#include <stdexcept>
-#include <string>
+#include "mongo/db/validate/validate_adaptor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -75,7 +67,6 @@
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/timeseries/timeseries_options.h"
 #include "mongo/db/validate/index_consistency.h"
-#include "mongo/db/validate/validate_adaptor.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/compiler.h"
 #include "mongo/rpc/object_check.h"  // IWYU pragma: keep
@@ -87,6 +78,17 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
+
+#include <climits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -256,14 +258,14 @@ Status _validateTimeseriesControlField(const CollectionPtr& collection,
  */
 Status _validateTimeseriesDataFieldTypes(const BSONElement& dataField, int bucketVersion) {
     auto dataType = (bucketVersion == timeseries::kTimeseriesControlUncompressedVersion)
-        ? BSONType::Object
-        : BSONType::BinData;
+        ? BSONType::object
+        : BSONType::binData;
     // Checks that open buckets have 'Object' type and closed buckets have 'BinData Column' type.
     auto isCorrectType = [&](BSONElement el) {
         if (bucketVersion == timeseries::kTimeseriesControlUncompressedVersion) {
-            return el.type() == BSONType::Object;
+            return el.type() == BSONType::object;
         } else {
-            return el.type() == BSONType::BinData && el.binDataType() == BinDataType::Column;
+            return el.type() == BSONType::binData && el.binDataType() == BinDataType::Column;
         }
     };
 
@@ -410,7 +412,7 @@ Status _validateTimeSeriesMinMax(const CollectionPtr& coll,
  */
 int _idxInt(StringData idx) {
     try {
-        auto idxInt = std::stoi(idx.toString());
+        auto idxInt = std::stoi(std::string{idx});
         return idxInt;
     } catch (const std::invalid_argument&) {
         return INT_MIN;
@@ -434,7 +436,7 @@ Status _validateTimeSeriesDataTimeField(const CollectionPtr& coll,
     timeseries::bucket_catalog::MinMax minmax{trackingContext};
     if (version == timeseries::kTimeseriesControlUncompressedVersion) {
         for (const auto& metric : timeField.Obj()) {
-            if (metric.type() != BSONType::Date) {
+            if (metric.type() != BSONType::date) {
                 return Status(ErrorCodes::BadValue,
                               fmt::format("Time-series bucket {} field is not a Date", fieldName));
             }
@@ -460,7 +462,7 @@ Status _validateTimeSeriesDataTimeField(const CollectionPtr& coll,
             bool detectedOutOfOrder = false;
             for (const auto& metric : col) {
                 if (!metric.eoo()) {
-                    if (metric.type() != BSONType::Date) {
+                    if (metric.type() != BSONType::date) {
                         return Status(
                             ErrorCodes::BadValue,
                             fmt::format("Time-series bucket '{}' field is not a Date", fieldName));
@@ -604,7 +606,7 @@ Status _validateTimeSeriesDataFields(const CollectionPtr& coll,
     // Builds a hash map for the fields to avoid repeated traversals.
     auto buildFieldTable = [&](StringMap<BSONElement>* table, const BSONObj& fields) {
         for (const auto& field : fields) {
-            table->insert({field.fieldNameStringData().toString(), field});
+            table->insert({std::string{field.fieldNameStringData()}, field});
         }
     };
 
@@ -631,7 +633,7 @@ Status _validateTimeSeriesDataFields(const CollectionPtr& coll,
 
     // Validates the time field.
     int bucketCount = 0;
-    auto timeFieldName = coll->getTimeseriesOptions().value().getTimeField().toString();
+    auto timeFieldName = std::string{coll->getTimeseriesOptions().value().getTimeField()};
     if (Status status = _validateTimeseriesDataFieldTypes(dataFields[timeFieldName], bucketVersion);
         !status.isOK()) {
         return status;

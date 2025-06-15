@@ -29,13 +29,6 @@
 
 #include "mongo/db/query/write_ops/write_ops.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/status.h"
@@ -67,6 +60,14 @@
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <memory>
+#include <utility>
+#include <variant>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -149,7 +150,7 @@ int getWriteCommandRequestBaseSize(const WriteCommandRequestBase& base,
             write_ops::kStmtIdSize + kPerElementOverhead;
     }
 
-    if (auto stmtIds = base.getStmtIds(); stmtIds) {
+    if (const auto& stmtIds = base.getStmtIds(); stmtIds) {
         estSize += write_ops::WriteCommandRequestBase::kStmtIdsFieldName.size();
         estSize += static_cast<int>(BSONObj::kMinBSONLength);
         estSize +=
@@ -163,12 +164,12 @@ int getWriteCommandRequestBaseSize(const WriteCommandRequestBase& base,
             kBoolSize + kPerElementOverhead;
     }
 
-    if (auto collUUID = base.getCollectionUUID(); collUUID) {
+    if (const auto& collUUID = base.getCollectionUUID(); collUUID) {
         estSize += write_ops::WriteCommandRequestBase::kCollectionUUIDFieldName.size() + kUUIDSize +
             kPerElementOverhead;
     }
 
-    if (auto encryptionInfo = base.getEncryptionInformation(); encryptionInfo) {
+    if (const auto& encryptionInfo = base.getEncryptionInformation(); encryptionInfo) {
         estSize += write_ops::WriteCommandRequestBase::kEncryptionInformationFieldName.size() +
             encryptionInfo->toBSON().objsize() + kPerElementOverhead;
     }
@@ -179,12 +180,12 @@ int getWriteCommandRequestBaseSize(const WriteCommandRequestBase& base,
             kBoolSize + kPerElementOverhead;
     }
 
-    if (auto query = base.getOriginalQuery(); query) {
+    if (const auto& query = base.getOriginalQuery(); query) {
         estSize += write_ops::WriteCommandRequestBase::kOriginalQueryFieldName.size() +
             query->objsize() + kPerElementOverhead;
     }
 
-    if (auto originalCollation = base.getOriginalCollation(); originalCollation) {
+    if (const auto& originalCollation = base.getOriginalCollation(); originalCollation) {
         estSize += write_ops::WriteCommandRequestBase::kOriginalCollationFieldName.size() +
             originalCollation->objsize() + kPerElementOverhead;
     }
@@ -228,15 +229,15 @@ void opTimeSerializerWithTermCheck(repl::OpTime opTime, StringData fieldName, BS
 }
 
 repl::OpTime opTimeParser(BSONElement elem) {
-    if (elem.type() == BSONType::Object) {
+    if (elem.type() == BSONType::object) {
         return repl::OpTime::parse(elem.Obj());
-    } else if (elem.type() == BSONType::bsonTimestamp) {
+    } else if (elem.type() == BSONType::timestamp) {
         return repl::OpTime(elem.timestamp(), repl::OpTime::kUninitializedTerm);
     }
 
     uasserted(ErrorCodes::TypeMismatch,
-              str::stream() << "Expected BSON type " << BSONType::Object << " or "
-                            << BSONType::bsonTimestamp << ", but found " << elem.type());
+              str::stream() << "Expected BSON type " << BSONType::object << " or "
+                            << BSONType::timestamp << ", but found " << elem.type());
 }
 
 int32_t getStmtIdForWriteAt(const WriteCommandRequestBase& writeCommandBase, size_t writePos) {
@@ -386,7 +387,7 @@ int getBulkWriteUpdateSizeEstimate(const BSONObj& filter,
     int estSize = static_cast<int>(BSONObj::kMinBSONLength);
 
     // Adds the size of the 'update' field which contains the index of the corresponding namespace.
-    estSize += BulkWriteUpdateOp::kUpdateFieldName.size() + kIntSize + kPerElementOverhead;
+    estSize += BulkWriteUpdateOp::kNsInfoIdxFieldName.size() + kIntSize + kPerElementOverhead;
 
     // Add the sizes of the 'multi' and 'upsert' fields.
     estSize += BulkWriteUpdateOp::kUpsertFieldName.size() + kBoolSize + kPerElementOverhead;
@@ -477,7 +478,7 @@ int getBulkWriteDeleteSizeEstimate(const BSONObj& filter,
     int estSize = static_cast<int>(BSONObj::kMinBSONLength);
 
     // Adds the size of the 'delete' field which contains the index of the corresponding namespace.
-    estSize += BulkWriteDeleteOp::kDeleteCommandFieldName.size() + kIntSize + kPerElementOverhead;
+    estSize += BulkWriteDeleteOp::kNsInfoIdxFieldName.size() + kIntSize + kPerElementOverhead;
 
     // Add the size of the 'filter' field.
     estSize += BulkWriteDeleteOp::kFilterFieldName.size() + filter.objsize() + kPerElementOverhead;
@@ -507,7 +508,7 @@ int getBulkWriteInsertSizeEstimate(const mongo::BSONObj& document) {
     int estSize = static_cast<int>(BSONObj::kMinBSONLength);
 
     // Adds the size of the 'insert' field which contains the index of the corresponding namespace.
-    estSize += BulkWriteInsertOp::kInsertFieldName.size() + kIntSize + kPerElementOverhead;
+    estSize += BulkWriteInsertOp::kNsInfoIdxFieldName.size() + kIntSize + kPerElementOverhead;
 
     // Add the size of the 'document' field.
     estSize +=
@@ -617,13 +618,13 @@ int getUpdateHeaderSizeEstimate(const UpdateCommandRequest& updateReq) {
         static_cast<int>(BSONObj::kMinBSONLength);
 
     // Handle legacy runtime constants.
-    if (auto runtimeConstants = updateReq.getLegacyRuntimeConstants();
+    if (const auto& runtimeConstants = updateReq.getLegacyRuntimeConstants();
         runtimeConstants.has_value()) {
         size += estimateRuntimeConstantsSize(*runtimeConstants);
     }
 
     // Handle let parameters.
-    if (auto let = updateReq.getLet(); let.has_value()) {
+    if (const auto& let = updateReq.getLet(); let.has_value()) {
         size += write_ops::UpdateCommandRequest::kLetFieldName.size() + let->objsize() +
             kPerElementOverhead;
     }
@@ -641,13 +642,13 @@ int getDeleteHeaderSizeEstimate(const DeleteCommandRequest& deleteReq) {
         static_cast<int>(BSONObj::kMinBSONLength);
 
     // Handle legacy runtime constants.
-    if (auto runtimeConstants = deleteReq.getLegacyRuntimeConstants();
+    if (const auto& runtimeConstants = deleteReq.getLegacyRuntimeConstants();
         runtimeConstants.has_value()) {
         size += estimateRuntimeConstantsSize(*runtimeConstants);
     }
 
     // Handle let parameters.
-    if (auto let = deleteReq.getLet(); let.has_value()) {
+    if (const auto& let = deleteReq.getLet(); let.has_value()) {
         size += write_ops::UpdateCommandRequest::kLetFieldName.size() + let->objsize() +
             kPerElementOverhead;
     }
@@ -698,7 +699,7 @@ UpdateModification UpdateModification::parseFromOplogEntry(const BSONObj& oField
         uassert(4772601,
                 str::stream() << "Expected 'diff' field to be an object, instead got type: "
                               << diff.type(),
-                diff.type() == BSONType::Object);
+                diff.type() == BSONType::object);
 
         return UpdateModification(doc_diff::Diff{diff.embeddedObject()}, DeltaTag{}, options);
     } else {
@@ -715,14 +716,14 @@ UpdateModification::UpdateModification(TransformFunc transform)
 
 UpdateModification::UpdateModification(BSONElement update) {
     const auto type = update.type();
-    if (type == BSONType::Object) {
+    if (type == BSONType::object) {
         _update = UpdateModification(update.Obj())._update;
         return;
     }
 
     uassert(ErrorCodes::FailedToParse,
             "Update argument must be either an object or an array",
-            type == BSONType::Array);
+            type == BSONType::array);
 
     _update = PipelineUpdate{parsePipelineFromBSON(update)};
 }

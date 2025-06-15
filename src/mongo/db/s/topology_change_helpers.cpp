@@ -142,13 +142,14 @@ AggregateCommandRequest makeUnshardedCollectionsOnSpecificShardAggregation(Opera
     static const BSONObj listStage = fromjson(R"({
        $listClusterCatalog: { "shards": true }
      })");
+    const BSONObj shardsCondition = BSON("shards" << shardId);
     const BSONObj matchStage = fromjson(str::stream() << R"({
        $match: {
            $and: [
                { sharded: false },
                { db: {$ne: 'config'} },
                { db: {$ne: 'admin'} },
-               { shards: ")" << shardId << R"("},
+               )" << shardsCondition.jsonString() << R"(,
                { type: {$nin: ["timeseries","view"]} },
                { ns: {$not: {$regex: "^enxcol_\..*(\.esc|\.ecc|\.ecoc|\.ecoc\.compact)$"} }},
                { $or: [
@@ -839,8 +840,7 @@ void setUserWriteBlockingState(
                                    executor);
 
     const auto makeShardsvrSetUserWriteBlockModeCommand =
-        [block, &osiGenerator](OperationContext* opCtx,
-                               ShardsvrSetUserWriteBlockModePhaseEnum phase) -> BSONObj {
+        [opCtx, block, &osiGenerator](ShardsvrSetUserWriteBlockModePhaseEnum phase) -> BSONObj {
         ShardsvrSetUserWriteBlockMode shardsvrSetUserWriteBlockModeCmd;
         shardsvrSetUserWriteBlockModeCmd.setDbName(DatabaseName::kAdmin);
         SetUserWriteBlockModeRequest setUserWriteBlockModeRequest(block /* global */);
@@ -858,7 +858,7 @@ void setUserWriteBlockingState(
 
     if (level & UserWriteBlockingLevel::DDLOperations) {
         const auto cmd = makeShardsvrSetUserWriteBlockModeCommand(
-            opCtx, ShardsvrSetUserWriteBlockModePhaseEnum::kPrepare);
+            ShardsvrSetUserWriteBlockModePhaseEnum::kPrepare);
 
         const auto cmdResponse =
             runCommandForAddShard(opCtx, targeter, DatabaseName::kAdmin, cmd, executor);
@@ -867,7 +867,7 @@ void setUserWriteBlockingState(
 
     if (level & UserWriteBlockingLevel::Writes) {
         const auto cmd = makeShardsvrSetUserWriteBlockModeCommand(
-            opCtx, ShardsvrSetUserWriteBlockModePhaseEnum::kComplete);
+            ShardsvrSetUserWriteBlockModePhaseEnum::kComplete);
 
         const auto cmdResponse =
             runCommandForAddShard(opCtx, targeter, DatabaseName::kAdmin, cmd, executor);
@@ -926,7 +926,7 @@ void validateHostAsShard(OperationContext* opCtx,
     auto resHello = greetReplicaSet(opCtx, targeter, executor);
 
     // Fail if the node being added is a mongos.
-    const std::string msg = resHello.getStringField("msg").toString();
+    const std::string msg = std::string{resHello.getStringField("msg")};
     uassert(ErrorCodes::IllegalOperation, "cannot add a mongos as a shard", msg != "isdbgrid");
 
     // Extract the maxWireVersion so we can verify that the node being added has a binary
@@ -1084,7 +1084,7 @@ std::string getRemoveShardMessage(const ShardDrainingStateEnum& status) {
         case ShardDrainingStateEnum::kCompleted:
             return "removeshard completed successfully";
         default:
-            MONGO_UNREACHABLE;
+            MONGO_UNREACHABLE_TASSERT(10083529);
     }
 }
 
@@ -1131,7 +1131,7 @@ std::string createShardName(OperationContext* opCtx,
     std::string selectedName;
 
     if (proposedShardName) {
-        selectedName = proposedShardName->toString();
+        selectedName = std::string{*proposedShardName};
     } else {
         auto greet = greetReplicaSet(opCtx, targeter, executor);
         selectedName = greet["setName"].str();
@@ -1789,7 +1789,7 @@ void propagateClusterUserWriteBlockToReplicaSet(OperationContext* opCtx,
         opCtx,
         targeter,
         topology_change_helpers::UserWriteBlockingLevel(level),
-        true,
+        true, /* block writes */
         boost::none,
         executor);
 }

@@ -1,6 +1,7 @@
 // Helper functions for testing index builds.
 
 import {configureFailPoint} from "jstests/libs/fail_point_util.js";
+import {getCollectionNameFromFullNamespace} from "jstests/libs/namespace_utils.js";
 import {funWithArgs} from "jstests/libs/parallel_shell_helpers.js";
 import {extractUUIDFromObject} from "jstests/libs/uuid_util.js";
 
@@ -67,7 +68,9 @@ export var IndexBuildTest = class {
                 return;
             }
             // If no collection is provided, return any index build.
-            if (!collectionName || cmdBody.createIndexes === collectionName) {
+            if (!collectionName ||
+                (cmdBody.createIndexes === collectionName &&
+                 getCollectionNameFromFullNamespace(op.ns) === collectionName)) {
                 cmdBody.indexes.forEach((index) => {
                     if (!indexName || index.name === indexName) {
                         indexBuildOpId = op.opid;
@@ -924,7 +927,7 @@ export const ResumableIndexBuildTest = class {
             return;
 
         // Ensure that the persisted Sorter data was cleaned up after failing to resume.
-        const files = listFiles(tempDir);
+        const files = listFiles(tempDir).filter((e) => !e.isDirectory);
         assert.eq(files.length, 0, files);
     }
 

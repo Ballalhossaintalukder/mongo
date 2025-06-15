@@ -28,14 +28,14 @@
  */
 #pragma once
 
-#include <boost/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/platform/waitable_atomic.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/tick_source.h"
 
 #include <cstdint>
+
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -151,6 +151,16 @@ public:
     bool waitUntilQueued(Nanoseconds timeout) {
         return bool(_startQueueingTime.waitFor(kNotQueueing, timeout));
     }
+
+    void recordDelinquentAcquisition(int64_t delay) {
+        ++delinquentAcquisitions;
+        totalAcquisitionDelinquencyMillis += delay;
+        maxAcquisitionDelinquencyMillis = std::max(maxAcquisitionDelinquencyMillis, delay);
+    }
+
+    int32_t delinquentAcquisitions{0};
+    int64_t totalAcquisitionDelinquencyMillis{0};
+    int64_t maxAcquisitionDelinquencyMillis{0};
 };
 
 /**

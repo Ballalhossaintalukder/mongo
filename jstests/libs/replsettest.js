@@ -1873,7 +1873,8 @@ export class ReplSetTest {
 
         jsTest.log.info("AwaitLastStableRecoveryTimestamp: Beginning for " + id);
 
-        let replSetStatus = assert.commandWorked(primary.adminCommand("replSetGetStatus"));
+        let replSetStatus = asCluster(
+            rst, primary, () => assert.commandWorked(primary.adminCommand({replSetGetStatus: 1})));
         if (replSetStatus["configsvr"]) {
             // Performing dummy replicated writes against a configsvr is hard, especially if auth
             // is also enabled.
@@ -2160,6 +2161,15 @@ export class ReplSetTest {
             }
             if (skipTempCollections) {
                 commandObj.skipTempCollections = 1;
+            }
+            // If we are running in a multiversion suite, preserve old behavior of checking capped
+            // collections in _id order instead of natural order. The
+            // 'useIndexScanForCappedCollections' option for dbHash should be ignored in older
+            // binaries.
+            if (typeof TestData !== "undefined" &&
+                (TestData.useRandomBinVersionsWithinReplicaSet || TestData.mongosBinVersion ||
+                 TestData.multiversionBinVersion || TestData.mixedBinVersions)) {
+                commandObj.useIndexScanForCappedCollections = 1;
             }
 
             return assert.commandWorked(db.runCommand(commandObj));

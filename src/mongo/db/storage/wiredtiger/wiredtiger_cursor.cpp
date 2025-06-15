@@ -28,17 +28,17 @@
  */
 
 
-#include <wiredtiger.h>
+#include "mongo/db/storage/wiredtiger/wiredtiger_cursor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_cursor.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
-#include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <wiredtiger.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -89,7 +89,7 @@ WiredTigerCursor::WiredTigerCursor(Params params,
         // Add this option without a trailing comma. This enables an optimization in WiredTiger to
         // skip parsing the config string if this is the only option. See SERVER-43232 for details.
         if (!params.allowOverwrite) {
-            _config = kOverwriteFalse.toString();
+            _config = std::string{kOverwriteFalse};
             configStr = kOverwriteFalse.data();
         }
     }

@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/none.hpp>
-#include <ostream>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/write_ops/batched_command_response.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -42,12 +38,16 @@
 #include "mongo/db/query/write_ops/write_ops_gen.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/s/chunk_version.h"
-#include "mongo/s/index_version.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/shard_version_factory.h"
 #include "mongo/s/stale_exception.h"
-#include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/unittest/unittest.h"
+
+#include <ostream>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace {
@@ -88,10 +88,8 @@ TEST(BatchedCommandResponseTest, StaleConfigInfo) {
 
     StaleConfigInfo staleInfo(
         NamespaceString::createNamespaceString_forTest("TestDB.TestColl"),
-        ShardVersionFactory::make(ChunkVersion({epoch, Timestamp(100, 0)}, {1, 0}),
-                                  boost::optional<CollectionIndexes>(boost::none)),
-        ShardVersionFactory::make(ChunkVersion({epoch, Timestamp(100, 0)}, {2, 0}),
-                                  boost::optional<CollectionIndexes>(boost::none)),
+        ShardVersionFactory::make(ChunkVersion({epoch, Timestamp(100, 0)}, {1, 0})),
+        ShardVersionFactory::make(ChunkVersion({epoch, Timestamp(100, 0)}, {2, 0})),
         ShardId("TestShard"));
 
     BSONObjBuilder builder(BSON("index" << 0 << "code" << ErrorCodes::StaleConfig << "errmsg"
@@ -177,8 +175,7 @@ TEST(BatchedCommandResponseTest, TooManyBigErrors) {
 
 TEST(BatchedCommandResponseTest, CompatibilityFromWriteErrorToBatchCommandResponse) {
     CollectionGeneration gen(OID::gen(), Timestamp(2, 0));
-    const auto versionReceived = ShardVersionFactory::make(
-        ChunkVersion(gen, {1, 0}), boost::optional<CollectionIndexes>(boost::none));
+    const auto versionReceived = ShardVersionFactory::make(ChunkVersion(gen, {1, 0}));
 
     write_ops::UpdateCommandReply reply;
     reply.getWriteCommandReplyBase().setN(1);

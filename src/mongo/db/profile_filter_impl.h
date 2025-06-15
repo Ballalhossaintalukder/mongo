@@ -29,10 +29,6 @@
 
 #pragma once
 
-#include <functional>
-
-#include <absl/container/node_hash_map.h>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/curop.h"
@@ -42,11 +38,15 @@
 #include "mongo/db/profile_filter.h"
 #include "mongo/util/string_map.h"
 
+#include <functional>
+
+#include <absl/container/node_hash_map.h>
+
 namespace mongo {
 
 class ProfileFilterImpl final : public ProfileFilter {
 public:
-    ProfileFilterImpl(BSONObj expr);
+    ProfileFilterImpl(BSONObj expr, boost::intrusive_ptr<ExpressionContext> parserExpCtx);
     bool matches(OperationContext* opCtx, const OpDebug& op, const CurOp& curop) const override;
     BSONObj serialize() const override {
         return _matcher.getMatchExpression()->serialize();

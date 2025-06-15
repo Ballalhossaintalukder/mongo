@@ -27,7 +27,19 @@
  *    it in the license file.
  */
 
-#include <absl/meta/type_traits.h>
+#include "mongo/db/update/push_node.h"
+
+#include "mongo/base/error_codes.h"
+#include "mongo/base/status_with.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/db/exec/mutable_bson/algorithm.h"
+#include "mongo/db/exec/mutable_bson/document.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/str.h"
+#include "mongo/util/string_map.h"
+
 #include <cstdlib>
 #include <iterator>
 #include <limits>
@@ -37,21 +49,10 @@
 #include <type_traits>
 #include <utility>
 
+#include <absl/meta/type_traits.h>
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/base/status_with.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/db/exec/mutable_bson/algorithm.h"
-#include "mongo/db/exec/mutable_bson/document.h"
-#include "mongo/db/update/push_node.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/str.h"
-#include "mongo/util/string_map.h"
 
 namespace mongo {
 
@@ -77,7 +78,7 @@ long long safeApproximateAbs(long long val) {
 Status PushNode::init(BSONElement modExpr, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     invariant(modExpr.ok());
 
-    if (modExpr.type() == BSONType::Object && modExpr[kEachClauseName]) {
+    if (modExpr.type() == BSONType::object && modExpr[kEachClauseName]) {
         const StringDataSet validClauseNames{
             kEachClauseName,
             kSliceClauseName,
@@ -106,7 +107,7 @@ Status PushNode::init(BSONElement modExpr, const boost::intrusive_ptr<Expression
         auto eachIt = clausesFound.find(kEachClauseName);
         invariant(eachIt != clausesFound.end());  // We already checked for a $each clause.
         const auto& eachClause = eachIt->second;
-        if (eachClause.type() != BSONType::Array) {
+        if (eachClause.type() != BSONType::array) {
             return Status(ErrorCodes::BadValue,
                           str::stream() << "The argument to $each in $push must be"
                                            " an array but it was of type: "
@@ -137,7 +138,7 @@ Status PushNode::init(BSONElement modExpr, const boost::intrusive_ptr<Expression
         if (sortIt != clausesFound.end()) {
             auto sortClause = sortIt->second;
 
-            if (sortClause.type() == BSONType::Object) {
+            if (sortClause.type() == BSONType::object) {
                 auto status = pattern_cmp::checkSortClause(sortClause.embeddedObject());
 
                 if (status.isOK()) {
@@ -268,7 +269,7 @@ ModifierNode::ModifyResult PushNode::insertElementsWithPosition(
 
 ModifierNode::ModifyResult PushNode::performPush(mutablebson::Element* element,
                                                  const FieldRef* elementPath) const {
-    if (element->getType() != BSONType::Array) {
+    if (element->getType() != BSONType::array) {
         invariant(elementPath);  // We can only hit this error if we are updating an existing path.
         auto idElem = mutablebson::findFirstChildNamed(element->getDocument().root(), "_id");
         uasserted(ErrorCodes::BadValue,

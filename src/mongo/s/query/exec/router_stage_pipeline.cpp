@@ -27,32 +27,35 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <utility>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/s/query/exec/router_stage_pipeline.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/s/query/exec/document_source_merge_cursors.h"
-#include "mongo/s/query/exec/router_stage_pipeline.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
 RouterStagePipeline::RouterStagePipeline(std::unique_ptr<Pipeline, PipelineDeleter> mergePipeline)
     : RouterExecStage(mergePipeline->getContext()->getOperationContext()),
-      _mergePipeline(std::move(mergePipeline)) {
+      _mergePipeline(std::move(mergePipeline)),
+      _mergeExecPipeline(
+          exec::agg::buildPipeline(_mergePipeline->getSources(), _mergePipeline->getContext())) {
     invariant(!_mergePipeline->getSources().empty());
     _mergeCursorsStage =
         dynamic_cast<DocumentSourceMergeCursors*>(_mergePipeline->getSources().front().get());
@@ -60,7 +63,7 @@ RouterStagePipeline::RouterStagePipeline(std::unique_ptr<Pipeline, PipelineDelet
 
 StatusWith<ClusterQueryResult> RouterStagePipeline::next() {
     // Pipeline::getNext will return a boost::optional<Document> or boost::none if EOF.
-    if (auto result = _mergePipeline->getNext()) {
+    if (auto result = _mergeExecPipeline->getNext()) {
         return _validateAndConvertToBSON(*result);
     }
 
@@ -74,11 +77,11 @@ StatusWith<ClusterQueryResult> RouterStagePipeline::next() {
 }
 
 void RouterStagePipeline::doReattachToOperationContext() {
-    _mergePipeline->reattachToOperationContext(getOpCtx());
+    _mergeExecPipeline->reattachToOperationContext(getOpCtx());
 }
 
 void RouterStagePipeline::doDetachFromOperationContext() {
-    _mergePipeline->detachFromOperationContext();
+    _mergeExecPipeline->detachFromOperationContext();
 }
 
 void RouterStagePipeline::kill(OperationContext* opCtx) {
@@ -115,7 +118,7 @@ BSONObj RouterStagePipeline::_validateAndConvertToBSON(const Document& event) {
                              "Expected: "
                           << BSON("_id" << resumeToken) << " but found: "
                           << (eventBSON["_id"] ? BSON("_id" << eventBSON["_id"]) : BSONObj()),
-            (resumeToken.getType() == BSONType::Object) &&
+            (resumeToken.getType() == BSONType::object) &&
                 idField.binaryEqual(resumeToken.getDocument().toBson()));
 
     // Return the event in BSONObj form, minus the $sortKey metadata.

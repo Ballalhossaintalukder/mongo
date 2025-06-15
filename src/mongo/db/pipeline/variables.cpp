@@ -29,14 +29,6 @@
 
 #include "mongo/db/pipeline/variables.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-
-#include <absl/container/flat_hash_map.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
@@ -59,6 +51,14 @@
 #include "mongo/transport/session.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <memory>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -92,24 +92,24 @@ constexpr StringData kSearchMetaName = "SEARCH_META"_sd;
 constexpr StringData kUserRolesName = "USER_ROLES"_sd;
 
 const StringMap<Variables::Id> Variables::kBuiltinVarNameToId = {
-    {kRootName.rawData(), kRootId},
-    {kRemoveName.rawData(), kRemoveId},
-    {kNowName.rawData(), kNowId},
-    {kClusterTimeName.rawData(), kClusterTimeId},
-    {kJsScopeName.rawData(), kJsScopeId},
-    {kIsMapReduceName.rawData(), kIsMapReduceId},
-    {kSearchMetaName.rawData(), kSearchMetaId},
-    {kUserRolesName.rawData(), kUserRolesId}};
+    {kRootName.data(), kRootId},
+    {kRemoveName.data(), kRemoveId},
+    {kNowName.data(), kNowId},
+    {kClusterTimeName.data(), kClusterTimeId},
+    {kJsScopeName.data(), kJsScopeId},
+    {kIsMapReduceName.data(), kIsMapReduceId},
+    {kSearchMetaName.data(), kSearchMetaId},
+    {kUserRolesName.data(), kUserRolesId}};
 
 const std::map<Variables::Id, std::string> Variables::kIdToBuiltinVarName = {
-    {kRootId, kRootName.rawData()},
-    {kRemoveId, kRemoveName.rawData()},
-    {kNowId, kNowName.rawData()},
-    {kClusterTimeId, kClusterTimeName.rawData()},
-    {kJsScopeId, kJsScopeName.rawData()},
-    {kIsMapReduceId, kIsMapReduceName.rawData()},
-    {kSearchMetaId, kSearchMetaName.rawData()},
-    {kUserRolesId, kUserRolesName.rawData()}};
+    {kRootId, kRootName.data()},
+    {kRemoveId, kRemoveName.data()},
+    {kNowId, kNowName.data()},
+    {kClusterTimeId, kClusterTimeName.data()},
+    {kJsScopeId, kJsScopeName.data()},
+    {kIsMapReduceId, kIsMapReduceName.data()},
+    {kSearchMetaId, kSearchMetaName.data()},
+    {kUserRolesId, kUserRolesName.data()}};
 
 const std::map<StringData, std::function<void(const Value&)>> Variables::kSystemVarValidators = {
     {kNowName,
@@ -117,34 +117,34 @@ const std::map<StringData, std::function<void(const Value&)>> Variables::kSystem
          uassert(ErrorCodes::TypeMismatch,
                  str::stream() << "$$NOW must have a date value, found "
                                << typeName(value.getType()),
-                 value.getType() == BSONType::Date);
+                 value.getType() == BSONType::date);
      }},
     {kClusterTimeName,
      [](const auto& value) {
          uassert(ErrorCodes::TypeMismatch,
                  str::stream() << "$$CLUSTER_TIME must have a timestamp value, found "
                                << typeName(value.getType()),
-                 value.getType() == BSONType::bsonTimestamp);
+                 value.getType() == BSONType::timestamp);
      }},
     {kJsScopeName,
      [](const auto& value) {
          uassert(ErrorCodes::TypeMismatch,
                  str::stream() << "$$JS_SCOPE must have an object value, found "
                                << typeName(value.getType()),
-                 value.getType() == BSONType::Object);
+                 value.getType() == BSONType::object);
      }},
     {kIsMapReduceName,
      [](const auto& value) {
          uassert(ErrorCodes::TypeMismatch,
                  str::stream() << "$$IS_MR must have a bool value, found "
                                << typeName(value.getType()),
-                 value.getType() == BSONType::Bool);
+                 value.getType() == BSONType::boolean);
      }},
     {kUserRolesName, [](const auto& value) {
          uassert(ErrorCodes::TypeMismatch,
                  str::stream() << "$$USER_ROLES must have an array value, found "
                                << typeName(value.getType()),
-                 value.getType() == BSONType::Array);
+                 value.getType() == BSONType::array);
      }}};
 
 void Variables::setValue(Id id, const Value& value, bool isConstant) {
@@ -204,13 +204,18 @@ Value Variables::getValue(Id id, const Document& root) const {
             case Variables::kClusterTimeId:
             case Variables::kJsScopeId:
             case Variables::kIsMapReduceId:
-            case Variables::kUserRolesId:
+            case Variables::kUserRolesId: {
                 if (auto it = _definitions.find(id); it != _definitions.end()) {
                     return it->second.value;
                 }
-                uasserted(51144,
-                          str::stream() << "Builtin variable '$$" << getBuiltinVariableName(id)
-                                        << "' is not available");
+                std::stringstream message;
+                message << "Builtin variable '$$" << getBuiltinVariableName(id)
+                        << "' is not available";
+                if (id == Variables::kUserRolesId && !enableAccessToUserRoles.load()) {
+                    message << " as the server is not configured to accept it";
+                }
+                uasserted(51144, message.str());
+            }
             case Variables::kSearchMetaId: {
                 auto metaIt = _definitions.find(id);
                 return metaIt == _definitions.end() ? Value() : metaIt->second.value;
@@ -230,7 +235,7 @@ Document Variables::getDocument(Id id, const Document& root) const {
     }
 
     const Value var = getValue(id, root);
-    if (var.getType() == Object)
+    if (var.getType() == BSONType::object)
         return var.getDocument();
 
     return Document();
@@ -383,30 +388,30 @@ LegacyRuntimeConstants Variables::transitionalExtractRuntimeConstants() const {
             const auto& [value, unusedIsConstant] = it->second;
             switch (builtinId) {
                 case kNowId: {
-                    invariant(value.getType() == BSONType::Date);
+                    invariant(value.getType() == BSONType::date);
                     extracted.setLocalNow(value.getDate());
                     break;
                 }
                 case kClusterTimeId: {
-                    invariant(value.getType() == BSONType::bsonTimestamp);
+                    invariant(value.getType() == BSONType::timestamp);
                     extracted.setClusterTime(value.getTimestamp());
                     break;
                 }
                 case kJsScopeId: {
-                    invariant(value.getType() == BSONType::Object);
+                    invariant(value.getType() == BSONType::object);
                     extracted.setJsScope(value.getDocument().toBson());
                     break;
                 }
                 case kIsMapReduceId: {
-                    invariant(value.getType() == BSONType::Bool);
+                    invariant(value.getType() == BSONType::boolean);
                     extracted.setIsMapReduce(value.getBool());
                     break;
                 }
                 case kUserRolesId: {
-                    invariant(value.getType() == BSONType::Array);
+                    invariant(value.getType() == BSONType::array);
                     BSONArrayBuilder bab;
                     for (const auto& val : value.getArray()) {
-                        invariant(val.getType() == BSONType::Object);
+                        invariant(val.getType() == BSONType::object);
                         bab.append(val.getDocument().toBson());
                     }
                     extracted.setUserRoles(bab.arr());

@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <functional>
-#include <list>
-#include <memory>
-#include <mutex>
-#include <queue>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -66,6 +54,19 @@
 #include "mongo/util/future.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <functional>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -201,7 +202,7 @@ public:
 
     bool onNetworkThread() override;
 
-    void dropConnections(const HostAndPort&) override {}
+    void dropConnections(const HostAndPort& target, const Status& status) override {}
 
     void testEgress(const HostAndPort&, transport::ConnectSSLMode, Milliseconds, Status) override {}
 
@@ -393,6 +394,10 @@ public:
         return _responses.size();
     }
 
+    void setOnCancelAction(std::function<void()> cb) {
+        _onCancelAction = std::move(cb);
+    }
+
 private:
     /**
      * Information describing a scheduled alarm.
@@ -511,6 +516,8 @@ private:
     // Fields guarded by the mutex are labled (M), below, and those that are read-only
     // in multi-threaded execution, and so unsynchronized, are labeled (R).
     stdx::mutex _mutex;
+
+    std::function<void()> _onCancelAction;
 
     // A mocked clock source.
     std::unique_ptr<ClockSourceMock> _clkSource;  // (M)

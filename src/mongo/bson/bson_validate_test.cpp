@@ -28,13 +28,7 @@
  */
 
 
-#include <cstdio>
-#include <cstring>
-#include <ctime>
-#include <memory>
-#include <ostream>
-#include <string>
-#include <utility>
+#include "mongo/bson/bson_validate.h"
 
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
@@ -42,7 +36,6 @@
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bson_depth.h"
-#include "mongo/bson/bson_validate.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -64,6 +57,14 @@
 #include "mongo/util/base64.h"
 #include "mongo/util/time_support.h"
 
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <utility>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
 
@@ -74,7 +75,7 @@ using std::unique_ptr;
 
 void appendInvalidStringElement(const char* fieldName, BufBuilder* bb) {
     // like a BSONObj string, but without a NUL terminator.
-    bb->appendChar(String);
+    bb->appendChar(stdx::to_underlying(BSONType::string));
     bb->appendCStr(fieldName);
     bb->appendNum(4);
     bb->appendStrBytes("asdf");  // Missing required final NUL.
@@ -86,7 +87,7 @@ void appendInvalidStringElement(const char* fieldName, BufBuilder* bb) {
  * minimum 5 bytes expected by the the validator.
  */
 void appendObjectNameAndSize(const char* fieldName, BufBuilder* bb, int objectSize) {
-    bb->appendChar(Object);
+    bb->appendChar(stdx::to_underlying(BSONType::object));
     bb->appendCStr(fieldName);
     bb->appendNum(objectSize);
 }
@@ -432,7 +433,7 @@ TEST(BSONValidateFast, Simple0) {
 
 TEST(BSONValidateFast, Simple2) {
     char buf[64];
-    for (int i = 1; i <= JSTypeMax; i++) {
+    for (int i = 1; i <= stdx::to_underlying(BSONType::jsTypeMax); i++) {
         BSONObjBuilder b;
         sprintf(buf, "foo%d", i);
         b.appendMinForType(buf, i);
@@ -447,7 +448,7 @@ TEST(BSONValidateFast, Simple2) {
 TEST(BSONValidateFast, Simple3) {
     BSONObjBuilder b;
     char buf[64];
-    for (int i = 1; i <= JSTypeMax; i++) {
+    for (int i = 1; i <= stdx::to_underlying(BSONType::jsTypeMax); i++) {
         sprintf(buf, "foo%d", i);
         b.appendMinForType(buf, i);
         sprintf(buf, "bar%d", i);
@@ -657,7 +658,7 @@ TEST(BSONValidateFast, InvalidObjectWithNegativeSizeInNestedObjectWithIdTopLevel
 TEST(BSONValidateFast, StringHasSomething) {
     BufBuilder bb;
     BSONObjBuilder ob(bb);
-    bb.appendChar(String);
+    bb.appendChar(stdx::to_underlying(BSONType::string));
     bb.appendCStr("x");
     bb.appendNum(0);
     const BSONObj x = ob.done();
@@ -871,7 +872,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Unindexed Encrypted Value
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype =
             static_cast<int8_t>(EncryptedBinDataType::kFLE2UnindexedEncryptedValue);
         fle = BSONBinData(
@@ -884,7 +885,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Equality Indexed Value
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kFLE2EqualityIndexedValue);
         fle = BSONBinData(
             reinterpret_cast<const void*>(&blob), sizeof(FleBlobHeader), BinDataType::Encrypt);
@@ -896,7 +897,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Range Indexed Value
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::NumberInt;
+        blob.originalBsonType = stdx::to_underlying(BSONType::numberInt);
         blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kFLE2RangeIndexedValue);
         fle = BSONBinData(
             reinterpret_cast<const void*>(&blob), sizeof(FleBlobHeader), BinDataType::Encrypt);
@@ -908,7 +909,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Equality Indexed Value V2
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype =
             static_cast<int8_t>(EncryptedBinDataType::kFLE2EqualityIndexedValueV2);
         fle = BSONBinData(
@@ -921,7 +922,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Range Indexed Value V2
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::NumberInt;
+        blob.originalBsonType = stdx::to_underlying(BSONType::numberInt);
         blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kFLE2RangeIndexedValueV2);
         fle = BSONBinData(
             reinterpret_cast<const void*>(&blob), sizeof(FleBlobHeader), BinDataType::Encrypt);
@@ -933,7 +934,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Unindexed Encrypted Value V2
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype =
             static_cast<int8_t>(EncryptedBinDataType::kFLE2UnindexedEncryptedValueV2);
         fle = BSONBinData(
@@ -946,7 +947,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
     {
         // Successful FLE2 Text Indexed Value
         memset(blob.keyUUID, 0, sizeof(blob.keyUUID));
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kFLE2TextIndexedValue);
         fle = BSONBinData(
             reinterpret_cast<const void*>(&blob), sizeof(FleBlobHeader), BinDataType::Encrypt);
@@ -967,7 +968,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
 
     {
         // Encrypted BSON value subtype not supposed to persist.
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype = static_cast<int8_t>(EncryptedBinDataType::kFLE2Placeholder);
         fle = BSONBinData(
             reinterpret_cast<const void*>(&blob), sizeof(FleBlobHeader), BinDataType::Encrypt);
@@ -980,7 +981,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
 
     {
         // Short Encrypted BSON Value.
-        blob.originalBsonType = BSONType::String;
+        blob.originalBsonType = stdx::to_underlying(BSONType::string);
         blob.fleBlobSubtype =
             static_cast<int8_t>(EncryptedBinDataType::kFLE2UnindexedEncryptedValue);
         fle = BSONBinData(
@@ -994,7 +995,7 @@ TEST(BSONValidateExtended, BSONEncryptedValue) {
 
     {
         // Unsupported original BSON subtype.
-        blob.originalBsonType = BSONType::MaxKey;
+        blob.originalBsonType = stdx::to_underlying(BSONType::maxKey);
         blob.fleBlobSubtype =
             static_cast<int8_t>(EncryptedBinDataType::kFLE2UnindexedEncryptedValue);
         fle = BSONBinData(

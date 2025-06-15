@@ -10,6 +10,29 @@ exports_files(
 )
 
 idl_generator(
+    name = "ingress_request_rate_limiter_gen",
+    src = "ingress_request_rate_limiter.idl",
+)
+
+mongo_cc_library(
+    name = "ingress_request_rate_limiter",
+    srcs = [
+        "ingress_request_rate_limiter.cpp",
+        ":ingress_request_rate_limiter_gen",
+    ],
+    hdrs = [
+        "ingress_request_rate_limiter.h",
+    ],
+    deps = [
+        ":rate_limiter",
+        "//src/mongo:base",
+        "//src/mongo/db:server_feature_flags",
+        "//src/mongo/db:service_context",
+        "//src/mongo/db/auth",
+    ],
+)
+
+idl_generator(
     name = "ingress_admission_control_gen",
     src = "ingress_admission_control.idl",
 )
@@ -25,6 +48,7 @@ mongo_cc_library(
     ],
     deps = [
         ":ingress_admission_context",
+        ":rate_limiter",
         "//src/mongo:base",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:server_base",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:server_feature_flags",  # TODO(SERVER-93876): Remove.
@@ -56,10 +80,12 @@ mongo_cc_library(
     ],
     deps = [
         ":ingress_admission_control",
+        ":ingress_request_rate_limiter",
         ":ticketholder_manager",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:server_feature_flags",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:service_context",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db/commands:server_status_core",  # TODO(SERVER-93876): Remove.
+        "//src/mongo/transport:transport_layer_common",
     ],
 )
 
@@ -121,6 +147,22 @@ mongo_cc_library(
     deps = [
         "//src/mongo/db:service_context",
         "//src/mongo/util/concurrency:admission_context",
+    ],
+)
+
+mongo_cc_library(
+    name = "rate_limiter",
+    srcs = [
+        "rate_limiter.cpp",
+    ],
+    hdrs = [
+        "rate_limiter.h",
+    ],
+    deps = [
+        "//src/mongo:base",
+        "//src/mongo/db:server_base",
+        "//src/mongo/db:service_context",
+        "//src/third_party/folly:folly_token_bucket",
     ],
 )
 
@@ -200,6 +242,21 @@ mongo_cc_unit_test(
         "//src/mongo/unittest",
         "//src/mongo/util:mock_periodic_runner",
         "//src/mongo/util/concurrency:ticketholder",
+    ],
+)
+
+mongo_cc_unit_test(
+    name = "rate_limiter_util_test",
+    srcs = [
+        "rate_limiter_util_test.cpp",
+    ],
+    tags = [
+        "mongo_unittest_second_group",
+        "server-workload-scheduling",
+    ],
+    deps = [
+        ":rate_limiter",
+        "//src/mongo/db:service_context_test_fixture",
     ],
 )
 

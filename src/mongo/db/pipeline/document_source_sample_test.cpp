@@ -27,27 +27,29 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_sample.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source_mock.h"
-#include "mongo/db/pipeline/document_source_sample.h"
 #include "mongo/db/pipeline/document_source_sample_from_random_cursor.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -62,12 +64,13 @@ protected:
     virtual void createSample(long long size) {
         BSONObj spec = BSON("$sample" << BSON("size" << size));
         BSONElement specElement = spec.firstElement();
-        _sample = DocumentSourceSample::createFromBson(specElement, getExpCtx());
+        _sample =
+            exec::agg::buildStage(DocumentSourceSample::createFromBson(specElement, getExpCtx()));
         sample()->setSource(_mock.get());
         checkBsonRepresentation(spec);
     }
 
-    DocumentSource* sample() {
+    exec::agg::Stage* sample() {
         return _sample.get();
     }
 
@@ -118,7 +121,7 @@ protected:
     }
 
 protected:
-    intrusive_ptr<DocumentSource> _sample;
+    intrusive_ptr<exec::agg::Stage> _sample;
     intrusive_ptr<DocumentSourceMock> _mock;
 
 private:
@@ -210,7 +213,7 @@ TEST_F(SampleBasics, RedactsCorrectly) {
                 "size": "?number"
             }
         })",
-        redact(*sample()));
+        redact(*dynamic_cast<DocumentSource*>(sample())));
 }
 
 /**
@@ -448,7 +451,7 @@ TEST_F(SampleFromRandomCursorBasics, RedactsCorrectly) {
     createSample(2);
     ASSERT_VALUE_EQ_AUTO(  // NOLINT
         "{ $sampleFromRandomCursor: { size: \"?number\" } }",
-        redact(*sample()));
+        redact(*dynamic_cast<DocumentSource*>(sample())));
 }
 
 }  // namespace

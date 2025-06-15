@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <set>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -46,6 +40,12 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -54,7 +54,7 @@ namespace mongo {
  * transaction, this will be {clusterTime: <transaction commit timestamp>, ts: <applyOps
  * optime.ts>}. For all other documents, this will be {clusterTime: <optime.ts>, ts: <optime.ts>}.
  */
-class DocumentSourceReshardingAddResumeId : public DocumentSource {
+class DocumentSourceReshardingAddResumeId : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_addReshardingResumeId"_sd;
 
@@ -79,7 +79,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return DocumentSourceReshardingAddResumeId::kStageName.rawData();
+        return DocumentSourceReshardingAddResumeId::kStageName.data();
     }
 
     static const Id& id;

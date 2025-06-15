@@ -32,7 +32,7 @@ imports:
     - "mongo/db/basic_types.idl"
 
 enums:
-    ScoreNormalizeFunction:
+    ScoreNormalization:
         description: Normalize function options
         type: string
         values:
@@ -49,10 +49,10 @@ structs:
                 description: Computes new value and reports it in score details metadata
                 type: IDLAnyType
                 optional: false
-            normalizeFunction:
+            normalization:
                 description: Type of score normalization function (none, sigmoid, minMaxScaler)
-                type: ScoreNormalizeFunction
-                default: "kSigmoid"
+                type: ScoreNormalization
+                default: "kNone"
             weight:
                 description: Number to multiply the 'score' expression by, after normalization
                 type: safeDouble
@@ -60,3 +60,7 @@ structs:
                 validator:
                     lte: 1.0
                     gte: 0.0
+            scoreDetails:
+                description: If true scoreDetails will be materialized. Will include sub-pipeline scoreDetails if they have them.
+                type: bool
+                default: false

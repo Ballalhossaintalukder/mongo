@@ -27,17 +27,12 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <list>
-#include <typeinfo>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/pipeline_executor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/mutable_bson/document.h"
 #include "mongo/db/exec/mutable_bson/element.h"
@@ -50,12 +45,19 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/update/document_diff_calculator.h"
 #include "mongo/db/update/object_replace_executor.h"
-#include "mongo/db/update/pipeline_executor.h"
 #include "mongo/db/update/update_oplog_entry_serialization.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <list>
+#include <typeinfo>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -92,7 +94,7 @@ PipelineExecutor::PipelineExecutor(const boost::intrusive_ptr<ExpressionContext>
     _expCtx->stopExpressionCounters();
 
     // Validate the update pipeline.
-    for (auto&& stage : _pipeline->getSources()) {
+    for (const auto& stage : _pipeline->getSources()) {
         auto stageConstraints = stage->constraints();
         uassert(ErrorCodes::InvalidOptions,
                 str::stream() << stage->getSourceName()
@@ -109,6 +111,7 @@ PipelineExecutor::PipelineExecutor(const boost::intrusive_ptr<ExpressionContext>
     }
 
     _pipeline->addInitialSource(DocumentSourceQueue::create(expCtx));
+    _execPipeline = exec::agg::buildPipeline(_pipeline->getSources(), _pipeline->getContext());
 }
 
 UpdateExecutor::ApplyResult PipelineExecutor::applyUpdate(ApplyParams applyParams) const {
@@ -117,7 +120,7 @@ UpdateExecutor::ApplyResult PipelineExecutor::applyUpdate(ApplyParams applyParam
     DocumentSourceQueue* queueStage = static_cast<DocumentSourceQueue*>(_pipeline->peekFront());
     queueStage->emplace_back(Document{originalDoc});
 
-    const auto transformedDoc = _pipeline->getNext()->toBson();
+    const auto transformedDoc = _execPipeline->getNext()->toBson();
     const auto transformedDocHasIdField = transformedDoc.hasField(kIdFieldName);
 
     // Replace the pre-image document in applyParams with the post image we got from running the

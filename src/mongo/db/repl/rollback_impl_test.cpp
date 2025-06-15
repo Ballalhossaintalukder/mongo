@@ -27,21 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <absl/container/node_hash_set.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <functional>
-#include <list>
-#include <memory>
-#include <ostream>
-#include <utility>
-#include <vector>
+#include "mongo/db/repl/rollback_impl.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -69,7 +55,6 @@
 #include "mongo/db/repl/oplog_interface_mock.h"
 #include "mongo/db/repl/replication_consistency_markers.h"
 #include "mongo/db/repl/replication_process.h"
-#include "mongo/db/repl/rollback_impl.h"
 #include "mongo/db/repl/rollback_test_fixture.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/type_shard_identity.h"
@@ -80,6 +65,7 @@
 #include "mongo/db/session/logical_session_id_helpers.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/db/transaction_resources.h"
@@ -93,6 +79,19 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <list>
+#include <memory>
+#include <ostream>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplicationRollback
 
@@ -2186,12 +2185,24 @@ TEST_F(RollbackImplObserverInfoTest,
        NamespacesAndUUIDsForOpsExtractsNamespaceAndUUIDOfCreateIndexOplogEntry) {
     auto nss = NamespaceString::createNamespaceString_forTest("test", "coll");
     auto uuid = UUID::gen();
-    auto indexObj =
-        BSON("createIndexes" << nss.coll() << "v"
-                             << static_cast<int>(IndexDescriptor::IndexVersion::kV2) << "key"
-                             << "x"
-                             << "name"
-                             << "x_1");
+
+    BSONObj indexObj;
+    const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
+    if (fcvSnapshot.isVersionInitialized() &&
+        mongo::feature_flags::gFeatureFlagReplicateLocalCatalogIdentifiers.isEnabled(
+            VersionContext::getDecoration(_opCtx.get()), fcvSnapshot)) {
+        indexObj = BSON("createIndexes" << nss.coll() << "spec"
+                                        << BSON("v" << 2 << "key"
+                                                    << "x"
+                                                    << "name"
+                                                    << "x_1"));
+    } else {
+        indexObj = BSON("createIndexes" << nss.coll() << "v" << 2 << "key"
+                                        << "x"
+                                        << "name"
+                                        << "x_1");
+    }
+
     auto cmdOp = makeCommandOp(Timestamp(2, 2), uuid, nss.getCommandNS(), indexObj, 2);
 
     std::set<NamespaceString> expectedNamespaces = {nss};

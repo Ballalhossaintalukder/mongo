@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -54,6 +45,16 @@
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -241,6 +242,13 @@ public:
         return false;
     }
 
+    /**
+     * Returns true if this stage has a mongot subpipeline. Currently only used for $rankFusion.
+     * TODO SERVER-103504 Remove once $rankFusion with mongot input pipelines is enabled on views.
+     */
+    virtual bool hasMongotInputPipeline() const {
+        return false;
+    }
 
     /**
      * Returns true if this stage require knowledge of the collection default collation at parse

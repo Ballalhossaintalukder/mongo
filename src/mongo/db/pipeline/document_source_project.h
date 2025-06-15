@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -44,6 +41,10 @@
 #include "mongo/db/query/projection_policies.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <string>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -78,7 +79,7 @@ public:
             expCtx, projectSpec, ProjectionPolicies::aggregateProjectionPolicies());
         return create(projection, expCtx, specifiedName);
     } catch (DBException& ex) {
-        ex.addContext("Invalid " + specifiedName.toString());
+        ex.addContext("Invalid " + std::string{specifiedName});
         throw;
     }
 

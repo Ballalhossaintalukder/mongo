@@ -28,16 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <cstddef>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/catalog/drop_database.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -46,7 +37,6 @@
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/catalog/database_holder.h"
-#include "mongo/db/catalog/drop_database.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/client.h"
 #include "mongo/db/concurrency/exception_util.h"
@@ -62,6 +52,7 @@
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/db/transaction_resources.h"
@@ -74,6 +65,17 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -338,7 +340,7 @@ Status _dropDatabase(OperationContext* opCtx,
                 // processed. Only non-replicated collections should be left to remove. Collections
                 // with the `tmp.mr` namespace may or may not be getting replicated; be conservative
                 // and assume they are not.
-                invariant(!nss.isReplicated() || nss.coll().startsWith("tmp.mr"));
+                invariant(!nss.isReplicated() || nss.coll().starts_with("tmp.mr"));
             }
 
             if (!abortIndexBuilds) {

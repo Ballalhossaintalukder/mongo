@@ -29,17 +29,6 @@
 
 #include "mongo/s/query/exec/establish_cursors.h"
 
-#include <set>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <absl/container/flat_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -73,6 +62,17 @@
 #include "mongo/util/string_map.h"
 #include "mongo/util/uuid.h"
 
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
@@ -93,14 +93,16 @@ public:
                       const NamespaceString& nss,
                       bool allowPartialResults,
                       std::vector<OperationKey> providedOpKeys,
-                      AsyncRequestsSender::ShardHostMap designatedHostsMap)
+                      AsyncRequestsSender::ShardHostMap designatedHostsMap,
+                      RoutingContext* routingCtx)
         : _opCtx(opCtx),
           _executor{std::move(executor)},
           _nss(nss),
           _allowPartialResults(allowPartialResults),
           _defaultOpKey{UUID::gen()},
           _providedOpKeys(std::move(providedOpKeys)),
-          _designatedHostsMap(std::move(designatedHostsMap)) {}
+          _designatedHostsMap(std::move(designatedHostsMap)),
+          _routingCtx(routingCtx) {}
 
     /**
      * Make a RequestSender and thus send requests.
@@ -172,6 +174,7 @@ private:
     std::vector<RemoteCursor> _remoteCursors;
     std::vector<HostAndPort> _remotesToClean;
     AsyncRequestsSender::ShardHostMap _designatedHostsMap;
+    RoutingContext* _routingCtx;
 };
 
 void CursorEstablisher::sendRequests(const ReadPreferenceSetting& readPref,
@@ -229,6 +232,10 @@ void CursorEstablisher::sendRequests(const ReadPreferenceSetting& readPref,
                  readPref,
                  retryPolicy,
                  _designatedHostsMap);
+
+    if (_routingCtx) {
+        _routingCtx->onRequestSentForNss(_nss);
+    }
 }
 
 void CursorEstablisher::_waitForResponse() {
@@ -503,6 +510,7 @@ std::vector<RemoteCursor> establishCursors(OperationContext* opCtx,
                                            const ReadPreferenceSetting readPref,
                                            const std::vector<AsyncRequestsSender::Request>& remotes,
                                            bool allowPartialResults,
+                                           RoutingContext* routingCtx,
                                            Shard::RetryPolicy retryPolicy,
                                            std::vector<OperationKey> providedOpKeys,
                                            AsyncRequestsSender::ShardHostMap designatedHostsMap) {
@@ -511,7 +519,8 @@ std::vector<RemoteCursor> establishCursors(OperationContext* opCtx,
                                          nss,
                                          allowPartialResults,
                                          std::move(providedOpKeys),
-                                         std::move(designatedHostsMap));
+                                         std::move(designatedHostsMap),
+                                         routingCtx);
     establisher.sendRequests(readPref, remotes, retryPolicy);
     establisher.waitForResponses();
     establisher.checkForFailedRequests();

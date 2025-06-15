@@ -29,22 +29,6 @@
 
 #include "mongo/scripting/mozjs/mongo.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <initializer_list>
-#include <js/Object.h>
-#include <js/PropertyDescriptor.h>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <js/CallArgs.h>
-#include <js/PropertySpec.h>
-#include <js/RootingAPI.h>
-#include <js/TracingAPI.h>
-#include <js/TypeDecls.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -90,6 +74,22 @@
 #include "mongo/util/quick_exit.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <initializer_list>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <js/CallArgs.h>
+#include <js/Object.h>
+#include <js/PropertyDescriptor.h>
+#include <js/PropertySpec.h>
+#include <js/RootingAPI.h>
+#include <js/TracingAPI.h>
+#include <js/TypeDecls.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -773,11 +773,11 @@ void MongoExternalInfo::construct(JSContext* cx, JS::CallArgs args) {
         const auto& tlsOpts = mongoShellOptions.getTls();
 
         TLSCredentials tlsCredentials;
-        tlsCredentials.tlsPEMKeyFile = tlsOpts->getCertificateKeyFile().value_or("").toString();
+        tlsCredentials.tlsPEMKeyFile = std::string{tlsOpts->getCertificateKeyFile().value_or("")};
         tlsCredentials.tlsPEMKeyPassword =
-            tlsOpts->getCertificateKeyFilePassword().value_or("").toString();
-        tlsCredentials.tlsCAFile = tlsOpts->getCAFile().value_or("").toString();
-        tlsCredentials.tlsCRLFile = tlsOpts->getCRLFile().value_or("").toString();
+            std::string{tlsOpts->getCertificateKeyFilePassword().value_or("")};
+        tlsCredentials.tlsCAFile = std::string{tlsOpts->getCAFile().value_or("")};
+        tlsCredentials.tlsCRLFile = std::string{tlsOpts->getCRLFile().value_or("")};
         tlsCredentials.tlsAllowInvalidHostnames = tlsOpts->getAllowInvalidHostnames();
         tlsCredentials.tlsAllowInvalidCertificates = tlsOpts->getAllowInvalidCertificates();
 
@@ -786,7 +786,7 @@ void MongoExternalInfo::construct(JSContext* cx, JS::CallArgs args) {
             uassertStatusOK(
                 parseCertificateSelector(&tlsCredentials.tlsCertificateSelector,
                                          "tls.certificateSelector",
-                                         tlsOpts->getCertificateSelector().value().toString()));
+                                         std::string{tlsOpts->getCertificateSelector().value()}));
         }
 #endif  // MONGO_CONFIG_SSL_CERTIFICATE_SELECTORS
 

@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/db/auth/action_type.h"
 #include "mongo/db/auth/authorization_session.h"
@@ -43,11 +40,14 @@
 #include "mongo/db/repl/member_state.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/active_migrations_registry.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/rpc/op_msg.h"
 #include "mongo/s/request_types/shardsvr_join_migrations_request_gen.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
 
 
 namespace mongo {

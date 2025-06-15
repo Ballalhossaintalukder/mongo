@@ -32,17 +32,6 @@
 #include <boost/optional/optional.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <deque>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -61,6 +50,8 @@
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_options_gen.h"
 #include "mongo/db/catalog/create_collection.h"
+#include "mongo/db/catalog/durable_catalog_entry.h"
+#include "mongo/db/catalog/durable_catalog_entry_metadata.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/catalog_raii.h"
@@ -90,8 +81,6 @@
 #include "mongo/db/session/logical_session_id_helpers.h"
 #include "mongo/db/session/session_catalog_mongod.h"
 #include "mongo/db/shard_id.h"
-#include "mongo/db/storage/bson_collection_catalog_entry.h"
-#include "mongo/db/storage/durable_catalog_entry.h"
 #include "mongo/db/storage/ident.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/snapshot.h"
@@ -119,6 +108,17 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -161,7 +161,7 @@ public:
 
     Status initFromExisting(OperationContext* opCtx,
                             const std::shared_ptr<const Collection>& collection,
-                            const DurableCatalogEntry& catalogEntry,
+                            const durable_catalog::CatalogEntry& catalogEntry,
                             boost::optional<Timestamp> readTimestamp) override {
         MONGO_UNREACHABLE;
     }
@@ -244,13 +244,11 @@ public:
         MONGO_UNREACHABLE;
     }
 
-    Validator parseValidator(OperationContext* opCtx,
-                             const BSONObj& validator,
-                             MatchExpressionParser::AllowedFeatureSet allowedFeatures,
-                             boost::optional<multiversion::FeatureCompatibilityVersion>
-                                 maxFeatureCompatibilityVersion) const override {
-        return _coll->parseValidator(
-            opCtx, validator, allowedFeatures, maxFeatureCompatibilityVersion);
+    Validator parseValidator(
+        OperationContext* opCtx,
+        const BSONObj& validator,
+        MatchExpressionParser::AllowedFeatureSet allowedFeatures) const override {
+        return _coll->parseValidator(opCtx, validator, allowedFeatures);
     }
 
     void setValidator(OperationContext* opCtx, Validator validator) override {
@@ -468,7 +466,7 @@ public:
     }
 
     void replaceMetadata(OperationContext* opCtx,
-                         std::shared_ptr<BSONCollectionCatalogEntry::MetaData> md) override {
+                         std::shared_ptr<durable_catalog::CatalogEntryMetaData> md) override {
         MONGO_UNREACHABLE;
     }
 
@@ -759,7 +757,7 @@ protected:
      */
     static ShardsvrMoveRange createMoveRangeRequest(const ChunkRange& chunkRange) {
         ShardsvrMoveRange req(kNss);
-        req.setEpoch(OID::gen());
+        req.setCollectionTimestamp(Timestamp(10));
         req.setFromShard(ShardId(kDonorConnStr.getSetName()));
         req.setMaxChunkSizeBytes(1024);
         req.getMoveRangeRequestBase().setToShard(ShardId(kRecipientConnStr.getSetName()));

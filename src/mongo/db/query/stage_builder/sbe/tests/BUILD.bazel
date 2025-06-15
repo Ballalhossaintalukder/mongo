@@ -34,6 +34,8 @@ mongo_cc_unit_test(
         "and_hash_test.cpp",
         "and_sorted_test.cpp",
         "expression_const_eval_test.cpp",
+        "field_effects_test.cpp",
+        "field_set_test.cpp",
         "gen_accumulator_test.cpp",
         "gen_expression_test.cpp",
         "gen_filter_test.cpp",
@@ -57,7 +59,6 @@ mongo_cc_unit_test(
         "//src/mongo/db/test_output/query/stage_builder/sbe/search_sbe_stage_builder_test:test_data",
     ],
     tags = [
-        "compile_requires_large_memory_gcc",
         "mongo_unittest_fourth_group",
     ],
     deps = [

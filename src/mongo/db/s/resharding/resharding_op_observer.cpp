@@ -28,13 +28,7 @@
  */
 
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <memory>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/resharding/resharding_op_observer.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -53,7 +47,6 @@
 #include "mongo/db/s/resharding/resharding_coordinator.h"
 #include "mongo/db/s/resharding/resharding_coordinator_observer.h"
 #include "mongo/db/s/resharding/resharding_coordinator_service.h"
-#include "mongo/db/s/resharding/resharding_op_observer.h"
 #include "mongo/db/s/scoped_collection_metadata.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/record_data.h"
@@ -69,6 +62,14 @@
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <memory>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kResharding
 
@@ -164,13 +165,13 @@ void _doPin(OperationContext* opCtx) {
     boost::optional<Timestamp> pin = _calculatePin(opCtx);
     auto replCoord = repl::ReplicationCoordinator::get(opCtx);
     if (!pin) {
-        storageEngine->unpinOldestTimestamp(ReshardingHistoryHook::kName.toString());
+        storageEngine->unpinOldestTimestamp(std::string{ReshardingHistoryHook::kName});
         return;
     }
 
     StatusWith<Timestamp> res =
         storageEngine->pinOldestTimestamp(*shard_role_details::getRecoveryUnit(opCtx),
-                                          ReshardingHistoryHook::kName.toString(),
+                                          std::string{ReshardingHistoryHook::kName},
                                           pin.value(),
                                           false);
     if (!res.isOK()) {

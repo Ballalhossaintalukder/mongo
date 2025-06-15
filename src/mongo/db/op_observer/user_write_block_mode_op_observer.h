@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_options.h"
@@ -47,6 +41,12 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -168,9 +168,6 @@ public:
     void onReplicationRollback(OperationContext* opCtx, const RollbackObserverInfo& rbInfo) final;
 
     // Noop operations below with explanations (don't perform any check).
-
-    // onModifyCollectionShardingIndexCatalog() is unchecked because sharded collection indexes
-    // catalog are modified from internal commands.
 
     // Index builds committing (onCommitIndexBuild()) can be left unchecked since we kill any active
     // index builds before enabling write blocking. This means any index build which gets to the

@@ -27,16 +27,6 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <limits>
-#include <memory>
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -54,6 +44,16 @@
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <limits>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -173,7 +173,7 @@ TEST(InternalExprEqMatchExpression, EquivalentToClone) {
 
 DEATH_TEST_REGEX(InternalExprEqMatchExpression,
                  CannotCompareToArray,
-                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::Array)#") {
+                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::array)#") {
     auto operand = BSON("a" << BSON_ARRAY(1 << 2));
     InternalExprEqMatchExpression eq(operand.firstElement().fieldNameStringData(),
                                      operand.firstElement());
@@ -181,7 +181,7 @@ DEATH_TEST_REGEX(InternalExprEqMatchExpression,
 
 DEATH_TEST_REGEX(InternalExprEqMatchExpression,
                  CannotCompareToUndefined,
-                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::Undefined)#") {
+                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::undefined)#") {
     auto operand = BSON("a" << BSONUndefined);
     InternalExprEqMatchExpression eq(operand.firstElement().fieldNameStringData(),
                                      operand.firstElement());

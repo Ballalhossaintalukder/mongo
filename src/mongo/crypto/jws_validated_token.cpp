@@ -29,14 +29,6 @@
 
 #include "mongo/crypto/jws_validated_token.h"
 
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <type_traits>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/json.h"
@@ -46,6 +38,14 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <cstddef>
+#include <memory>
+#include <type_traits>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo::crypto {
 namespace {
@@ -114,7 +114,7 @@ Status JWSValidatedToken::validate(JWKManager* keyMgr) const {
 }
 
 JWSValidatedToken::JWSValidatedToken(JWKManager* keyMgr, StringData token)
-    : _originalToken(token.toString()) {
+    : _originalToken(std::string{token}) {
     auto tokenSplit = parseSignedToken(token);
 
     auto headerString = base64url::decode(tokenSplit.header);
@@ -136,7 +136,7 @@ StatusWith<IssuerAudiencePair> JWSValidatedToken::extractIssuerAndAudienceFromCo
     auto jwt = JWT::parse(IDLParserContext{"JWT"}, payload);
 
     IssuerAudiencePair pair;
-    pair.issuer = jwt.getIssuer().toString();
+    pair.issuer = std::string{jwt.getIssuer()};
 
     auto& audience = jwt.getAudience();
     if (std::holds_alternative<std::string>(audience)) {

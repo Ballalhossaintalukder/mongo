@@ -29,12 +29,6 @@
 
 #include "mongo/idl/cluster_parameter_synchronization_helpers.h"
 
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -45,6 +39,12 @@
 #include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/functional.h"
+
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -129,7 +129,7 @@ void validateParameter(BSONObj doc, const boost::optional<TenantId>& tenantId) {
     auto nameElem = doc[kIdField];
     uassert(ErrorCodes::OperationFailed,
             "Validate with invalid parameter name",
-            nameElem.type() == String);
+            nameElem.type() == BSONType::string);
     auto name = nameElem.valueStringData();
     auto* sp = ServerParameterSet::getClusterParameterSet()->getIfExists(name);
     uassert(ErrorCodes::OperationFailed, "Validate on unknown cluster parameter", sp);
@@ -141,7 +141,7 @@ void updateParameter(OperationContext* opCtx,
                      StringData mode,
                      const boost::optional<TenantId>& tenantId) {
     auto nameElem = doc[kIdField];
-    if (nameElem.type() != String) {
+    if (nameElem.type() != BSONType::string) {
         LOGV2_DEBUG(6226301,
                     1,
                     "Update with invalid cluster server parameter name",
@@ -164,7 +164,7 @@ void updateParameter(OperationContext* opCtx,
     }
 
     auto cptElem = doc[kCPTField];
-    if ((cptElem.type() != mongo::Date) && (cptElem.type() != bsonTimestamp)) {
+    if ((cptElem.type() != BSONType::date) && (cptElem.type() != BSONType::timestamp)) {
         LOGV2_DEBUG(6226302,
                     1,
                     "Update to cluster server parameter has invalid clusterParameterTime",
@@ -184,7 +184,7 @@ void updateParameter(OperationContext* opCtx,
     UninterruptibleLockGuard ulg(opCtx);  // NOLINT (ResourceMutex acquisition)
 
     BSONObjBuilder oldValueBob;
-    sp->append(opCtx, &oldValueBob, name.toString(), tenantId);
+    sp->append(opCtx, &oldValueBob, std::string{name}, tenantId);
     audit::logUpdateCachedClusterParameter(opCtx->getClient(), oldValueBob.obj(), doc, tenantId);
 
     uassertStatusOK(sp->set(doc, tenantId));

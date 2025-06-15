@@ -29,17 +29,18 @@
 
 #include "mongo/db/query/stats/rand_utils_new.h"
 
+#include "mongo/db/exec/sbe/values/value.h"
+#include "mongo/util/assert_util.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
-#include <fmt/format.h>
 #include <limits>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "mongo/db/exec/sbe/values/value.h"
-#include "mongo/util/assert_util.h"
+#include <fmt/format.h>
 
 namespace mongo::stats {
 namespace value = sbe::value;
@@ -286,6 +287,7 @@ void ObjectIdDistribution::init(DatasetDescriptorNew*, std::mt19937_64& gen) {
     // those integers to create N ObjectIds.
     std::vector<uint32_t> tmpRandSet;
     std::uniform_int_distribution<uint32_t> uniformDist{0, std::numeric_limits<uint32_t>::max()};
+    tmpRandSet.reserve(_ndv * 3);
     for (size_t i = 0; i < _ndv * 3; ++i) {
         tmpRandSet.push_back(uniformDist(gen));
     }

@@ -28,16 +28,15 @@
  */
 
 
-#include <boost/optional/optional.hpp>
-
-#include <boost/move/utility_core.hpp>
+#include "mongo/s/query/exec/router_stage_queued_data.h"
 
 #include "mongo/bson/bsonobj.h"
-#include "mongo/s/query/exec/router_stage_queued_data.h"
 #include "mongo/util/assert_util.h"
 
-#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
+#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
 

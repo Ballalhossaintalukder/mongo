@@ -30,17 +30,6 @@
 
 #include "mongo/db/s/collmod_coordinator.h"
 
-#include <absl/container/node_hash_map.h>
-#include <algorithm>
-#include <boost/smart_ptr.hpp>
-#include <set>
-#include <string>
-#include <tuple>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/simple_bsonobj_comparator.h"
 #include "mongo/client/connection_string.h"
@@ -56,6 +45,7 @@
 #include "mongo/db/s/participant_block_gen.h"
 #include "mongo/db/s/sharding_ddl_coordinator_gen.h"
 #include "mongo/db/s/sharding_ddl_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/timeseries/catalog_helper.h"
 #include "mongo/db/timeseries/timeseries_collmod.h"
@@ -73,12 +63,22 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/cluster_commands_helpers.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/future_impl.h"
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <set>
+#include <string>
+#include <tuple>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -170,9 +170,23 @@ void CollModCoordinator::_performNoopRetryableWriteOnParticipants(
 void CollModCoordinator::_saveCollectionInfoOnCoordinatorIfNecessary(OperationContext* opCtx) {
     if (!_collInfo) {
         CollectionInfo info;
-        info.timeSeriesOptions = timeseries::getTimeseriesOptions(opCtx, originalNss(), true);
-        info.nsForTargeting =
-            info.timeSeriesOptions ? originalNss().makeTimeseriesBucketsNamespace() : originalNss();
+        try {
+            // TODO SERVER-105548 switch back to acquireCollection once 9.0 becomes last LTS
+            auto [collAcq, _] = timeseries::acquireCollectionWithBucketsLookup(
+                opCtx,
+                CollectionAcquisitionRequest(originalNss(),
+                                             PlacementConcern::kPretendUnsharded,
+                                             repl::ReadConcernArgs::kLocal,
+                                             AcquisitionPrerequisites::OperationType::kRead),
+                LockMode::MODE_IS);
+
+            info.timeSeriesOptions =
+                collAcq.exists() ? collAcq.getCollectionPtr()->getTimeseriesOptions() : boost::none;
+            // TODO SERVER-105548 remove nsForTargeting once 9.0 becomes last LTS
+            info.nsForTargeting = collAcq.nss();
+        } catch (const ExceptionFor<ErrorCodes::CommandNotSupportedOnView>&) {
+            info.nsForTargeting = originalNss();
+        }
         const auto optColl =
             sharding_ddl_util::getCollectionFromConfigServer(opCtx, info.nsForTargeting);
         info.isTracked = (bool)optColl;
@@ -278,6 +292,14 @@ ExecutorFuture<void> CollModCoordinator::_runImpl(
     std::shared_ptr<executor::ScopedTaskExecutor> executor,
     const CancellationToken& token) noexcept {
     return ExecutorFuture<void>(**executor)
+        .then([this, anchor = shared_from_this()] {
+            if (_doc.getPhase() == Phase::kUnset) {
+                // Unpersisted phase executed only the first time we start the coordinator
+                auto opCtxHolder = makeOperationContext();
+                auto* opCtx = opCtxHolder.get();
+                staticValidateCollMod(opCtx, originalNss(), _request);
+            }
+        })
         .then([this, executor = executor, anchor = shared_from_this()] {
             auto opCtxHolder = makeOperationContext();
             auto* opCtx = opCtxHolder.get();

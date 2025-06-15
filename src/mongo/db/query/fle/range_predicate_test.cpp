@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <functional>
-#include <initializer_list>
-#include <set>
-#include <utility>
-#include <variant>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/query/fle/range_predicate.h"
 
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -50,11 +43,19 @@
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/query/fle/encrypted_predicate.h"
 #include "mongo/db/query/fle/encrypted_predicate_test_fixtures.h"
-#include "mongo/db/query/fle/range_predicate.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <functional>
+#include <initializer_list>
+#include <set>
+#include <utility>
+#include <variant>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::fle {
 namespace {
@@ -243,7 +244,7 @@ std::unique_ptr<Expression> generateBetweenWithFFP(
     auto ffp = Value(generateFFP(path, lb, ub, 0, 255).firstElement());
     auto ffpExpr = make_intrusive<ExpressionConstant>(expCtx, ffp);
     auto fieldpath = ExpressionFieldPath::createPathFromString(
-        expCtx, path.toString(), expCtx->variablesParseState);
+        expCtx, std::string{path}, expCtx->variablesParseState);
     std::vector<boost::intrusive_ptr<Expression>> children = {std::move(fieldpath),
                                                               std::move(ffpExpr)};
     return std::make_unique<ExpressionCompare>(expCtx, op, std::move(children));

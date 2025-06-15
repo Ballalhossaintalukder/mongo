@@ -32,15 +32,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <functional>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -61,6 +52,7 @@
 #include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/read_concern_args.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/vector_clock.h"
 #include "mongo/executor/network_connection_hook.h"
@@ -90,7 +82,6 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/query/exec/cluster_cursor_manager.h"
 #include "mongo/s/sharding_initialization.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/sharding_task_executor.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/transport/mock_session.h"
@@ -100,6 +91,15 @@
 #include "mongo/util/net/sockaddr.h"
 #include "mongo/util/tick_source.h"
 #include "mongo/util/tick_source_mock.h"
+
+#include <algorithm>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 
@@ -419,7 +419,7 @@ void ShardingTestFixture::checkReadConcern(const BSONObj& cmdObj,
                                            const Timestamp& expectedTS,
                                            long long expectedTerm) const {
     auto readConcernElem = cmdObj[repl::ReadConcernArgs::kReadConcernFieldName];
-    ASSERT_EQ(Object, readConcernElem.type());
+    ASSERT_EQ(BSONType::object, readConcernElem.type());
 
     auto readConcernObj = readConcernElem.Obj();
     using namespace unittest::match;
@@ -428,9 +428,9 @@ void ShardingTestFixture::checkReadConcern(const BSONObj& cmdObj,
 
     auto afterOpTimeElem = readConcernObj[repl::ReadConcernArgs::kAfterOpTimeFieldName];
     auto afterClusterTimeElem = readConcernObj[repl::ReadConcernArgs::kAfterClusterTimeFieldName];
-    if (afterOpTimeElem.type() != EOO) {
-        ASSERT_EQ(EOO, afterClusterTimeElem.type());
-        ASSERT_EQ(Object, afterOpTimeElem.type());
+    if (afterOpTimeElem.type() != BSONType::eoo) {
+        ASSERT_EQ(BSONType::eoo, afterClusterTimeElem.type());
+        ASSERT_EQ(BSONType::object, afterOpTimeElem.type());
 
         auto afterOpTimeObj = afterOpTimeElem.Obj();
 
@@ -439,8 +439,8 @@ void ShardingTestFixture::checkReadConcern(const BSONObj& cmdObj,
         ASSERT_TRUE(afterOpTimeObj.hasField(repl::OpTime::kTermFieldName));
         ASSERT_EQ(expectedTerm, afterOpTimeObj[repl::OpTime::kTermFieldName].numberLong());
     } else {
-        ASSERT_EQ(EOO, afterOpTimeElem.type());
-        ASSERT_EQ(bsonTimestamp, afterClusterTimeElem.type());
+        ASSERT_EQ(BSONType::eoo, afterOpTimeElem.type());
+        ASSERT_EQ(BSONType::timestamp, afterClusterTimeElem.type());
 
         ASSERT_EQ(expectedTS, afterClusterTimeElem.timestamp());
     }

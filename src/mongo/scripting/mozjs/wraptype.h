@@ -29,18 +29,19 @@
 
 #pragma once
 
-#include <cstddef>
-#include <js/PropertyAndElement.h>
-#include <js/ValueArray.h>
-#include <js/Wrapper.h>
-
-#include <jsapi.h>
-#include <type_traits>
-
 #include "mongo/scripting/mozjs/base.h"
 #include "mongo/scripting/mozjs/exception.h"
 #include "mongo/scripting/mozjs/objectwrapper.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstddef>
+#include <type_traits>
+
+#include <jsapi.h>
+
+#include <js/PropertyAndElement.h>
+#include <js/ValueArray.h>
+#include <js/Wrapper.h>
 
 // The purpose of this class is to take in specially crafted types and generate
 // a wrapper which installs the type, along with any useful life cycle methods
@@ -523,7 +524,12 @@ private:
         static const JSPropertySpec properties[2] = {
             JS_STRING_SYM_PS(toStringTag, T::className, JSPROP_READONLY), JS_PS_END};
 
-        JS_DefineProperties(_context, _proto, properties);
+        if (JS_DefineProperties(_context, _proto, properties)) {
+            return;
+        }
+
+        throwCurrentJSException(
+            _context, ErrorCodes::JSInterpreterFailure, "Failed to define properties");
     }
 
     // This is for inheriting from something other than Object

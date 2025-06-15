@@ -27,16 +27,10 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <cstdint>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/query/exec/async_results_merger.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/bson/simple_bsonobj_comparator.h"
@@ -51,10 +45,18 @@
 #include "mongo/executor/remote_command_request.h"
 #include "mongo/rpc/metadata.h"
 #include "mongo/s/multi_statement_transaction_requests_sender.h"
-#include "mongo/s/query/exec/async_results_merger.h"
+#include "mongo/s/query/exec/next_high_watermark_determining_strategy.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+
+#include <boost/cstdint.hpp>
+#include <boost/iterator/filter_iterator.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -64,34 +66,6 @@ const BSONObj AsyncResultsMerger::kWholeSortKeySortPattern =
     BSON(AsyncResultsMerger::kSortKeyField << 1);
 
 namespace {
-
-/**
- * Returns the sort key out of the $sortKey metadata field in 'obj'. The sort key should be
- * formatted as an array with one value per field of the sort pattern:
- *  {..., $sortKey: [<firstSortKeyComponent>, <secondSortKeyComponent>, ...], ...}
- *
- * This function returns the sort key not as an array, but as the equivalent BSONObj:
- *   {"0": <firstSortKeyComponent>, "1": <secondSortKeyComponent>}
- *
- * The return value is allowed to omit the key names, so the caller should not rely on the key names
- * being present. That is, the return value could consist of an object such as
- *   {"": <firstSortKeyComponent>, "": <secondSortKeyComponent>}
- *
- * If 'compareWholeSortKey' is true, then the value inside the $sortKey is directly interpreted as a
- * single-element sort key. For example, given the document
- *   {..., $sortKey: <value>, ...}
- * and 'compareWholeSortKey'=true, this function will return
- *   {"": <value>}
- */
-BSONObj extractSortKey(const BSONObj& obj, bool compareWholeSortKey) {
-    auto key = obj[AsyncResultsMerger::kSortKeyField];
-    invariant(key);
-    if (compareWholeSortKey) {
-        return key.wrap();
-    }
-    invariant(key.type() == BSONType::Array);
-    return key.embeddedObject();
-}
 
 /**
  * Returns an int less than 0 if 'leftSortKey' < 'rightSortKey', 0 if the two are equal, and an int
@@ -108,21 +82,12 @@ int compareSortKeys(const BSONObj& leftSortKey,
 
 void processAdditionalTransactionParticipantFromResponse(
     OperationContext* opCtx,
-    const ShardId& shardId,
-    const BSONObj& originalResponse,
+    const AsyncResultsMerger::RemoteResponse& response,
     const ServerGlobalParams::FCVSnapshot& fcvSnapshot) {
     if (gFeatureFlagAllowAdditionalParticipants.isEnabled(fcvSnapshot)) {
         transaction_request_sender_details::processReplyMetadataForAsyncGetMore(
-            opCtx, shardId, originalResponse);
+            opCtx, response.shardId, response.parsedMetadata);
     }
-}
-
-void processAdditionalTransactionParticipantFromResponse(OperationContext* opCtx,
-                                                         const ShardId& shardId,
-                                                         const BSONObj& originalResponse) {
-    const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
-    processAdditionalTransactionParticipantFromResponse(
-        opCtx, shardId, originalResponse, fcvSnapshot);
 }
 
 }  // namespace
@@ -140,6 +105,24 @@ AsyncResultsMerger::AsyncResultsMerger(OperationContext* opCtx,
       _mergeQueue(MergingComparator(_params.getSort().value_or(BSONObj()),
                                     _params.getCompareWholeSortKey())),
       _promisedMinSortKeys(PromisedMinSortKeyComparator(_params.getSort().value_or(BSONObj()))) {
+
+    if (_tailableMode == TailableModeEnum::kTailableAndAwaitData) {
+        // Build a default handler for determining the next high water mark. This can be replaced
+        // later via a call to `setNextHighWaterMarkDeterminingStrategy()'.
+        _nextHighWaterMarkDeterminingStrategy =
+            NextHighWaterMarkDeterminingStrategyFactory::createForChangeStream(
+                _params, false /* recognizeControlEvents */);
+    } else {
+        // In all other modes than tailable, awaitData, we should never call the function to
+        // determine the next high water mark. The following strategy object will ensure that.
+        _nextHighWaterMarkDeterminingStrategy = NextHighWaterMarkDeterminingStrategyFactory::
+            createInvalidHighWaterMarkDeterminingStrategy();
+    }
+
+    tassert(10359105,
+            "Expecting _nextHighWaterMarkDeterminingStrategy object to be set",
+            _nextHighWaterMarkDeterminingStrategy);
+
     if (_params.getTxnNumber()) {
         invariant(_params.getSessionId());
     }
@@ -177,6 +160,7 @@ std::shared_ptr<AsyncResultsMerger> AsyncResultsMerger::create(
                               AsyncResultsMergerParams params)
             : AsyncResultsMerger(opCtx, std::move(executor), std::move(params)) {}
     };
+
     return std::make_shared<SharedFromThisEnabler>(opCtx, std::move(executor), std::move(params));
 }
 
@@ -245,6 +229,11 @@ void AsyncResultsMerger::reattachToOperationContext(OperationContext* opCtx) {
     _opCtx = opCtx;
 }
 
+bool AsyncResultsMerger::checkHighWaterMarkIsMonotonicallyIncreasing(
+    const BSONObj& current, const BSONObj& proposed, const BSONObj& sortKeyPattern) {
+    return compareSortKeys(current, proposed, sortKeyPattern) <= 0;
+}
+
 void AsyncResultsMerger::addNewShardCursors(std::vector<RemoteCursor>&& newCursors) {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
@@ -258,8 +247,8 @@ void AsyncResultsMerger::addNewShardCursors(std::vector<RemoteCursor>&& newCurso
 void AsyncResultsMerger::closeShardCursors(const stdx::unordered_set<ShardId>& shardIds) {
     // Closing remote cursors is not supported in tailable mode.
     tassert(8456101,
-            "closeShardCursors() can only be used for tailableAndAwaitData cursors.",
-            _tailableMode != TailableModeEnum::kTailableAndAwaitData);
+            "closeShardCursors() cannot be used for tailable cursors.",
+            _tailableMode != TailableModeEnum::kTailable);
 
     stdx::lock_guard<stdx::mutex> lk(_mutex);
 
@@ -310,6 +299,18 @@ void AsyncResultsMerger::closeShardCursors(const stdx::unordered_set<ShardId>& s
                                       return true;
                                   }),
                    _remotes.end());
+
+    _rebuildMergeQueueFromRemainingRemotes(lk);
+}
+
+void AsyncResultsMerger::setNextHighWaterMarkDeterminingStrategy(
+    NextHighWaterMarkDeterminingStrategyPtr nextHighWaterMarkDeterminingStrategy) {
+    tassert(10359108,
+            "expecting AsyncResultsMerger to be in tailable, awaitData mode",
+            _tailableMode == TailableModeEnum::kTailableAndAwaitData);
+
+    stdx::lock_guard<stdx::mutex> lk(_mutex);
+    _nextHighWaterMarkDeterminingStrategy = std::move(nextHighWaterMarkDeterminingStrategy);
 }
 
 bool AsyncResultsMerger::partialResultsReturned() const {
@@ -342,30 +343,53 @@ bool AsyncResultsMerger::hasCursorForShard_forTest(const ShardId& shardId) const
     });
 }
 
+std::size_t AsyncResultsMerger::numberOfBufferedRemoteResponses_forTest() const {
+    stdx::lock_guard<stdx::mutex> lk(_mutex);
+    return _remoteResponses.size();
+}
+
 BSONObj AsyncResultsMerger::getHighWaterMark() {
     stdx::lock_guard<stdx::mutex> lk(_mutex);
-    // At this point, the high water mark may be the resume token of the last document we returned.
-    // If no further results are eligible for return, we advance to the minimum promised sort key.
-    // If the remote associated with the minimum promised sort key is not currently eligible to
-    // provide a high water mark, then we do not advance even if no further results are ready.
+
+    // At this point, the high water mark may be the resume token of the last document we
+    // returned. If no further results are eligible for return, we advance to the minimum
+    // promised sort key. If the remote associated with the minimum promised sort key is not
+    // currently eligible to provide a high water mark, then we do not advance even if no
+    // further results are ready.
     if (auto minPromisedSortKey = _getMinPromisedSortKey(lk); minPromisedSortKey && !_ready(lk)) {
         const auto& minRemote = minPromisedSortKey->second;
         if (minRemote->eligibleForHighWaterMark) {
+            // The following check is potentially very costly on large resume tokens, so we only
+            // execute it in debug mode.
+            dassert(checkHighWaterMarkIsMonotonicallyIncreasing(
+                _highWaterMark, minPromisedSortKey->first, *_params.getSort()));
             _highWaterMark = minPromisedSortKey->first;
         }
     }
 
     // The high water mark is stored in sort-key format: {"": <high watermark>}. We only return
     // the <high watermark> part of of the sort key, which looks like {_data: ..., _typeBits: ...}.
-    invariant(_highWaterMark.isEmpty() || _highWaterMark.firstElement().type() == BSONType::Object);
+    invariant(_highWaterMark.isEmpty() || _highWaterMark.firstElement().type() == BSONType::object);
     return _highWaterMark.isEmpty() ? BSONObj() : _highWaterMark.firstElement().Obj().getOwned();
+}
+
+void AsyncResultsMerger::setInitialHighWaterMark(const BSONObj& highWaterMark) {
+    // Extra wrapping necessary here because the high water mark is stored in sort-key format: {"":
+    // <high watermark>}.
+    auto newHighWaterMark = BSON("" << highWaterMark);
+
+    stdx::lock_guard<stdx::mutex> lk(_mutex);
+    _ensureHighWaterMarkIsMonotonicallyIncreasing(
+        _highWaterMark, newHighWaterMark, "setInitialHighWaterMark");
+    _highWaterMark = std::move(newHighWaterMark);
 }
 
 boost::optional<AsyncResultsMerger::MinSortKeyRemotePair>
 AsyncResultsMerger::_getMinPromisedSortKey(WithLock) const {
-    // We cannot return the minimum promised sort key unless all shards have reported one.
-    return _promisedMinSortKeys.size() < _remotes.size() ? boost::optional<MinSortKeyRemotePair>{}
-                                                         : *_promisedMinSortKeys.begin();
+    const bool allRemotesReturnedMinSortKeys = _promisedMinSortKeys.size() == _remotes.size();
+    return (_remotes.empty() || !allRemotesReturnedMinSortKeys)
+        ? boost::optional<MinSortKeyRemotePair>{}
+        : *_promisedMinSortKeys.begin();
 }
 
 AsyncResultsMerger::RemoteCursorPtr AsyncResultsMerger::_buildRemote(WithLock lk,
@@ -377,7 +401,7 @@ AsyncResultsMerger::RemoteCursorPtr AsyncResultsMerger::_buildRemote(WithLock lk
                                          rc.getHostAndPort(),
                                          rc.getCursorResponse().getNSS(),
                                          rc.getCursorResponse().getCursorId(),
-                                         rc.getShardId().toString(),
+                                         std::string{rc.getShardId()},
                                          rc.getCursorResponse().getPartialResultsReturned());
 
     // We don't check the return value of _addBatchToBuffer here; if there was an error, it will be
@@ -386,7 +410,7 @@ AsyncResultsMerger::RemoteCursorPtr AsyncResultsMerger::_buildRemote(WithLock lk
     return remote;
 }
 
-void AsyncResultsMerger::_cancelCallbackForRemote(WithLock lk, const RemoteCursorPtr& remote) {
+void AsyncResultsMerger::_cancelCallbackForRemote(WithLock, const RemoteCursorPtr& remote) {
     if (remote->cbHandle.isValid()) {
         _executor->cancel(remote->cbHandle);
     }
@@ -396,12 +420,46 @@ void AsyncResultsMerger::_cancelCallbackForRemote(WithLock lk, const RemoteCurso
     }
 }
 
-void AsyncResultsMerger::_removeRemoteFromPromisedMinSortKeys(WithLock lk,
+void AsyncResultsMerger::_removeRemoteFromPromisedMinSortKeys(WithLock,
                                                               const RemoteCursorPtr& remote) {
     if (remote->promisedMinSortKey) {
         std::size_t erased = _promisedMinSortKeys.erase({*remote->promisedMinSortKey, remote});
         tassert(8456114, "Expected to find the promised min sort key in the set.", erased == 1);
     }
+}
+
+void AsyncResultsMerger::_ensureHighWaterMarkIsMonotonicallyIncreasing(const BSONObj& current,
+                                                                       const BSONObj& proposed,
+                                                                       StringData context) const {
+    tassert(10359104,
+            str::stream() << "Cannot make high watermark go backwards (in " << context
+                          << "()). Current: " << current << ", proposed: " << proposed,
+            checkHighWaterMarkIsMonotonicallyIncreasing(current, proposed, *_params.getSort()));
+}
+
+void AsyncResultsMerger::_rebuildMergeQueueFromRemainingRemotes(WithLock) {
+    // Predicate that determines which remotes to keep in the merge queue.
+    struct KeepRemote {
+        bool operator()(const RemoteCursorPtr& remote) const {
+            return !remote->docBuffer.empty();
+        }
+    };
+
+    // Construct a new merge queue using the 'KeepRemote' predicate, keeping only those remotes for
+    // which we currently have documents buffered.
+    auto filteredRemotesBegin =
+        boost::make_filter_iterator<KeepRemote>(_remotes.begin(), _remotes.end());
+    auto filteredRemotesEnd =
+        boost::make_filter_iterator<KeepRemote>(_remotes.end(), _remotes.end());
+
+    decltype(_mergeQueue) newMergeQueue(
+        filteredRemotesBegin,
+        filteredRemotesEnd,
+        MergingComparator(_params.getSort().value_or(BSONObj()), _params.getCompareWholeSortKey()));
+
+    // 'std::priority_queue<T>' doesn't have a clear nor assign method, so we need to swap the
+    // cleaned merge queue instead.
+    std::swap(_mergeQueue, newMergeQueue);
 }
 
 void AsyncResultsMerger::_setInitialHighWaterMark() {
@@ -521,8 +579,7 @@ void AsyncResultsMerger::_processAdditionalTransactionParticipants(OperationCont
     const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
     while (!_remoteResponses.empty()) {
         const auto& response = _remoteResponses.front();
-        processAdditionalTransactionParticipantFromResponse(
-            opCtx, response.shardId, response.originalResponse, fcvSnapshot);
+        processAdditionalTransactionParticipantFromResponse(opCtx, response, fcvSnapshot);
         _remoteResponses.pop();
     }
 }
@@ -562,7 +619,13 @@ ClusterQueryResult AsyncResultsMerger::_nextReadySorted(WithLock) {
     // For sorted tailable awaitData cursors, update the high water mark to the document's sort key.
     if (_tailableMode == TailableModeEnum::kTailableAndAwaitData &&
         smallestRemote->eligibleForHighWaterMark) {
-        _highWaterMark = extractSortKey(front, _params.getCompareWholeSortKey()).getOwned();
+        BSONObj nextHighWaterMark = (*_nextHighWaterMarkDeterminingStrategy)(front, _highWaterMark);
+
+        // The following check is potentially very costly on large resume tokens, so we only
+        // execute it in debug mode.
+        dassert(checkHighWaterMarkIsMonotonicallyIncreasing(
+            _highWaterMark, nextHighWaterMark, *_params.getSort()));
+        _highWaterMark = std::move(nextHighWaterMark);
     }
 
     return {std::move(front), smallestRemote->shardId};
@@ -604,7 +667,7 @@ BSONObj AsyncResultsMerger::_makeRequest(WithLock,
                                          const ServerGlobalParams::FCVSnapshot& fcvSnapshot) const {
     invariant(!remote.cbHandle.isValid());
 
-    GetMoreCommandRequest getMoreRequest(remote.cursorId, remote.cursorNss.coll().toString());
+    GetMoreCommandRequest getMoreRequest(remote.cursorId, std::string{remote.cursorNss.coll()});
     getMoreRequest.setBatchSize(_params.getBatchSize());
     if (_awaitDataTimeout) {
         getMoreRequest.setMaxTimeMS(
@@ -909,7 +972,8 @@ void AsyncResultsMerger::_updateRemoteMetadata(WithLock lk,
         // The most recent minimum sort key should never be smaller than the previous promised
         // minimum sort key for this remote, if a previous promised minimum sort key exists.
         if (auto& oldMinSortKey = remote->promisedMinSortKey) {
-            invariant(compareSortKeys(newMinSortKey, *oldMinSortKey, *_params.getSort()) >= 0);
+            _ensureHighWaterMarkIsMonotonicallyIncreasing(
+                *oldMinSortKey, newMinSortKey, "_updateRemoteMetadata");
             invariant(_promisedMinSortKeys.size() <= _remotes.size());
             std::size_t erased = _promisedMinSortKeys.erase({*oldMinSortKey, remote});
             tassert(8456106, "Expected to find the promised min sort key in the set.", erased == 1);
@@ -984,15 +1048,17 @@ void AsyncResultsMerger::_handleBatchResponse(WithLock lk,
     remote->cbHandle = executor::TaskExecutor::CallbackHandle();
 
     if (parsedResponse.isOK()) {
-        // We store the original unprocessed response in order to process additional transaction
-        // participants when reading it. Additional transaction participants processing cannot occur
-        // here since access to the underlying transaction router is not thread-safe.
-        //
-        // To avoid memory issues we delay processing until the actual owner thread of the
-        // TransactionRouter reads the responses. As this operation can occur after a while the BSON
-        // must be owned since otherwise we would be pointing to invalid memory.
-        invariant(cbData.response.data.isOwned());
-        _remoteResponses.emplace(remote->shardId, cbData.response.data);
+        if (const auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
+            gFeatureFlagAllowAdditionalParticipants.isEnabled(fcvSnapshot)) {
+            // Here we buffer the parsed parts of the response pertaining to additional transaction
+            // participants. Additional transaction participants processing cannot occur here
+            // directly since access to the underlying transaction router is not thread-safe.
+            _remoteResponses.push(
+                {.shardId = remote->shardId,
+                 .parsedMetadata = TransactionRouter::Router::parseParticipantResponseMetadata(
+                     cbData.response.data)});
+            // To avoid data race issues we delay processing until the actual owner thread of the
+        }
     }
 
     //  On shutdown, there is no need to process the response.
@@ -1315,6 +1381,18 @@ query_stats::DataBearingNodeMetrics AsyncResultsMerger::takeMetrics() {
     auto metrics = _metrics;
     _metrics = {};
     return metrics;
+}
+
+BSONObj AsyncResultsMerger::extractSortKey(const BSONObj& obj, bool compareWholeSortKey) {
+    auto key = obj[kSortKeyField];
+    tassert(10359101,
+            str::stream() << "expecting sort key field '" << kSortKeyField << "' in input",
+            key);
+    if (compareWholeSortKey) {
+        return key.wrap();
+    }
+    tassert(10359106, "expecting BSON type Array for sort keys", key.type() == BSONType::array);
+    return key.embeddedObject();
 }
 
 //

@@ -30,13 +30,6 @@
 
 #include "mongo/db/auth/authentication_session.h"
 
-#include <algorithm>
-#include <ratio>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/client/authenticate.h"
 #include "mongo/db/audit.h"
@@ -50,6 +43,13 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <ratio>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kAccessControl
 
@@ -260,7 +260,7 @@ void AuthenticationSession::setMechanismName(StringData mechanismName) {
             "Attempt to change the mechanism name",
             _mechName.empty() || _mechName == mechanismName);
 
-    _mechName = mechanismName.toString();
+    _mechName = std::string{mechanismName};
     _mechCounter = authCounter.getMechanismCounter(_mechName);
     _mechCounter->incAuthenticateReceived();
     if (_isSpeculative) {

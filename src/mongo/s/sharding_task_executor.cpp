@@ -28,12 +28,7 @@
  */
 
 
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/s/sharding_task_executor.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -53,9 +48,15 @@
 #include "mongo/s/client/shard.h"
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
-#include "mongo/s/sharding_task_executor.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/scopeguard.h"
+
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT mongo::logv2::LogComponent::kSharding
 
@@ -234,7 +235,7 @@ StatusWith<TaskExecutor::CallbackHandle> ShardingTaskExecutor::scheduleRemoteCom
         invariant(timeTracker);
         auto operationTime = args.response.data[kOperationTimeField];
         if (!operationTime.eoo()) {
-            invariant(operationTime.type() == BSONType::bsonTimestamp);
+            invariant(operationTime.type() == BSONType::timestamp);
             timeTracker->updateOperationTime(LogicalTime(operationTime.timestamp()));
         }
     };
@@ -266,8 +267,8 @@ void ShardingTaskExecutor::appendConnectionStats(ConnectionPoolStats* stats) con
     _executor->appendConnectionStats(stats);
 }
 
-void ShardingTaskExecutor::dropConnections(const HostAndPort& hostAndPort) {
-    _executor->dropConnections(hostAndPort);
+void ShardingTaskExecutor::dropConnections(const HostAndPort& target, const Status& status) {
+    _executor->dropConnections(target, status);
 }
 
 void ShardingTaskExecutor::appendNetworkInterfaceStats(BSONObjBuilder& bob) const {

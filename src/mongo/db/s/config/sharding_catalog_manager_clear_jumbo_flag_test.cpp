@@ -27,8 +27,6 @@
  *    it in the license file.
  */
 
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -47,6 +45,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
 
+#include <string>
+
 namespace mongo {
 namespace {
 
@@ -60,7 +60,7 @@ public:
     }
 
     ChunkRange nonJumboChunk() {
-        return ChunkRange(BSON("x" << 0), BSON("x" << MaxKey));
+        return ChunkRange(BSON("x" << 0), BSON("x" << BSONType::maxKey));
     }
 
 protected:

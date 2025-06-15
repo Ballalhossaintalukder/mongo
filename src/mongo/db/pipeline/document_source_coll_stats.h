@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -62,13 +52,23 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
  * Provides a document source interface to retrieve collection-level statistics for a given
  * collection.
  */
-class DocumentSourceCollStats : public DocumentSource {
+class DocumentSourceCollStats : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$collStats"_sd;
 
@@ -79,7 +79,7 @@ public:
                                                  const LiteParserOptions& options) {
             uassert(5447000,
                     str::stream() << "$collStats must take a nested object but found: " << specElem,
-                    specElem.type() == BSONType::Object);
+                    specElem.type() == BSONType::object);
             auto spec = DocumentSourceCollStatsSpec::parse(IDLParserContext(kStageName),
                                                            specElem.embeddedObject());
             return std::make_unique<LiteParsed>(specElem.fieldName(), nss, std::move(spec));
@@ -124,6 +124,7 @@ public:
     DocumentSourceCollStats(const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
                             DocumentSourceCollStatsSpec spec)
         : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
           _collStatsSpec(std::move(spec)),
           _targetAllNodes(_collStatsSpec.getTargetAllNodes().value_or(false)) {}
 

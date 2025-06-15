@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <iterator>
-#include <list>
-#include <memory>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/pipeline/semantic_analysis.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -44,9 +38,16 @@
 #include "mongo/db/pipeline/document_source_test_optimizations.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/pipeline/semantic_analysis.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <iterator>
+#include <list>
+#include <memory>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -452,17 +453,17 @@ TEST_F(SemanticAnalysisRenamedPaths, DetectsSimpleReplaceRootPattern) {
         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"b"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"b"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
 }
@@ -476,17 +477,17 @@ TEST_F(SemanticAnalysisRenamedPaths, DetectsReplaceRootPatternAllowsIntermediate
                         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"b"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"b"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
 }
@@ -503,17 +504,17 @@ TEST_F(SemanticAnalysisRenamedPaths, AdditionalStageValidatorCallbackPassed) {
     };
     {
         auto renames = renamedPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"a"}, callback);
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"}, callback);
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames = renamedPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"b"}, callback);
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"b"}, callback);
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames = renamedPaths(
-            pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"}, callback);
+            pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"}, callback);
         ASSERT_TRUE(static_cast<bool>(renames));
     }
 }
@@ -528,7 +529,7 @@ TEST_F(SemanticAnalysisRenamedPaths, AdditionalStageValidatorCallbackNotPassed) 
                         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     std::function<bool(DocumentSource*)> callback = [](DocumentSource* stage) {
@@ -536,12 +537,12 @@ TEST_F(SemanticAnalysisRenamedPaths, AdditionalStageValidatorCallbackNotPassed) 
     };
     {
         auto renames = renamedPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"a"}, callback);
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"}, callback);
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
         auto renames = renamedPaths(
-            pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"}, callback);
+            pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"}, callback);
         ASSERT_FALSE(static_cast<bool>(renames));
     }
 }
@@ -553,17 +554,17 @@ TEST_F(SemanticAnalysisRenamedPaths, DetectsReplaceRootPatternDisallowsIntermedi
                                     getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"b"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
 }
@@ -574,12 +575,12 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTypoed) {
         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
 }
@@ -590,12 +591,12 @@ TEST_F(SemanticAnalysisRenamedPaths, DetectsReplaceRootPatternIfCurrentInsteadOf
         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_TRUE(static_cast<bool>(renames));
     }
 }
@@ -606,12 +607,12 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfNoROOT) {
         getExpCtx());
     {
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
 }
@@ -624,7 +625,7 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTargetPathIs
                                          fromjson("{$replaceWith: '$nested'}")},
                                         getExpCtx());
         auto renames =
-            renamedPaths(pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
+            renamedPaths(pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
@@ -633,7 +634,7 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTargetPathIs
                                          fromjson("{$replaceWith: '$nested'}")},
                                         getExpCtx());
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
@@ -643,7 +644,7 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTargetPathIs
                                          fromjson("{$replaceWith: '$somethingElse'}")},
                                         getExpCtx());
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
@@ -654,7 +655,7 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTargetPathIs
                                          fromjson("{$replaceWith: '$doubleNested'}")},
                                         getExpCtx());
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
     {
@@ -666,7 +667,7 @@ TEST_F(SemanticAnalysisRenamedPaths, DoesNotDetectFalseReplaceRootIfTargetPathIs
                                          fromjson("{$replaceWith: '$nested'}")},
                                         getExpCtx());
         auto renames =
-            renamedPaths(pipeline->getSources().rbegin(), pipeline->getSources().rend(), {"b"});
+            renamedPaths(pipeline->getSources().crbegin(), pipeline->getSources().crend(), {"b"});
         ASSERT_FALSE(static_cast<bool>(renames));
     }
 }
@@ -680,8 +681,8 @@ TEST_F(SemanticAnalysisFindLongestViablePrefix, AllowsReplaceRootPattern) {
                          fromjson("{$replaceWith: '$nested'}")},
                         getExpCtx());
     auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-        pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
-    ASSERT(itr == pipeline->getSources().end());
+        pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
+    ASSERT(itr == pipeline->getSources().cend());
 }
 
 TEST_F(SemanticAnalysisFindLongestViablePrefix, FindsPrefixWithoutReplaceRoot) {
@@ -691,25 +692,25 @@ TEST_F(SemanticAnalysisFindLongestViablePrefix, FindsPrefixWithoutReplaceRoot) {
                                     getExpCtx());
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"a"});
-        ASSERT(itr == pipeline->getSources().end());
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"a"});
+        ASSERT(itr == pipeline->getSources().cend());
     }
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"unset"});
-        ASSERT(itr == std::next(pipeline->getSources().begin()));
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"unset"});
+        ASSERT(itr == std::next(pipeline->getSources().cbegin()));
     }
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"y"});
-        ASSERT(itr == pipeline->getSources().end());
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"y"});
+        ASSERT(itr == pipeline->getSources().cend());
         ASSERT(renames["y"] == "x");
     }
     {
         // "x" is overwritten by the $set, so is not preserved.
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"x"});
-        ASSERT(itr == std::prev(pipeline->getSources().end()));
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"x"});
+        ASSERT(itr == std::prev(pipeline->getSources().cend()));
         ASSERT(renames["x"] == "x");
     }
 }
@@ -722,8 +723,8 @@ TEST_F(SemanticAnalysisFindLongestViablePrefix, FindsLastPossibleStageWithCallba
                                     getExpCtx());
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"y"});
-        ASSERT(itr == pipeline->getSources().end());
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"y"});
+        ASSERT(itr == pipeline->getSources().cend());
         ASSERT(renames["y"] == "x");
     }
     std::function<bool(DocumentSource*)> callback = [](DocumentSource* stage) {
@@ -731,8 +732,8 @@ TEST_F(SemanticAnalysisFindLongestViablePrefix, FindsLastPossibleStageWithCallba
     };
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"y"}, callback);
-        ASSERT(itr == std::prev(std::prev(pipeline->getSources().end())));
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"y"}, callback);
+        ASSERT(itr == std::prev(std::prev(pipeline->getSources().cend())));
         ASSERT(renames["y"] == "y");
     }
 }
@@ -753,8 +754,8 @@ TEST_F(SemanticAnalysisFindLongestViablePrefix, CorrectlyAnswersReshardingUseCas
     };
     {
         auto [itr, renames] = findLongestViablePrefixPreservingPaths(
-            pipeline->getSources().begin(), pipeline->getSources().end(), {"_id"}, callback);
-        ASSERT(itr == pipeline->getSources().end());
+            pipeline->getSources().cbegin(), pipeline->getSources().cend(), {"_id"}, callback);
+        ASSERT(itr == pipeline->getSources().cend());
         ASSERT(renames["_id"] == "_id");
     }
 }

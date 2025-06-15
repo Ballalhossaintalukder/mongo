@@ -29,11 +29,6 @@
 
 #include "mongo/db/exec/plan_cache_util.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/optional/optional.hpp>
-#include <queue>
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -52,7 +47,14 @@
 #include "mongo/db/query/plan_explainer_impl.h"
 #include "mongo/db/query/stage_types.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/stats/counters.h"
 #include "mongo/logv2/log.h"
+
+#include <queue>
+#include <string>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -154,7 +156,7 @@ void updateClassicPlanCacheFromClassicCandidatesImpl(
 
     auto key = plan_cache_key_factory::make<PlanCacheKey>(query, collection);
 
-    uassertStatusOK(
+    size_t evictedCount = uassertStatusOK(
         CollectionQueryInfo::get(collection)
             .getPlanCache()
             ->set(std::move(key),
@@ -164,6 +166,7 @@ void updateClassicPlanCacheFromClassicCandidatesImpl(
                   &callbacks,
                   isSensitive ? PlanSecurityLevel::kSensitive : PlanSecurityLevel::kNotSensitive,
                   boost::none /* worksGrowthCoefficient */));
+    planCacheCounters.incrementClassicCachedPlansEvictedCounter(evictedCount);
 }
 
 void updateSbePlanCache(OperationContext* opCtx,
@@ -186,7 +189,7 @@ void updateSbePlanCache(OperationContext* opCtx,
 
     auto isSensitive = CurOp::get(opCtx)->getShouldOmitDiagnosticInformation();
 
-    uassertStatusOK(sbe::getPlanCache(opCtx).set(
+    size_t evictedCount = uassertStatusOK(sbe::getPlanCache(opCtx).set(
         plan_cache_key_factory::make(query, collections),
         std::move(cachedPlan),
         nReads,
@@ -194,6 +197,7 @@ void updateSbePlanCache(OperationContext* opCtx,
         &callbacks,
         isSensitive ? PlanSecurityLevel::kSensitive : PlanSecurityLevel::kNotSensitive,
         boost::none /* worksGrowthCoefficient */));
+    planCacheCounters.incrementSbeCachedPlansEvictedCounter(evictedCount);
 }
 
 }  // namespace
@@ -259,7 +263,7 @@ void updateSbePlanCacheWithPinnedEntry(OperationContext* opCtx,
 
         bool shouldOmitDiagnosticInformation =
             CurOp::get(opCtx)->getShouldOmitDiagnosticInformation();
-        sbe::getPlanCache(opCtx).setPinned(
+        size_t evictedCount = sbe::getPlanCache(opCtx).setPinned(
             key,
             canonical_query_encoder::computeHash(
                 canonical_query_encoder::encodeForPlanCacheCommand(query)),
@@ -267,6 +271,7 @@ void updateSbePlanCacheWithPinnedEntry(OperationContext* opCtx,
             opCtx->getServiceContext()->getPreciseClockSource()->now(),
             buildDebugInfo(&solution),
             shouldOmitDiagnosticInformation);
+        planCacheCounters.incrementSbeCachedPlansEvictedCounter(evictedCount);
     }
 }
 
@@ -354,13 +359,28 @@ plan_cache_debug_info::DebugInfoSBE buildDebugInfo(const QuerySolution* solution
             case STAGE_EQ_LOOKUP: {
                 auto eln = static_cast<const EqLookupNode*>(node);
                 auto& secondaryStats = debugInfo.secondaryStats[eln->foreignCollection];
-                if (eln->lookupStrategy == EqLookupNode::LookupStrategy::kIndexedLoopJoin) {
-                    tassert(6466200, "Index join lookup should have an index entry", eln->idxEntry);
-                    secondaryStats.indexesUsed.push_back(eln->idxEntry->identifier.catalogName);
-                } else {
-                    secondaryStats.collectionScans++;
+                switch (eln->lookupStrategy) {
+                    case EqLookupNode::LookupStrategy::kNonExistentForeignCollection:
+                    case EqLookupNode::LookupStrategy::kHashJoin:
+                    case EqLookupNode::LookupStrategy::kNestedLoopJoin:
+                        secondaryStats.collectionScans++;
+                        break;
+                    case EqLookupNode::LookupStrategy::kDynamicIndexedLoopJoin: {
+                        tassert(8155502,
+                                "Dynamic indexed loop join lookup should have an index entry",
+                                eln->idxEntry);
+                        secondaryStats.indexesUsed.push_back(eln->idxEntry->identifier.catalogName);
+                        secondaryStats.collectionScans++;
+                        break;
+                    }
+                    case EqLookupNode::LookupStrategy::kIndexedLoopJoin: {
+                        tassert(
+                            6466200, "Index join lookup should have an index entry", eln->idxEntry);
+                        secondaryStats.indexesUsed.push_back(eln->idxEntry->identifier.catalogName);
+                        break;
+                    }
                 }
-                [[fallthrough]];
+                break;
             }
             default:
                 break;

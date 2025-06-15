@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <absl/container/inlined_vector.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-
 #include "mongo/db/exec/plan_stats.h"
 #include "mongo/db/exec/scoped_timer.h"
 #include "mongo/db/exec/working_set.h"
@@ -50,12 +42,22 @@
 #include "mongo/util/clock_source.h"
 #include "mongo/util/duration.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <absl/container/inlined_vector.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 
 class ClockSource;
 class Collection;
 class CollectionPtr;
 class OperationContext;
+class PlanYieldPolicy;
 class RecordId;
 
 /**
@@ -231,12 +233,7 @@ public:
     /**
      * The stage spills its data and asks from all its children to spill their data as well.
      */
-    void forceSpill() {
-        doForceSpill();
-        for (const auto& child : _children) {
-            child->forceSpill();
-        }
-    }
+    void forceSpill(PlanYieldPolicy* yieldPolicy);
 
     /**
      * Returns true if no more work can be done on the query / out of results.

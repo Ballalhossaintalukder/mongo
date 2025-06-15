@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <compare>
-#include <cstdint>
-#include <iosfwd>
-#include <string>
-#include <tuple>
-
 #include "mongo/base/data_view.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
@@ -43,6 +37,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
+
+#include <compare>
+#include <cstdint>
+#include <iosfwd>
+#include <string>
+#include <tuple>
 
 namespace mongo {
 
@@ -148,7 +148,7 @@ public:
     void append(Builder& builder, StringData fieldName) const {
         // No endian conversions needed, since we store in-memory representation
         // in little endian format, regardless of target endian.
-        builder.appendNum(static_cast<char>(bsonTimestamp));
+        builder.appendNum(static_cast<char>(BSONType::timestamp));
         builder.appendCStr(fieldName);
         builder.appendNum(asULL());
     }

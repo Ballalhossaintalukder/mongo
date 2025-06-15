@@ -29,23 +29,11 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <deque>
-#include <limits>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/ordering.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/operation_context.h"
@@ -62,6 +50,19 @@
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <limits>
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -192,6 +193,7 @@ private:
 
     // An input to the exchange operator
     std::unique_ptr<Pipeline, PipelineDeleter> _pipeline;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
 
     // Synchronization.
     stdx::mutex _mutex;
@@ -213,7 +215,7 @@ private:
     std::vector<std::unique_ptr<ExchangeBuffer>> _consumers;
 };
 
-class DocumentSourceExchange final : public DocumentSource {
+class DocumentSourceExchange final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalExchange"_sd;
 

@@ -29,14 +29,14 @@
 
 #include "mongo/db/commands/query_cmd/update_metrics.h"
 
-#include <fmt/format.h>
-#include <string>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/query/write_ops/write_ops_parsers.h"
+
+#include <string>
+
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -60,7 +60,7 @@ void UpdateMetrics::incrementExecutedWithArrayFilters() {
 
 void UpdateMetrics::collectMetrics(const BSONObj& cmdObj) {
     // If this command is a pipeline-style update, record that it was used.
-    if (cmdObj.hasField("update") && (cmdObj.getField("update").type() == BSONType::Array)) {
+    if (cmdObj.hasField("update") && (cmdObj.getField("update").type() == BSONType::array)) {
         _commandsWithAggregationPipeline->increment();
     }
 

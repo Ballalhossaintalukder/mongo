@@ -34,10 +34,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "cxxabi.h"
-#include <mutex>
-#include <type_traits>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/client.h"
@@ -47,6 +43,10 @@
 #include "mongo/util/fail_point.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/str.h"
+
+#include <mutex>
+#include <type_traits>
+#include <utility>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -131,11 +131,16 @@ std::shared_ptr<const HelloResponse> TopologyVersionObserver::getCached() noexce
     return _cache;
 }
 
+void TopologyVersionObserver::registerTopologyChangeObserver(TopologyChangeCallback cb) {
+    stdx::lock_guard lk(_mutex);
+    _callbacks.push_back(std::move(cb));
+}
+
 std::string TopologyVersionObserver::toString() const {
     return str::stream() << kTopologyVersionObserverName;
 }
 
-void TopologyVersionObserver::_cacheHelloResponse(
+void TopologyVersionObserver::_handleTopologyUpdate(
     OperationContext* opCtx, boost::optional<TopologyVersion> topologyVersion) try {
     invariant(opCtx);
 
@@ -149,14 +154,31 @@ void TopologyVersionObserver::_cacheHelloResponse(
         });
 
         invariant(_replCoordinator);
+
+        // This function will return when our topology version is stale
         auto future = _replCoordinator->getHelloResponseFuture({}, topologyVersion);
 
         if (auto response = std::move(future).get(opCtx); response->isConfigSet()) {
-            stdx::lock_guard lk(_mutex);
+            cacheGuard.dismiss();
+
+            std::vector<TopologyChangeCallback> tmpCallbacks;
+
+            stdx::unique_lock lk(_mutex);
             _cache = response;
 
-            // Reset the cacheGuard because we got a good value.
-            cacheGuard.dismiss();
+            ON_BLOCK_EXIT([&] {
+                lk.lock();
+                _callbacks.insert(_callbacks.end(),
+                                  std::make_move_iterator(tmpCallbacks.begin()),
+                                  std::make_move_iterator(tmpCallbacks.end()));
+            });
+
+            tmpCallbacks.swap(_callbacks);
+            lk.unlock();
+
+            for (const auto& cb : tmpCallbacks) {
+                cb(_replCoordinator->getConfig());
+            }
         }
     }
 
@@ -191,7 +213,7 @@ void TopologyVersionObserver::_workerThreadBody() noexcept try {
                     _serviceContext->getService(ClusterRole::ShardServer));
 
     // This thread may be interrupted by replication state changes and this is safe because
-    // _cacheHelloResponse is the only place where an opCtx is used and already has logic for
+    // _handleTopologyUpdate is the only place where an opCtx is used and already has logic for
     // handling exceptions. Any logic added to this thread that uses the opCtx must be able to
     // handle interrupts.
 
@@ -265,9 +287,9 @@ void TopologyVersionObserver::_workerThreadBody() noexcept try {
         // Pause here so that we can force there to be an opCtx to be interrupted.
         topologyVersionObserverExpectsInterruption.pauseWhileSet();
 
-        _cacheHelloResponse(opCtxHandle.get(), getTopologyVersion());
+        _handleTopologyUpdate(opCtxHandle.get(), getTopologyVersion());
     }
-} catch (const ExceptionForCat<ErrorCategory::ShutdownError>& e) {
+} catch (const ExceptionFor<ErrorCategory::ShutdownError>& e) {
     LOGV2_DEBUG(40443, 3, "Observer thread stopped due to shutdown", "error"_attr = e.toString());
 }
 

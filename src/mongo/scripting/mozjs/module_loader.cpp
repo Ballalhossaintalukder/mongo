@@ -38,8 +38,19 @@
 #include <js/StableStringChars.h>
 // IWYU pragma: no_include "boost/system/detail/errc.hpp"
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
+#include "mongo/logv2/log.h"
+#include "mongo/scripting/mozjs/implscope.h"
+#include "mongo/scripting/mozjs/module_loader.h"
+#include "mongo/util/file.h"
+
 #include <algorithm>
 #include <cstring>
+
+#include <jsapi.h>
+#include <jscustomallocator.h>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 #include <js/CharacterEncoding.h>
 #include <js/CompileOptions.h>
 #include <js/Context.h>
@@ -49,24 +60,14 @@
 #include <js/Object.h>
 #include <js/PropertyAndElement.h>
 #include <js/PropertyDescriptor.h>
+#include <js/RootingAPI.h>
 #include <js/String.h>
+#include <js/TypeDecls.h>
 #include <js/Utility.h>
 #include <js/Value.h>
-#include <jsapi.h>
-#include <jscustomallocator.h>
 #include <mozilla/Range.h>
 #include <mozilla/RangedPtr.h>
 #include <mozilla/UniquePtr.h>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <js/RootingAPI.h>
-#include <js/TypeDecls.h>
-
-#include "mongo/logv2/log.h"
-#include "mongo/scripting/mozjs/implscope.h"
-#include "mongo/scripting/mozjs/module_loader.h"
-#include "mongo/util/file.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -203,15 +204,30 @@ JSString* ModuleLoader::resolveAndNormalize(JSContext* cx,
         return nullptr;
     }
 
+    // check if it's already in the registry
+    JS::Rooted<JSString*> path(cx, specifierString);
+    if (!path) {
+        return nullptr;
+    }
+    JS::RootedObject module(cx);
+    if (!lookUpModuleInRegistry(cx, path, &module)) {
+        return nullptr;
+    }
+    if (module) {
+        return specifierString;
+    }
+
+    // check if it has a source
     bool hasSource;
     JS::RootedObject referencingInfoObject(cx, &referencingInfo.toObject());
     if (!JS_HasProperty(cx, referencingInfoObject, "source", &hasSource)) {
         return nullptr;
     }
-
     if (hasSource) {
         return specifierString;
     }
+
+    // otherwise try to read content from the file system
 
     JS::RootedString refPath(cx);
     if (!getScriptPath(cx, referencingInfo, &refPath)) {
@@ -500,7 +516,7 @@ JSObject* ModuleLoader::createScriptPrivateInfo(JSContext* cx,
         size_t len = source->size();
         JS::UniqueTwoByteChars ucbuf(
             JS::LossyUTF8CharsToNewTwoByteCharsZ(
-                cx, JS::UTF8Chars(source->rawData(), len), &len, js::MallocArena)
+                cx, JS::UTF8Chars(source->data(), len), &len, js::MallocArena)
                 .get());
 
         JS::RootedString sourceValue(cx, JS_NewUCStringCopyN(cx, ucbuf.get(), len));

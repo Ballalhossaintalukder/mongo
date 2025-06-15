@@ -29,10 +29,10 @@
 
 #pragma once
 
+#include "mongo/platform/atomic.h"
+
 #include <memory>
 #include <vector>
-
-#include "mongo/platform/atomic.h"
 
 
 namespace mongo {
@@ -56,7 +56,7 @@ public:
 
     void addNumHostsTargeted(QueryType queryType, TargetType targetType);
 
-    void appendSection(BSONObjBuilder* builder);
+    void report(BSONObjBuilder* builder) const;
 
     TargetType parseTargetType(OperationContext* opCtx,
                                int nShardsTargeted,

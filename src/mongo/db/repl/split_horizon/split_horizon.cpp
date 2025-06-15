@@ -29,6 +29,10 @@
 
 #include "mongo/db/repl/split_horizon/split_horizon.h"
 
+#include "mongo/bson/bsontypes.h"
+#include "mongo/db/client.h"
+#include "mongo/util/decorable.h"
+
 #include <algorithm>
 #include <iterator>
 #include <mutex>
@@ -37,10 +41,6 @@
 
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/bson/bsontypes.h"
-#include "mongo/db/client.h"
-#include "mongo/util/decorable.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -109,7 +109,7 @@ SplitHorizon::ForwardMapping computeForwardMappings(
         auto convert = [](auto&& horizonObj) -> MapMember {
             const StringData horizonName = horizonObj.fieldName();
 
-            if (horizonObj.type() != String) {
+            if (horizonObj.type() != BSONType::string) {
                 uasserted(ErrorCodes::TypeMismatch,
                           str::stream() << "horizons." << horizonName
                                         << " field has non-string value of type "
@@ -122,7 +122,7 @@ SplitHorizon::ForwardMapping computeForwardMappings(
                 uasserted(ErrorCodes::BadValue, "Horizons cannot have empty names");
             }
 
-            return {horizonName.toString(), HostAndPort{horizonObj.valueStringData()}};
+            return {std::string{horizonName}, HostAndPort{horizonObj.valueStringData()}};
         };
 
         const auto horizonEntries = [&] {
@@ -196,7 +196,7 @@ std::string SplitHorizon::determineHorizon(
             return found->second;
         }
     }
-    return kDefaultHorizon.toString();
+    return std::string{kDefaultHorizon};
 }
 
 void SplitHorizon::toBSON(BSONObjBuilder& configBuilder) const {

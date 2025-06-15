@@ -28,41 +28,35 @@
  */
 
 #include "mongo/s/write_ops/unified_write_executor/unified_write_executor.h"
-#include "mongo/s/collection_routing_info_targeter.h"
+
+#include "mongo/s/write_ops/unified_write_executor/write_batch_executor.h"
+#include "mongo/s/write_ops/unified_write_executor/write_batch_response_processor.h"
+#include "mongo/s/write_ops/unified_write_executor/write_batch_scheduler.h"
+#include "mongo/s/write_ops/unified_write_executor/write_op_batcher.h"
+#include "mongo/s/write_ops/unified_write_executor/write_op_producer.h"
 
 namespace mongo {
 namespace unified_write_executor {
 
-Analysis analyze(OperationContext* opCtx, const RoutingContext& routingCtx, const WriteOp& op) {
-    auto cri = routingCtx.getCollectionRoutingInfo(op.getNss());
-    // TODO SERVER-103782 Don't use CRITargeter.
-    CollectionRoutingInfoTargeter targeter(op.getNss(), cri);
-    // TODO SERVER-103780 Add support for kNoKey.
-    // TODO SERVER-103781 Add support for kParitalKeyWithId.
-    // TODO SERVER-103146 Add kChangesOwnership.
-    std::vector<ShardEndpoint> shardsAffected = [&]() {
-        switch (op.getType()) {
-            case WriteType::kInsert: {
-                return std::vector<ShardEndpoint>{
-                    targeter.targetInsert(opCtx, op.getRef().getDocument())};
-            }
-            case WriteType::kUpdate: {
-                return targeter.targetUpdate(opCtx, op.getRef());
-            }
-            case WriteType::kDelete: {
-                return targeter.targetDelete(opCtx, op.getRef());
-            }
-            case WriteType::kFindAndMod:
-                MONGO_UNIMPLEMENTED;
-        }
-        MONGO_UNREACHABLE;
-    }();
-    tassert(10346500, "Expected write to affect at least one shard", !shardsAffected.empty());
-    if (shardsAffected.size() == 1 && !op.isMulti()) {
-        return {BatchType::kSingleShard, std::move(shardsAffected)};
+BulkWriteCommandReply bulkWrite(OperationContext* opCtx, const BulkWriteCommandRequest& request) {
+    MultiWriteOpProducer<BulkWriteCommandRequest> producer(request);
+    WriteOpAnalyzer analyzer;
+    std::unique_ptr<WriteOpBatcher> batcher{nullptr};
+    if (request.getOrdered()) {
+        batcher = std::make_unique<OrderedWriteOpBatcher>(producer, analyzer);
     } else {
-        return {BatchType::kMultiShard, std::move(shardsAffected)};
+        batcher = std::make_unique<UnorderedWriteOpBatcher>(producer, analyzer);
     }
+    WriteBatchExecutor executor;
+    WriteBatchResponseProcessor processor;
+    WriteBatchScheduler scheduler(*batcher, executor, processor);
+
+    std::set<NamespaceString> nssSet;
+    for (const auto& nsInfo : request.getNsInfo()) {
+        nssSet.insert(nsInfo.getNs());
+    }
+    scheduler.run(opCtx, nssSet);
+    return processor.generateClientResponse<BulkWriteCommandReply>();
 }
 
 }  // namespace unified_write_executor

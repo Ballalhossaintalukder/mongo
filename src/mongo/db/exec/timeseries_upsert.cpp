@@ -29,14 +29,6 @@
 
 #include "mongo/db/exec/timeseries_upsert.h"
 
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/util/builder.h"
@@ -54,12 +46,21 @@
 #include "mongo/db/s/scoped_collection_metadata.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/timeseries/timeseries_write_util.h"
+#include "mongo/db/timeseries/write_ops/timeseries_write_ops_utils.h"
 #include "mongo/db/update/update_driver.h"
 #include "mongo/db/update/update_util.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/would_change_owning_shard_exception.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
+
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace {
 
@@ -145,11 +146,11 @@ void TimeseriesUpsertStage::_performInsert(BSONObj newMeasurement) {
         const auto& acq = collectionAcquisition();
         if (const auto& collDesc = acq.getShardingDescription(); collDesc.isSharded()) {
             auto newBucket =
-                timeseries::makeBucketDocument({newMeasurement},
-                                               acq.nss(),
-                                               collectionPtr()->uuid(),
-                                               *collectionPtr()->getTimeseriesOptions(),
-                                               collectionPtr()->getDefaultCollator());
+                timeseries::write_ops::makeBucketDocument({newMeasurement},
+                                                          acq.nss(),
+                                                          collectionPtr()->uuid(),
+                                                          *collectionPtr()->getTimeseriesOptions(),
+                                                          collectionPtr()->getDefaultCollator());
 
             //  The shard key fields may not have arrays at any point along their paths.
             update::assertPathsNotArray(mutablebson::Document{newBucket},

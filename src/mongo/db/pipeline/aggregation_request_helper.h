@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -47,7 +42,6 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/pipeline/aggregate_command_gen.h"
 #include "mongo/db/pipeline/exchange_spec_gen.h"
 #include "mongo/db/pipeline/legacy_runtime_constants_gen.h"
 #include "mongo/db/pipeline/plan_executor_pipeline.h"
@@ -56,6 +50,12 @@
 #include "mongo/db/write_concern_options.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/serialization_context.h"
+
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -172,12 +172,12 @@ static StatusWith<std::vector<BSONObj>> attemptToParsePipelineFromBSON(
     const BSONElement& pipelineElem) {
     std::vector<BSONObj> pipeline;
 
-    if (pipelineElem.eoo() || pipelineElem.type() != BSONType::Array) {
+    if (pipelineElem.eoo() || pipelineElem.type() != BSONType::array) {
         return {ErrorCodes::TypeMismatch, "A pipeline must be an array of objects"};
     }
 
     for (auto elem : pipelineElem.Obj()) {
-        if (elem.type() != BSONType::Object) {
+        if (elem.type() != BSONType::object) {
             return {ErrorCodes::TypeMismatch,
                     "Each element of the 'pipeline' array must be an object"};
         }

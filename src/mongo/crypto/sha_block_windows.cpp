@@ -27,16 +27,14 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
-#include <initializer_list>
-
+#include "mongo/config.h"
 #include "mongo/crypto/sha1_block.h"
 #include "mongo/crypto/sha256_block.h"
 #include "mongo/crypto/sha512_block.h"
-
-#include "mongo/config.h"
 #include "mongo/util/assert_util.h"
+
+#include <initializer_list>
 
 namespace mongo {
 

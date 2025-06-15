@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <ostream>
-#include <string>
-
 #include "mongo/base/status_with.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/concurrency/d_concurrency.h"
@@ -43,11 +38,17 @@
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/unittest/unittest.h"
 
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+
 namespace mongo {
 namespace {
 
 // Verify that a nonempty collection maybe takes up some space on disk.
-TEST(RecordStoreTestHarness, StorageSizeNonEmpty) {
+TEST(RecordStoreTest, StorageSizeNonEmpty) {
     const auto harnessHelper(newRecordStoreHarnessHelper());
     std::unique_ptr<RecordStore> rs(harnessHelper->newRecordStore());
 

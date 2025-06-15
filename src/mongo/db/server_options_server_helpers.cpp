@@ -42,13 +42,6 @@
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
 #include <boost/type_index/type_index_facade.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <cstdlib>
-#include <iostream>
-#include <map>
-#include <type_traits>
-#include <utility>
-#include <variant>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -68,6 +61,13 @@
 #include "mongo/util/net/socket_utils.h"
 #include "mongo/util/options_parser/value.h"
 #include "mongo/util/str.h"
+
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <type_traits>
+#include <utility>
+#include <variant>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -358,18 +358,19 @@ Status storeServerOptions(const moe::Environment& params) {
     }
 
     if (params.count("net.maxIncomingConnectionsOverride")) {
-        std::vector<std::variant<CIDR, std::string>> maxConnsOverride;
+        std::vector<std::variant<CIDR, std::string>> maxIncomingConnsOverride;
         auto ranges = params["net.maxIncomingConnectionsOverride"].as<std::vector<std::string>>();
         for (const auto& range : ranges) {
             auto swr = CIDR::parse(range);
             if (!swr.isOK()) {
-                maxConnsOverride.push_back(range);
+                maxIncomingConnsOverride.push_back(range);
             } else {
-                maxConnsOverride.push_back(std::move(swr.getValue()));
+                maxIncomingConnsOverride.push_back(std::move(swr.getValue()));
             }
         }
-        serverGlobalParams.maxConnsOverride.update(
-            std::make_shared<decltype(maxConnsOverride)>(std::move(maxConnsOverride)));
+        serverGlobalParams.maxIncomingConnsOverride.update(
+            std::make_shared<decltype(maxIncomingConnsOverride)>(
+                std::move(maxIncomingConnsOverride)));
     }
 
     if (params.count("net.reservedAdminThreads")) {

@@ -27,18 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/node_hash_map.h>
-#include <boost/exception/exception.hpp>
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <numeric>
-#include <stack>
-#include <string>
-#include <typeinfo>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/pipeline_metadata_tree.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -62,9 +51,21 @@
 #include "mongo/db/pipeline/document_source_unwind.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/pipeline/pipeline.h"
-#include "mongo/db/pipeline/pipeline_metadata_tree.h"
-#include "mongo/s/sharding_state.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <numeric>
+#include <stack>
+#include <string>
+#include <typeinfo>
+#include <vector>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/exception/exception.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -78,7 +79,7 @@ protected:
     auto jsonToPipeline(StringData jsonArray) {
         const auto inputBson = fromjson("{pipeline: " + jsonArray + "}");
 
-        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::Array);
+        ASSERT_EQUALS(inputBson["pipeline"].type(), BSONType::array);
         auto rawPipeline = parsePipelineFromBSON(inputBson["pipeline"]);
         NamespaceString testNss =
             NamespaceString::createNamespaceString_forTest("test", "collection");

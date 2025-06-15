@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_options.h"
@@ -46,6 +40,12 @@
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -65,11 +65,6 @@ public:
     NamespaceFilters getNamespaceFilters() const final {
         return {NamespaceFilter::kConfigAndSystem, NamespaceFilter::kConfigAndSystem};
     }
-
-    void onModifyCollectionShardingIndexCatalog(OperationContext* opCtx,
-                                                const NamespaceString& nss,
-                                                const UUID& /*uuid*/,
-                                                BSONObj indexDoc) override;
 
     void onCreateIndex(OperationContext* opCtx,
                        const NamespaceString& nss,
@@ -140,6 +135,12 @@ public:
     void onCreateDatabaseMetadata(OperationContext* opCtx, const repl::OplogEntry& op) override;
 
     void onDropDatabaseMetadata(OperationContext* opCtx, const repl::OplogEntry& op) override;
+
+    void onBeginPromotionToShardedCluster(OperationContext* opCtx,
+                                          const repl::OplogEntry& op) override {};
+
+    void onCompletePromotionToShardedCluster(OperationContext* opCtx,
+                                             const repl::OplogEntry& op) override {};
 };
 
 }  // namespace mongo

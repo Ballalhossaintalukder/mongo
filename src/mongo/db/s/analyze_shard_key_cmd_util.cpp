@@ -27,24 +27,7 @@
  *    it in the license file.
  */
 
-#include <absl/container/flat_hash_map.h>
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/math/statistics/bivariate_statistics.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cmath>
-#include <cstdint>
-#include <cstdlib>
-#include <functional>
-#include <memory>
-#include <numeric>
-#include <set>
-#include <string>
-#include <vector>
+#include "mongo/db/s/analyze_shard_key_cmd_util.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -70,6 +53,7 @@
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/index/index_descriptor.h"
 #include "mongo/db/index_names.h"
@@ -90,13 +74,13 @@
 #include "mongo/db/record_id.h"
 #include "mongo/db/repl/read_concern_args.h"
 #include "mongo/db/repl/read_concern_level.h"
-#include "mongo/db/s/analyze_shard_key_cmd_util.h"
 #include "mongo/db/s/analyze_shard_key_read_write_distribution.h"
 #include "mongo/db/s/analyze_shard_key_util.h"
 #include "mongo/db/s/config/initial_split_policy.h"
 #include "mongo/db/s/document_source_analyze_shard_key_read_write_distribution.h"
 #include "mongo/db/s/document_source_analyze_shard_key_read_write_distribution_gen.h"
 #include "mongo/db/s/shard_key_index_util.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
@@ -114,7 +98,6 @@
 #include "mongo/s/grid.h"
 #include "mongo/s/query_analysis_client.h"
 #include "mongo/s/shard_key_pattern.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/stale_shard_version_helpers.h"
 #include "mongo/s/write_ops/batched_command_response.h"
 #include "mongo/util/assert_util.h"
@@ -125,6 +108,26 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <functional>
+#include <memory>
+#include <numeric>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/cstdint.hpp>
+#include <boost/math/statistics/bivariate_statistics.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -289,12 +292,12 @@ AggregateCommandRequest makeAggregateRequestForCardinalityAndFrequency(const Nam
         }
         matchArrayBuilder.done();
 
-        pipeline.push_back(BSON(
-            "$lookup" << BSON(
-                "from" << nss.coll().toString() << "let" << letBuilder.obj() << "pipeline"
-                       << BSON_ARRAY(BSON("$match" << matchBuilder.obj()) << BSON("$limit" << 1))
-                       << "as"
-                       << "docs")));
+        pipeline.push_back(
+            BSON("$lookup" << BSON("from" << nss.coll() << "let" << letBuilder.obj() << "pipeline"
+                                          << BSON_ARRAY(BSON("$match" << matchBuilder.obj())
+                                                        << BSON("$limit" << 1))
+                                          << "as"
+                                          << "docs")));
         pipeline.push_back(BSON("$set" << BSON(kDocFieldName << BSON("$first" << "$docs"))));
         pipeline.push_back(BSON("$unset" << BSON_ARRAY("docs" << "_id")));
     } else {
@@ -390,15 +393,20 @@ void runClusterAggregate(OperationContext* opCtx,
     if (MONGO_unlikely(analyzeShardKeyMaxNumStaleVersionRetries > 0)) {
         altNumRetries = analyzeShardKeyMaxNumStaleVersionRetries;
     }
-    auto pipeline = shardVersionRetry(
+    auto&& [pipeline, execPipeline] = shardVersionRetry(
         opCtx,
         Grid::get(opCtx)->catalogCache(),
         nss,
         "AnalyzeShardKey"_sd,
-        [&] { return Pipeline::makePipeline(aggRequest, expCtx); },
+        [&] {
+            auto pipeline = Pipeline::makePipeline(aggRequest, expCtx);
+            auto execPipeline =
+                exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+            return std::make_pair(std::move(pipeline), std::move(execPipeline));
+        },
         altNumRetries);
 
-    while (auto doc = pipeline->getNext()) {
+    while (auto doc = execPipeline->getNext()) {
         callbackFn(doc->toBson());
     }
 }
@@ -454,8 +462,7 @@ boost::optional<IndexSpec> findCompatiblePrefixedIndex(OperationContext* opCtx,
     // Go through the indexes in the index catalog to find the most compatible index.
     boost::optional<IndexSpec> compatibleIndexSpec;
 
-    auto indexIterator =
-        indexCatalog->getIndexIterator(opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto indexIterator = indexCatalog->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (indexIterator->more()) {
         auto indexEntry = indexIterator->next();
         auto indexDesc = indexEntry->descriptor();
@@ -524,7 +531,7 @@ BSONObj truncateBSONObj(const BSONObj& obj, int maxSize, int depth = 0) {
             bob.append(element);
         } else {
             auto fieldName = element.fieldName();
-            if (element.type() == BSONType::Object && depth == 0) {
+            if (element.type() == BSONType::object && depth == 0) {
                 auto fieldValue = truncateBSONObj(element.Obj(), remainingSize, depth + 1);
                 bob.append(fieldName, fieldValue);
             } else {
@@ -956,10 +963,11 @@ std::pair<BSONObj, Timestamp> generateSplitPoints(OperationContext* opCtx,
             str::stream() << "Cannot analyze a shard key for a non-existing collection",
             origCollUuid);
     // Perform best-effort validation that the collection has not been dropped and recreated.
-    uassert(CollectionUUIDMismatchInfo(nss.dbName(), collUuid, nss.coll().toString(), boost::none),
-            str::stream() << "Found that the collection UUID has changed from " << collUuid
-                          << " to " << origCollUuid << " since the command started",
-            origCollUuid == collUuid);
+    uassert(
+        CollectionUUIDMismatchInfo(nss.dbName(), collUuid, std::string{nss.coll()}, boost::none),
+        str::stream() << "Found that the collection UUID has changed from " << collUuid << " to "
+                      << origCollUuid << " since the command started",
+        origCollUuid == collUuid);
 
     LOGV2(7559400,
           "Generating split points using the shard key being analyzed",
@@ -1082,11 +1090,11 @@ boost::optional<KeyCharacteristicsMetrics> calculateKeyCharacteristicsMetrics(
                 str::stream() << "Cannot analyze a shard key for a non-existing collection",
                 collection);
         // Perform best-effort validation that the collection has not been dropped and recreated.
-        uassert(
-            CollectionUUIDMismatchInfo(nss.dbName(), collUuid, nss.coll().toString(), boost::none),
-            str::stream() << "Found that the collection UUID has changed from " << collUuid
-                          << " to " << collection->uuid() << " since the command started",
-            collection->uuid() == collUuid);
+        uassert(CollectionUUIDMismatchInfo(
+                    nss.dbName(), collUuid, std::string{nss.coll()}, boost::none),
+                str::stream() << "Found that the collection UUID has changed from " << collUuid
+                              << " to " << collection->uuid() << " since the command started",
+                collection->uuid() == collUuid);
 
         // Performs best-effort validation that the shard key does not contain an array field by
         // extracting the shard key value from a random document in the collection and asserting

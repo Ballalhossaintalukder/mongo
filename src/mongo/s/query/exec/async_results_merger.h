@@ -29,18 +29,6 @@
 
 #pragma once
 
-#include <absl/container/btree_set.h>
-#include <absl/container/inlined_vector.h>
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstddef>
-#include <memory>
-#include <queue>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -57,6 +45,8 @@
 #include "mongo/executor/task_executor.h"
 #include "mongo/s/query/exec/async_results_merger_params_gen.h"
 #include "mongo/s/query/exec/cluster_query_result.h"
+#include "mongo/s/query/exec/next_high_watermark_determining_strategy.h"
+#include "mongo/s/transaction_router.h"
 #include "mongo/stdx/future.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/stdx/unordered_set.h"
@@ -64,6 +54,19 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <cstddef>
+#include <memory>
+#include <queue>
+#include <utility>
+#include <vector>
+
+#include <absl/container/btree_set.h>
+#include <absl/container/inlined_vector.h>
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -101,6 +104,19 @@ public:
 
     // The expected sort key pattern when 'compareWholeSortKey' is true.
     static const BSONObj kWholeSortKeySortPattern;
+
+    /**
+     * Helper type for storing the additional transaction participants extracted from a shard
+     * response. We need to first buffer the metadata about additional transaction participants when
+     * we receive an async response in the network thread. This is because the async callback that
+     * runs in the network thread cannot access the OperationContext nor the transaction router in a
+     * safe way. The buffered metadata will be processed whenever the 'AsyncResultsMerger' is
+     * detached from the OperationContext or when the next ready event is consumed.
+     */
+    struct RemoteResponse {
+        ShardId shardId;
+        TransactionRouter::ParsedParticipantResponseMetadata parsedMetadata;
+    };
 
     /**
      * Factory function to create an 'AsyncResultsMerger' instance. Calling this method is the only
@@ -160,6 +176,16 @@ public:
      * detachFromOperationContext() before 'opCtx' is deleted.
      */
     void reattachToOperationContext(OperationContext* opCtx);
+
+    /**
+     * Checks if the 'proposed' high water mark is greater or equal to 'current' high water mark,
+     * w.r.t. to the 'sortKeyPattern'. Return true if 'proposed' compares greater or equal to
+     * 'current', false otherwise.
+     */
+    static bool checkHighWaterMarkIsMonotonicallyIncreasing(const BSONObj& current,
+                                                            const BSONObj& proposed,
+                                                            const BSONObj& sortKeyPattern);
+
 
     /**
      * Returns true if there is no need to schedule remote work in order to take the next action.
@@ -273,12 +299,29 @@ public:
     bool hasCursorForShard_forTest(const ShardId& shardId) const;
 
     /**
+     * Returns the number of buffered remote responses.
+     */
+    std::size_t numberOfBufferedRemoteResponses_forTest() const;
+
+    /**
      * For sorted tailable cursors, returns the most recent available sort key. This guarantees that
      * we will never return any future results which precede this key. If no results are ready to be
      * returned, this method may cause the high water mark to advance to the lowest promised sortkey
      * received from the shards. Returns an empty BSONObj if no such sort key is available.
      */
     BSONObj getHighWaterMark();
+
+    /**
+     * Set the initial high watermark to return when no cursors are tracked.
+     */
+    void setInitialHighWaterMark(const BSONObj& highWaterMark);
+
+    /**
+     * Set the strategy to determine the next high water mark.
+     * Assumes that the 'AsyncResultsMerger' is in tailable, awaitData mode.
+     */
+    void setNextHighWaterMarkDeterminingStrategy(
+        NextHighWaterMarkDeterminingStrategyPtr nextHighWaterMarkDeterminingStrategy);
 
     /**
      * Starts shutting down this ARM by canceling all pending requests and scheduling killCursors
@@ -310,6 +353,26 @@ public:
      */
     query_stats::DataBearingNodeMetrics takeMetrics();
 
+    /**
+     * Returns the sort key out of the $sortKey metadata field in 'obj'. The sort key should be
+     * formatted as an array with one value per field of the sort pattern:
+     *  {..., $sortKey: [<firstSortKeyComponent>, <secondSortKeyComponent>, ...], ...}
+     *
+     * This function returns the sort key not as an array, but as the equivalent BSONObj:
+     *   {"0": <firstSortKeyComponent>, "1": <secondSortKeyComponent>}
+     *
+     * The return value is allowed to omit the key names, so the caller should not rely on the key
+     * names being present. That is, the return value could consist of an object such as
+     *   {"": <firstSortKeyComponent>, "": <secondSortKeyComponent>}
+     *
+     * If 'compareWholeSortKey' is true, then the value inside the $sortKey is directly interpreted
+     * as a single-element sort key. For example, given the document
+     *   {..., $sortKey: <value>, ...}
+     * and 'compareWholeSortKey'=true, this function will return
+     *   {"": <value>}
+     */
+    static BSONObj extractSortKey(const BSONObj& obj, bool compareWholeSortKey);
+
 private:
     /**
      * Constructor is private. All 'AsyncResultsMerger' objects are supposed to be created via the
@@ -318,18 +381,6 @@ private:
     AsyncResultsMerger(OperationContext* opCtx,
                        std::shared_ptr<executor::TaskExecutor> executor,
                        AsyncResultsMergerParams params);
-
-    /**
-     * Contains the original response received by the shard. This is necessary for processing
-     * additional transaction participants.
-     */
-    struct RemoteResponse {
-        RemoteResponse(ShardId shardId, BSONObj originalResponse)
-            : shardId(std::move(shardId)), originalResponse(std::move(originalResponse)) {}
-
-        ShardId shardId;
-        BSONObj originalResponse;
-    };
 
     /**
      * We instantiate one of these per remote host. It contains the buffer of results we've
@@ -440,12 +491,12 @@ private:
         bool operator()(const RemoteCursorPtr& lhs, const RemoteCursorPtr& rhs) const;
 
     private:
-        const BSONObj _sort;
+        BSONObj _sort;
 
         // When '_compareWholeSortKey' is true, $sortKey is a scalar value, rather than an object.
         // We extract the sort key {$sortKey: <value>}. The sort key pattern '_sort' is verified to
         // be {$sortKey: 1}.
-        const bool _compareWholeSortKey;
+        bool _compareWholeSortKey;
     };
 
     using MinSortKeyRemotePair = std::pair<BSONObj, RemoteCursorPtr>;
@@ -468,6 +519,15 @@ private:
     };
 
     enum LifecycleState { kAlive, kKillStarted, kKillComplete };
+
+    /**
+     * Ensures that the high watermark token in 'proposed' compares equal or higher to the high
+     * watermark token in 'proposed', compared to the internal sort key pattern. Tasserts if this
+     * assumption is violated.
+     */
+    void _ensureHighWaterMarkIsMonotonicallyIncreasing(const BSONObj& current,
+                                                       const BSONObj& proposed,
+                                                       StringData context) const;
 
     /**
      * Parses the find or getMore command response object to a CursorResponse.
@@ -652,6 +712,12 @@ private:
     void _removeRemoteFromPromisedMinSortKeys(WithLock lk, const RemoteCursorPtr& remote);
 
     /**
+     * Rebuild the merge queue for the remaining remotes. This is supposed to be called internally
+     * after closing cursors.
+     */
+    void _rebuildMergeQueueFromRemainingRemotes(WithLock lk);
+
+    /**
      * Cancel any potential in-flight callback for the remote.
      */
     void _cancelCallbackForRemote(WithLock lk, const RemoteCursorPtr& remote);
@@ -741,6 +807,10 @@ private:
     // For sorted tailable cursors, records the current high-water-mark sort key. Empty
     // otherwise.
     BSONObj _highWaterMark;
+
+    // Strategy for determining the next high watermark in tailable, awaitData mode. Not used in
+    // other modes.
+    NextHighWaterMarkDeterminingStrategyPtr _nextHighWaterMarkDeterminingStrategy;
 
     // For tailable cursors, set to true if the next result returned from nextReady() should be
     // boost::none. Can only ever be true for 'TailableModeEnum::kTailable' cursors, but not for

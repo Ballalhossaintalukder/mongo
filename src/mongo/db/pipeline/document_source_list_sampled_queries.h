@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -48,6 +39,7 @@
 #include "mongo/db/auth/resource_pattern.h"
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/dbdirectclient.h"
+#include "mongo/db/exec/agg/exec_pipeline.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/multitenancy_gen.h"
 #include "mongo/db/namespace_string.h"
@@ -69,11 +61,21 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
 
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 
 namespace mongo {
 namespace analyze_shard_key {
 
-class DocumentSourceListSampledQueries final : public DocumentSource {
+class DocumentSourceListSampledQueries final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$listSampledQueries"_sd;
 
@@ -115,7 +117,9 @@ public:
 
     DocumentSourceListSampledQueries(const boost::intrusive_ptr<ExpressionContext>& pExpCtx,
                                      DocumentSourceListSampledQueriesSpec spec)
-        : DocumentSource(kStageName, pExpCtx), _spec(std::move(spec)) {}
+        : DocumentSource(kStageName, pExpCtx),
+          exec::agg::Stage(kStageName, pExpCtx),
+          _spec(std::move(spec)) {}
 
     ~DocumentSourceListSampledQueries() override = default;
 
@@ -140,7 +144,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -161,12 +165,13 @@ public:
 
 private:
     DocumentSourceListSampledQueries(const boost::intrusive_ptr<ExpressionContext>& expCtx)
-        : DocumentSource(kStageName, expCtx) {}
+        : DocumentSource(kStageName, expCtx), exec::agg::Stage(kStageName, expCtx) {}
 
     GetNextResult doGetNext() final;
 
     DocumentSourceListSampledQueriesSpec _spec;
     std::unique_ptr<Pipeline, PipelineDeleter> _pipeline;
+    std::unique_ptr<exec::agg::Pipeline> _execPipeline;
 };
 
 }  // namespace analyze_shard_key

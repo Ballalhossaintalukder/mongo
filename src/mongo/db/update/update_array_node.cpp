@@ -27,10 +27,10 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
+
+#include "mongo/db/update/update_array_node.h"
 
 #include "mongo/db/exec/matcher/matcher.h"
-#include "mongo/db/update/update_array_node.h"
 
 namespace mongo {
 
@@ -63,7 +63,7 @@ UpdateExecutor::ApplyResult UpdateArrayNode::apply(
     uassert(ErrorCodes::BadValue,
             str::stream() << "Cannot apply array updates to non-array element "
                           << applyParams.element.toString(),
-            applyParams.element.getType() == BSONType::Array);
+            applyParams.element.getType() == BSONType::array);
 
     // Construct a map from the array index to the set of updates that should be applied to the
     // array element at that index. We do not apply the updates yet because we need to know how many

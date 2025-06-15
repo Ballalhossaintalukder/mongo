@@ -31,18 +31,15 @@
 
 #include <array>
 #include <cstdint>
-#include <fmt/format.h>
 #include <functional>
 #include <memory>
 #include <set>
 #include <string>
 #include <utility>
 
-// IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
+// IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -79,6 +76,10 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -763,8 +764,8 @@ TEST(SerializeInternalSchema, RootDocEqRedactsCorrectly) {
 
 TEST(SerializeInternalSchema, BinDataEncryptedTypeRedactsCorrectly) {
     MatcherTypeSet typeSet;
-    typeSet.bsonTypes.insert(BSONType::String);
-    typeSet.bsonTypes.insert(BSONType::Date);
+    typeSet.bsonTypes.insert(BSONType::string);
+    typeSet.bsonTypes.insert(BSONType::date);
     InternalSchemaBinDataEncryptedTypeExpression e("a"_sd, std::move(typeSet));
     auto opts = SerializationOptions{LiteralSerializationPolicy::kToDebugTypeString};
     ASSERT_BSONOBJ_EQ_AUTO(  // NOLINT
@@ -773,7 +774,7 @@ TEST(SerializeInternalSchema, BinDataEncryptedTypeRedactsCorrectly) {
 }
 
 TEST(SerializeInternalSchema, BinDataFLE2EncryptedTypeRedactsCorrectly) {
-    InternalSchemaBinDataFLE2EncryptedTypeExpression e("ssn"_sd, BSONType::String);
+    InternalSchemaBinDataFLE2EncryptedTypeExpression e("ssn"_sd, BSONType::string);
     auto opts = SerializationOptions{LiteralSerializationPolicy::kToDebugTypeString};
     ASSERT_BSONOBJ_EQ_AUTO(  // NOLINT
         R"({"$_internalSchemaBinDataFLE2EncryptedType":[2]})",

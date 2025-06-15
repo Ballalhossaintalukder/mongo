@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <string>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -38,11 +36,14 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/shard_id.h"
+#include "mongo/db/transaction_resources.h"
 #include "mongo/s/catalog/type_database_gen.h"
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/routing_context.h"
 #include "mongo/util/assert_util.h"
+
+#include <string>
 
 namespace mongo {
 namespace sharding {
@@ -74,7 +75,7 @@ public:
 
     template <typename F>
     auto route(OperationContext* opCtx, StringData comment, F&& callbackFn) {
-        RouteContext context{comment.toString()};
+        RouteContext context{std::string{comment}};
         while (true) {
             auto cdb = _getRoutingInfo(opCtx);
             try {
@@ -138,11 +139,33 @@ public:
 
     template <typename F>
     auto route(OperationContext* opCtx, StringData comment, F&& callbackFn) {
-        RouteContext context{comment.toString()};
-        while (true) {
+        return _routeImpl(opCtx, comment, [&] {
             auto cri = _getRoutingInfo(opCtx, _targetedNamespaces.front());
+            return callbackFn(opCtx, cri);
+        });
+    }
+
+    template <typename F>
+    auto routeWithRoutingContext(OperationContext* opCtx, StringData comment, F&& callbackFn) {
+        return _routeImpl(opCtx, comment, [&] {
+            // When in a multi-document transaction, allow getting routing info from the
+            // CatalogCache even though locks may be held. The CatalogCache will throw
+            // CannotRefreshDueToLocksHeld if the entry is not already cached.
+            const auto allowLocks = opCtx->inMultiDocumentTransaction() &&
+                shard_role_details::getLocker(opCtx)->isLocked();
+            RoutingContext routingCtx(opCtx, {_targetedNamespaces.front()}, allowLocks);
+            return routing_context_utils::runAndValidate(
+                routingCtx, [&](RoutingContext& ctx) { return callbackFn(opCtx, ctx); });
+        });
+    }
+
+private:
+    template <typename F>
+    auto _routeImpl(OperationContext* opCtx, StringData comment, F&& work) {
+        RouteContext context{std::string{comment}};
+        while (true) {
             try {
-                return callbackFn(opCtx, cri);
+                return std::forward<F>(work)();
             } catch (const DBException& ex) {
                 _onException(opCtx, &context, ex.toStatus());
             }
@@ -167,7 +190,7 @@ public:
 
     template <typename F>
     auto route(OperationContext* opCtx, StringData comment, F&& callbackFn) {
-        RouteContext context{comment.toString()};
+        RouteContext context{std::string{comment}};
         while (true) {
             stdx::unordered_map<NamespaceString, CollectionRoutingInfo> criMap;
             for (const auto& nss : _targetedNamespaces) {

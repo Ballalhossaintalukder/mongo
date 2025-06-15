@@ -180,6 +180,18 @@ server_parameters:
             gte: 0
         redact: false
 
+    reshardingOplogFetcherTargetPrimaryDuringCriticalSection:
+        description: >-
+            Controls whether the ReshardingOplogFetcher should start fetching oplog entries from
+            the primary node instead of the "nearest" node when the critical section starts since
+            a nearest node could be a lagged secondary so fetching from it could lead to critical
+            section timeout.
+        set_at: [startup, runtime]
+        cpp_vartype: AtomicWord<bool>
+        cpp_varname: gReshardingOplogFetcherTargetPrimaryDuringCriticalSection
+        default: true
+        redact: false
+
     reshardingOplogBatchTaskCount:
         description: >-
             The number of subtasks to divide a single oplog batch into so that it may be applied
@@ -251,13 +263,25 @@ server_parameters:
 
     reshardingDelayBeforeRemainingOperationTimeQueryMillis:
         description: >-
-            Initial delay before querying for remaining operation time from recipient shards.
+            The initial delay before querying for remaining operation time from participant shards.
             The delay allows for applying more oplog entries before calculating time remaining, giving
             a more accurate value.
             Note we will have this delay every time we happen to have a failover occur.
         set_at: [startup, runtime]
         cpp_vartype: AtomicWord<int>
         cpp_varname: gReshardingDelayBeforeRemainingOperationTimeQueryMillis
+        default:
+            expr: 30 * 1000
+        validator:
+            gte: 0
+        redact: false
+
+    reshardingMaxDelayBetweenRemainingOperationTimeQueriesMillis:
+        description: >-
+            The maximum delay between remaining operation time queries.
+        set_at: [startup, runtime]
+        cpp_vartype: AtomicWord<int>
+        cpp_varname: gReshardingMaxDelayBetweenRemainingOperationTimeQueriesMillis
         default:
             expr: 30 * 1000
         validator:
@@ -291,15 +315,53 @@ server_parameters:
             gte: 0
         redact: false
 
-    reshardingRemainingTimeEstimateAccountsForReplicationLag:
+    remainingReshardingOperationTimePrepareThresholdMillis:
+        description: >-
+            Controls the threshold for resharding recipients to start prepare for the critical
+            section, for example, by expediting the oplog fetching.
+        set_at: [startup, runtime]
+        cpp_vartype: AtomicWord<int>
+        cpp_varname: gRemainingReshardingOperationTimePrepareThresholdMillis
+        default:
+            expr: 60 * 1000
+        validator:
+            gte: 0
+        redact: false
+
+    reshardingRemainingTimeEstimateAccountsForDonorReplicationLag:
+        description: >-
+            Controls whether the remaining time estimate on the resharding coordinator, when trying
+            to engage the critical section and block incoming writes, should account for the
+            replication lag on the donors.
+        set_at: [startup, runtime]
+        cpp_vartype: AtomicWord<bool>
+        cpp_varname: gReshardingRemainingTimeEstimateAccountsForDonorReplicationLag
+        default: true
+        redact: false
+
+    reshardingRemainingTimeEstimateAccountsForRecipientReplicationLag:
         description: >-
             Controls whether the remaining time estimate on the resharding coordinator, when trying
             to engage the critical section and block incoming writes, should account for the
             replication lag on the recipients.
         set_at: [startup, runtime]
         cpp_vartype: AtomicWord<bool>
-        cpp_varname: gReshardingRemainingTimeEstimateAccountsForReplicationLag
+        cpp_varname: gReshardingRemainingTimeEstimateAccountsForRecipientReplicationLag
         default: true
+        redact: false
+
+    reshardingExponentialMovingAverageTimeToFetchAndApplySmoothingFactor:
+        description:
+            The smoothing factor for the exponential moving average calculation for the remaining
+            time estimate on a resharding recipient. The factor ranges between 0 and 1. The closer
+            to 1 it is, the more weight is given to recent data points.
+        set_at: [startup, runtime]
+        cpp_vartype: AtomicWord<double>
+        cpp_varname: gReshardingExponentialMovingAverageTimeToFetchAndApplySmoothingFactor
+        default: 0.9
+        validator:
+            gt: 0
+            lt: 1
         redact: false
 
     reshardingCoordinatorQuiescePeriodMillis:

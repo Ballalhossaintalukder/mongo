@@ -29,23 +29,6 @@
 
 #include "mongo/s/query/planner/cluster_find.h"
 
-#include <algorithm>
-#include <boost/optional.hpp>
-#include <chrono>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -68,11 +51,13 @@
 #include "mongo/db/commands.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/curop_failpoint_helpers.h"
+#include "mongo/db/cursor_in_use_info.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/generic_argument_util.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/matcher/expression.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/pipeline/change_stream_invalidation_info.h"
 #include "mongo/db/pipeline/expression_context.h"
@@ -99,7 +84,6 @@
 #include "mongo/platform/compiler.h"
 #include "mongo/platform/overflow_arithmetic.h"
 #include "mongo/s/analyze_shard_key_common_gen.h"
-#include "mongo/s/catalog_cache.h"
 #include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/num_hosts_targeted_metrics.h"
 #include "mongo/s/client/shard.h"
@@ -119,6 +103,7 @@
 #include "mongo/s/query/exec/collect_query_stats_mongos.h"
 #include "mongo/s/query/exec/establish_cursors.h"
 #include "mongo/s/query_analysis_sampler_util.h"
+#include "mongo/s/router_role.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/transaction_router.h"
@@ -134,6 +119,23 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -296,10 +298,12 @@ CursorId runQueryWithoutRetrying(OperationContext* opCtx,
                                  const CanonicalQuery& query,
                                  const ReadPreferenceSetting& readPref,
                                  const boost::optional<UUID> sampleId,
-                                 const CollectionRoutingInfo& cri,
+                                 RoutingContext& routingCtx,
                                  std::vector<BSONObj>* results,
                                  bool* partialResultsReturned) {
     const auto& findCommand = query.getFindCommandRequest();
+    const auto& nss = query.nss();
+    const auto& cri = routingCtx.getCollectionRoutingInfo(nss);
     // Get the set of shards on which we will run the query.
     auto shardIds = getTargetedShardsForCanonicalQuery(query, cri);
 
@@ -309,7 +313,7 @@ CursorId runQueryWithoutRetrying(OperationContext* opCtx,
     // Construct the query and parameters. Defer setting skip and limit here until
     // we determine if the query is targeting multi-shards or a single shard below.
     ClusterClientCursorParams params(
-        query.nss(), APIParameters::get(opCtx), readPref, repl::ReadConcernArgs::get(opCtx), [&] {
+        nss, APIParameters::get(opCtx), readPref, repl::ReadConcernArgs::get(opCtx), [&] {
             if (!opCtx->getLogicalSessionId())
                 return OperationSessionInfoFromClient();
 
@@ -400,10 +404,11 @@ CursorId runQueryWithoutRetrying(OperationContext* opCtx,
             params.remotes =
                 establishCursors(opCtx,
                                  Grid::get(opCtx)->getExecutorPool()->getArbitraryExecutor(),
-                                 query.nss(),
+                                 nss,
                                  readPref,
                                  std::move(requests),
                                  findCommand.getAllowPartialResults(),
+                                 &routingCtx,
                                  Shard::RetryPolicy::kIdempotent,
                                  std::move(opKeys));
         });
@@ -542,7 +547,7 @@ CursorId runQueryWithoutRetrying(OperationContext* opCtx,
     collectQueryStatsMongos(opCtx, ccc);
 
     auto cursorId = uassertStatusOK(cursorManager->registerCursor(
-        opCtx, ccc.releaseCursor(), query.nss(), cursorType, cursorLifetime, authUser));
+        opCtx, ccc.releaseCursor(), nss, cursorType, cursorLifetime, authUser));
 
     // Record the cursorID in CurOp.
     opDebug.cursorid = cursorId;
@@ -612,7 +617,7 @@ CursorId earlyExitWithNoResults(OperationContext* opCtx,
                                 const auto& findCommand) {
     uassert(CollectionUUIDMismatchInfo(query.nss().dbName(),
                                        *findCommand.getCollectionUUID(),
-                                       query.nss().coll().toString(),
+                                       std::string{query.nss().coll()},
                                        boost::none),
             "Database does not exist",
             !findCommand.getCollectionUUID());
@@ -620,9 +625,55 @@ CursorId earlyExitWithNoResults(OperationContext* opCtx,
 
     return CursorId(0);
 }
-}  // namespace
 
-const size_t ClusterFind::kMaxRetries = 10;
+StatusWith<ClusterCursorManager::PinnedCursor> checkOutCursorWithRetries(
+    OperationContext* opCtx,
+    CursorId cursorId,
+    AuthorizationSession* authzSession,
+    StringData commandName) {
+    auto cursorManager = Grid::get(opCtx)->getCursorManager();
+    AuthzCheckFn authChecker = [&authzSession](AuthzCheckFnInputType userName) -> Status {
+        return authzSession->isCoauthorizedWith(userName)
+            ? Status::OK()
+            : Status(ErrorCodes::Unauthorized, "User not authorized to access cursor");
+    };
+
+    Backoff retryBackoff{Seconds(1), Milliseconds::max()};
+
+    const size_t maxAttempts = internalQueryGetMoreMaxCursorPinRetryAttempts.loadRelaxed();
+    for (size_t attempt = 1; attempt <= maxAttempts; ++attempt) {
+        auto statusWithCursorPin =
+            cursorManager->checkOutCursor(cursorId,
+                                          opCtx,
+                                          authChecker,
+                                          ClusterCursorManager::AuthCheck::kCheckSession,
+                                          commandName);
+        auto status = statusWithCursorPin.getStatus();
+        if (status.isOK()) {
+            return statusWithCursorPin;
+        }
+        // We only return CursorInUse errors if the command that is holding the cursor is
+        // "releaseMemory".
+        if (attempt == maxAttempts || status.code() != ErrorCodes::CursorInUse) {
+            return statusWithCursorPin;
+        }
+        auto extraInfo = status.extraInfo<CursorInUseInfo>();
+        if (extraInfo == nullptr || extraInfo->commandName() != "releaseMemory") {
+            return statusWithCursorPin;
+        }
+        Milliseconds sleepDuration = retryBackoff.nextSleep();
+        LOGV2_DEBUG(10546601,
+                    3,
+                    "getMore failed to pin cursor, because it is held by releaseMemory "
+                    "command. Will retry after sleep.",
+                    "sleepDuration"_attr = sleepDuration,
+                    "attempt"_attr = attempt);
+        opCtx->sleepFor(sleepDuration);
+    }
+    MONGO_UNREACHABLE_TASSERT(10546600);
+}
+
+}  // namespace
 
 CursorId ClusterFind::runQuery(OperationContext* opCtx,
                                const CanonicalQuery& query,
@@ -657,11 +708,11 @@ CursorId ClusterFind::runQuery(OperationContext* opCtx,
             !findCommand.getRequestResumeToken() && findCommand.getResumeAfter().isEmpty() &&
                 findCommand.getStartAt().isEmpty());
 
-    auto const catalogCache = Grid::get(opCtx)->catalogCache();
+    const auto& nss = query.nss();
     // Try to generate a sample id for this query here instead of inside 'runQueryWithoutRetrying()'
     // since it is incorrect to generate multiple sample ids for a single query.
     const auto sampleId = analyze_shard_key::tryGenerateSampleId(
-        opCtx, query.nss(), analyze_shard_key::SampledCommandNameEnum::kFind);
+        opCtx, nss, analyze_shard_key::SampledCommandNameEnum::kFind);
 
     // Evaluate let params once: not per shard, and not per retry.
     if (auto letParams = findCommand.getLet()) {
@@ -682,108 +733,33 @@ CursorId ClusterFind::runQuery(OperationContext* opCtx,
             "https://www.mongodb.com/docs/manual/reference/operator/aggregation/function/");
     }
 
-    // Re-target and re-send the initial find command to the shards until we have established the
-    // shard version.
-    for (size_t retries = 1; retries <= kMaxRetries; ++retries) {
-        auto swCri = getCollectionRoutingInfoForTxnCmd(opCtx, query.nss());
-        if (swCri == ErrorCodes::NamespaceNotFound) {
-            // If the database doesn't exist, we successfully return an empty result set without
-            // creating a cursor.
-            return earlyExitWithNoResults(opCtx, query, findCommand);
-        }
+    sharding::router::CollectionRouter router(opCtx->getServiceContext(), query.nss());
+    try {
+        return router.routeWithRoutingContext(
+            opCtx, "find", [&](OperationContext* opCtx, RoutingContext& routingCtx) {
+                const auto& cri = routingCtx.getCollectionRoutingInfo(nss);
 
-        const auto cri = uassertStatusOK(std::move(swCri));
-
-        // Create an RAII object that prints the collection's shard key in the case of a tassert
-        // or crash.
-        ScopedDebugInfo shardKeyDiagnostics(
-            "ShardKeyDiagnostics",
-            diagnostic_printers::ShardKeyDiagnosticPrinter{
-                cri.isSharded() ? cri.getChunkManager().getShardKeyPattern().toBSON() : BSONObj()});
-
-        try {
-            return runQueryWithoutRetrying(
-                opCtx, query, readPref, sampleId, cri, results, partialResultsReturned);
-        } catch (ExceptionFor<ErrorCodes::StaleDbVersion>& ex) {
-            if (retries >= kMaxRetries) {
-                // Check if there are no retries remaining, so the last received error can be
-                // propagated to the caller.
-                ex.addContext(str::stream()
-                              << "Failed to run query after " << kMaxRetries << " retries");
-                throw;
-            }
-
-            LOGV2_DEBUG(22839,
-                        1,
-                        "Received error status for query",
-                        "query"_attr = redact(query.toStringShort()),
-                        "attemptNumber"_attr = retries,
-                        "maxRetries"_attr = kMaxRetries,
-                        "error"_attr = redact(ex));
-
-            // Mark database entry in cache as stale.
-            Grid::get(opCtx)->catalogCache()->onStaleDatabaseVersion(ex->getDb(),
-                                                                     ex->getVersionWanted());
-
-            if (auto txnRouter = TransactionRouter::get(opCtx)) {
-                if (!txnRouter.canContinueOnStaleShardOrDbError(kFindCmdName, ex.toStatus())) {
-                    throw;
-                }
-
-                // Reset the default global read timestamp so the retry's routing table reflects the
-                // chunk placement after the refresh (no-op if the transaction is not running with
-                // snapshot read concern).
-                txnRouter.onStaleShardOrDbError(opCtx, kFindCmdName, ex.toStatus());
-                txnRouter.setDefaultAtClusterTime(opCtx);
-            }
-
-        } catch (DBException& ex) {
-            if (retries >= kMaxRetries) {
-                // Check if there are no retries remaining, so the last received error can be
-                // propagated to the caller.
-                ex.addContext(str::stream()
-                              << "Failed to run query after " << kMaxRetries << " retries");
-                throw;
-            } else if (!ErrorCodes::isStaleShardVersionError(ex.code()) &&
-                       ex.code() != ErrorCodes::ShardNotFound) {
-
-                if (ErrorCodes::isRetriableError(ex.code())) {
-                    ex.addContext("Encountered retryable error during query");
-                } else {
-                    // Errors other than stale metadata or from trying to reach a non existent shard
-                    // are fatal to the operation. Network errors and replication retries happen at
-                    // the level of the AsyncResultsMerger.
-                    ex.addContext("Encountered non-retryable error during query");
-                }
-                throw;
-            }
-
-            LOGV2_DEBUG(22840,
-                        1,
-                        "Received error status for query",
-                        "query"_attr = redact(query.toStringShort()),
-                        "attemptNumber"_attr = retries,
-                        "maxRetries"_attr = kMaxRetries,
-                        "error"_attr = redact(ex));
-
-            if (auto staleInfo = ex.extraInfo<StaleConfigInfo>()) {
-                catalogCache->onStaleCollectionVersion(query.nss(), staleInfo->getVersionWanted());
-            } else {
-                catalogCache->invalidateCollectionEntry_LINEARIZABLE(query.nss());
-            }
-
-            if (auto txnRouter = TransactionRouter::get(opCtx)) {
-                if (!txnRouter.canContinueOnStaleShardOrDbError(kFindCmdName, ex.toStatus())) {
-                    throw;
-                }
-
-                // Reset the default global read timestamp so the retry's routing table reflects the
-                // chunk placement after the refresh (no-op if the transaction is not running with
-                // snapshot read concern).
-                txnRouter.onStaleShardOrDbError(opCtx, kFindCmdName, ex.toStatus());
-                txnRouter.setDefaultAtClusterTime(opCtx);
-            }
-        }
+                // Create an RAII object that prints the collection's shard key in the case of a
+                // tassert or crash.
+                ScopedDebugInfo shardKeyDiagnostics(
+                    "ShardKeyDiagnostics",
+                    diagnostic_printers::ShardKeyDiagnosticPrinter{
+                        cri.isSharded() ? cri.getChunkManager().getShardKeyPattern().toBSON()
+                                        : BSONObj()});
+                return runQueryWithoutRetrying(
+                    opCtx, query, readPref, sampleId, routingCtx, results, partialResultsReturned);
+            });
+    } catch (const ExceptionFor<ErrorCodes::NamespaceNotFound>&) {
+        // If the database doesn't exist, we successfully return an empty result set without
+        // creating a cursor.
+        return earlyExitWithNoResults(opCtx, query, findCommand);
+    } catch (DBException& ex) {
+        LOGV2_DEBUG(10369901,
+                    1,
+                    "Received error status for query",
+                    "query"_attr = redact(query.toStringShort()),
+                    "error"_attr = redact(ex));
+        throw;
     }
 
     MONGO_UNREACHABLE
@@ -915,23 +891,27 @@ StatusWith<std::unique_ptr<FindCommandRequest>> ClusterFind::transformQueryForSh
 
 StatusWith<CursorResponse> ClusterFind::runGetMore(OperationContext* opCtx,
                                                    const GetMoreCommandRequest& cmd) {
-    auto cursorManager = Grid::get(opCtx)->getCursorManager();
-
     auto authzSession = AuthorizationSession::get(opCtx->getClient());
-    AuthzCheckFn authChecker = [&authzSession](AuthzCheckFnInputType userName) -> Status {
-        return authzSession->isCoauthorizedWith(userName)
-            ? Status::OK()
-            : Status(ErrorCodes::Unauthorized, "User not authorized to access cursor");
-    };
-
     NamespaceString nss(NamespaceStringUtil::deserialize(cmd.getDbName(), cmd.getCollection()));
     int64_t cursorId = cmd.getCommandParameter();
 
-    auto pinnedCursor = cursorManager->checkOutCursor(cursorId, opCtx, authChecker);
+    auto pinnedCursor = checkOutCursorWithRetries(
+        opCtx, cursorId, authzSession, GetMoreCommandRequest::kCommandParameterFieldName);
     if (!pinnedCursor.isOK()) {
         return pinnedCursor.getStatus();
     }
     invariant(cursorId == pinnedCursor.getValue().getCursorId());
+
+    // Ensure cursor and getMore belong the same namespace.
+    if (const auto cursorNss = pinnedCursor.getValue().toGenericCursor().getNs();
+        cursorNss.has_value() && nss != cursorNss.get()) {
+        pinnedCursor.getValue().returnCursor(ClusterCursorManager::CursorState::NotExhausted);
+        return Status(ErrorCodes::Unauthorized,
+                      str::stream()
+                          << "Requested getMore on namespace '" << nss.toStringForErrorMsg()
+                          << "', but cursor belongs to a different namespace "
+                          << cursorNss->toStringForErrorMsg());
+    }
 
     validateOperationSessionInfo(opCtx, cursorId, &pinnedCursor.getValue());
 

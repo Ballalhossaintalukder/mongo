@@ -29,17 +29,6 @@
 
 #include "mongo/s/commands/query_cmd/cluster_find_and_modify_cmd.h"
 
-#include <boost/cstdint.hpp>
-#include <boost/none.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_extra_info.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonelement.h"
@@ -111,6 +100,17 @@
 #include "mongo/util/out_of_line_executor.h"
 #include "mongo/util/timer.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
 namespace mongo {
@@ -139,7 +139,7 @@ BSONObj stripWriteConcern(const BSONObj& cmdObj) {
 
 BSONObj getCollation(const BSONObj& cmdObj) {
     BSONElement collationElement;
-    auto status = bsonExtractTypedField(cmdObj, "collation", BSONType::Object, &collationElement);
+    auto status = bsonExtractTypedField(cmdObj, "collation", BSONType::object, &collationElement);
     if (status.isOK()) {
         return collationElement.Obj();
     } else if (status != ErrorCodes::NoSuchKey) {
@@ -150,7 +150,7 @@ BSONObj getCollation(const BSONObj& cmdObj) {
 }
 
 boost::optional<BSONObj> getLet(const BSONObj& cmdObj) {
-    if (auto letElem = cmdObj.getField("let"_sd); letElem.type() == BSONType::Object) {
+    if (auto letElem = cmdObj.getField("let"_sd); letElem.type() == BSONType::object) {
         auto bob = BSONObjBuilder();
         bob.appendElementsUnique(letElem.embeddedObject());
         return bob.obj();
@@ -159,7 +159,7 @@ boost::optional<BSONObj> getLet(const BSONObj& cmdObj) {
 }
 
 boost::optional<LegacyRuntimeConstants> getLegacyRuntimeConstants(const BSONObj& cmdObj) {
-    if (auto rcElem = cmdObj.getField("runtimeConstants"_sd); rcElem.type() == BSONType::Object) {
+    if (auto rcElem = cmdObj.getField("runtimeConstants"_sd); rcElem.type() == BSONType::object) {
         IDLParserContext ctx("internalLegacyRuntimeConstants");
         return LegacyRuntimeConstants::parse(ctx, rcElem.embeddedObject());
     }
@@ -518,7 +518,7 @@ CollectionRoutingInfo getCollectionRoutingInfo(OperationContext* opCtx,
                                                const NamespaceString& maybeTsNss) {
     // Apparently, we should return the CollectionRoutingInfo for the original namespace if we're
     // not writing to a timeseries collection.
-    auto cri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, maybeTsNss));
+    auto cri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, maybeTsNss));
 
     // Note: We try to get CollectionRoutingInfo for the timeseries buckets collection only when the
     // timeseries deletes or updates feature flag is enabled.
@@ -540,7 +540,8 @@ CollectionRoutingInfo getCollectionRoutingInfo(OperationContext* opCtx,
     // do this to figure out whether we need to use the two phase write protocol or not on
     // timeseries buckets collections.
     auto bucketCollNss = maybeTsNss.makeTimeseriesBucketsNamespace();
-    auto bucketCollCri = uassertStatusOK(getCollectionRoutingInfoForTxnCmd(opCtx, bucketCollNss));
+    auto bucketCollCri =
+        uassertStatusOK(getCollectionRoutingInfoForTxnCmd_DEPRECATED(opCtx, bucketCollNss));
     if (!bucketCollCri.hasRoutingTable() ||
         !bucketCollCri.getChunkManager().getTimeseriesFields()) {
         return cri;
@@ -1024,7 +1025,7 @@ void FindAndModifyCmd::_runCommandWithoutShardKey(OperationContext* opCtx,
         } else {
             cmdResponse = swRes.getValue().getResponse();
         }
-        shardId = ShardId(swRes.getValue().getShardId().toString());
+        shardId = ShardId(std::string{swRes.getValue().getShardId()});
     }
 
     if (wce.has_value() && !cmdResponse.hasField("writeConcernError")) {
@@ -1087,7 +1088,7 @@ void FindAndModifyCmd::_runExplainWithoutShardKey(OperationContext* opCtx,
         // target document for the 'Write Phase'.
         ClusterWriteWithoutShardKey clusterWriteWithoutShardKeyCommand(
             cmdObjForPassthrough,
-            clusterQueryWithoutShardKeyExplainRes.getStringField("targetShardId").toString(),
+            std::string{clusterQueryWithoutShardKeyExplainRes.getStringField("targetShardId")},
             write_without_shard_key::targetDocForExplain);
         const auto explainClusterWriteWithoutShardKeyCmd =
             ClusterExplain::wrapAsExplain(clusterWriteWithoutShardKeyCommand.toBSON(), verbosity);

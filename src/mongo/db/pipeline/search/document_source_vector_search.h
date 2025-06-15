@@ -39,7 +39,7 @@ namespace mongo {
 /**
  * A class to retrieve vector search results from a mongot process.
  */
-class DocumentSourceVectorSearch : public DocumentSource {
+class DocumentSourceVectorSearch : public DocumentSource, public exec::agg::Stage {
 public:
     const BSONObj kSortSpec = BSON("$vectorSearchScore" << -1);
     static constexpr StringData kStageName = "$vectorSearch"_sd;
@@ -59,7 +59,7 @@ public:
     std::list<boost::intrusive_ptr<DocumentSource>> desugar();
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     }
 
     static const Id& id;
@@ -108,16 +108,11 @@ public:
                                      LookupRequirement::kNotAllowed,
                                      UnionRequirement::kNotAllowed,
                                      ChangeStreamRequirement::kDenylist);
-        // TODO: SERVER-85426 The constraint should now always be UnionRequirement::kAllowed.
-        // TODO: BACKPORT-22945 (8.0) Ensure that using this feature inside a view definition is not
-        // permitted.
-        if (enableUnionWithVectorSearch.load()) {
-            constraints.unionRequirement = UnionRequirement::kAllowed;
-        }
+        constraints.unionRequirement = UnionRequirement::kAllowed;
         constraints.requiresInputDocSource = false;
         constraints.noFieldModifications = true;
         return constraints;
-    };
+    }
 
 protected:
     Value serialize(const SerializationOptions& opts) const override;

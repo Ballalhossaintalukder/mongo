@@ -33,15 +33,15 @@
 
 #include "mongo/db/hasher.h"
 
-#include <cstddef>
-#include <memory>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/platform/endian.h"
 #include "mongo/util/md5.h"
+
+#include <cstddef>
+#include <memory>
 
 namespace mongo {
 
@@ -125,7 +125,7 @@ void recursiveHash(Hasher* h, const BSONElement& e, bool includeFieldName) {
         // then each sub-element
         // then finish with the EOO element.
         BSONObj b;
-        if (e.type() == CodeWScope) {
+        if (e.type() == BSONType::codeWScope) {
             h->addData(e.codeWScopeCode(), e.codeWScopeCodeLen());
             b = e.codeWScopeObject();
         } else {

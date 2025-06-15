@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <utility>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -48,6 +45,9 @@
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/uuid.h"
+
+#include <memory>
+#include <utility>
 
 namespace mongo {
 namespace {
@@ -255,8 +255,10 @@ TEST(JSONSchemaParserEncryptTest, FailsToParseWithBadBSONType) {
     auto result = JSONSchemaParser::parse(new ExpressionContextForTest(), schema);
     ASSERT_EQ(result.getStatus().code(), ErrorCodes::BadValue);
 
-    schema = BSON("properties" << BSON(
-                      "foo" << BSON("encrypt" << BSON("bsonType" << (BSONType::JSTypeMax + 1)))));
+    schema =
+        BSON("properties" << BSON(
+                 "foo" << BSON("encrypt" << BSON(
+                                   "bsonType" << (stdx::to_underlying(BSONType::jsTypeMax) + 1)))));
     result = JSONSchemaParser::parse(new ExpressionContextForTest(), schema);
     ASSERT_EQ(result.getStatus().code(), ErrorCodes::TypeMismatch);
 }

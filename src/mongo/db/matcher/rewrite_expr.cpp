@@ -28,8 +28,7 @@
  */
 
 
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/matcher/rewrite_expr.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -38,11 +37,13 @@
 #include "mongo/db/matcher/expression_internal_expr_comparison.h"
 #include "mongo/db/matcher/expression_tree.h"
 #include "mongo/db/matcher/expression_type.h"
-#include "mongo/db/matcher/rewrite_expr.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -271,9 +272,9 @@ bool RewriteExpr::_canRewriteComparison(
             hasFieldPath = true;
         } else if (auto exprConst = dynamic_cast<ExpressionConstant*>(operand.get())) {
             switch (exprConst->getValue().getType()) {
-                case BSONType::Array:
-                case BSONType::EOO:
-                case BSONType::Undefined:
+                case BSONType::array:
+                case BSONType::eoo:
+                case BSONType::undefined:
                     return false;
                 default:
                     break;
@@ -311,7 +312,7 @@ std::unique_ptr<MatchExpression> RewriteExpr::_rewriteInExpression(
         return nullptr;
     } else {
         const auto& rhsVal = rhsConst->getValue();
-        if (rhsVal.getType() != BSONType::Array) {
+        if (rhsVal.getType() != BSONType::array) {
             return nullptr;
         }
 
@@ -325,10 +326,10 @@ std::unique_ptr<MatchExpression> RewriteExpr::_rewriteInExpression(
         // (i.e. a field with value /clothing/, but not "clothings").
         for (const auto& el : rhsVal.getArray()) {
             switch (el.getType()) {
-                case BSONType::Array:
-                case BSONType::jstNULL:
-                case BSONType::Undefined:
-                case BSONType::RegEx:
+                case BSONType::array:
+                case BSONType::null:
+                case BSONType::undefined:
+                case BSONType::regEx:
                     return nullptr;
                 default:
                     break;

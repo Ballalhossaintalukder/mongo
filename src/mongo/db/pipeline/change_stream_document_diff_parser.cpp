@@ -29,6 +29,12 @@
 
 #include "mongo/db/pipeline/change_stream_document_diff_parser.h"
 
+#include "mongo/base/string_data.h"
+#include "mongo/bson/bsonelement.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/db/field_ref.h"
+#include "mongo/util/assert_util.h"
+
 #include <cstddef>
 #include <list>
 #include <memory>
@@ -39,12 +45,6 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-
-#include "mongo/base/string_data.h"
-#include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/db/field_ref.h"
-#include "mongo/util/assert_util.h"
 
 namespace mongo {
 using doc_diff::ArrayDiffReader;
@@ -124,7 +124,7 @@ private:
     // entries must also be marked as ambiguous.
     struct AmbiguityInfo {
         bool pathIsAmbiguous = false;
-        BSONType fieldType = BSONType::String;
+        BSONType fieldType = BSONType::string;
     };
 
     // Append the given field to the path, and update the path ambiguity information accordingly.
@@ -136,7 +136,7 @@ private:
 
         // Once a path has become ambiguous, it will remain so as new fields are added. If the final
         // path component is marked ambiguous, retain that value and add the type of the new field.
-        const auto fieldType = (isArrayIndex ? BSONType::NumberInt : BSONType::String);
+        const auto fieldType = (isArrayIndex ? BSONType::numberInt : BSONType::string);
         if (!_pathAmbiguity.empty() && _pathAmbiguity.back().pathIsAmbiguous) {
             _pathAmbiguity.push_back({true /* pathIsAmbiguous */, fieldType});
             return;
@@ -169,8 +169,8 @@ private:
             FieldIndex fieldNum = 0;
             for (const auto& fieldInfo : _pathAmbiguity) {
                 auto fieldVal = _fieldRef.getPart(fieldNum++);
-                disambiguatedPath.push_back(fieldInfo.fieldType == BSONType::NumberInt
-                                                ? Value(std::stoi(fieldVal.toString()))
+                disambiguatedPath.push_back(fieldInfo.fieldType == BSONType::numberInt
+                                                ? Value(std::stoi(std::string{fieldVal}))
                                                 : Value(fieldVal));
             }
             // Add the vector of individual fields into the 'disambiguatedPaths' document. The name

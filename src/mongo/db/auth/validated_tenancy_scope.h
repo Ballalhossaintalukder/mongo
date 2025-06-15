@@ -29,14 +29,15 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <utility>
-#include <variant>
-
 #include "mongo/db/auth/user_name.h"
 #include "mongo/util/overloaded_visitor.h"  // IWYU pragma: keep
 #include "mongo/util/time_support.h"
+
+#include <utility>
+#include <variant>
+
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -128,7 +129,7 @@ private:
                           const std::variant<std::monostate, UserName, TenantId>& tenantOrUser,
                           Date_t expiration,
                           TenantProtocol tenantProtocol)
-        : _originalToken(securityToken.toString()),
+        : _originalToken(std::string{securityToken}),
           _expiration(expiration),
           _tenantOrUser(tenantOrUser),
           _tenantProtocol(tenantProtocol) {}

@@ -28,20 +28,20 @@
  */
 
 
-#include <absl/container/node_hash_map.h>
 #include <algorithm>
-#include <boost/filesystem/operations.hpp>
-#include <boost/iterator/transform_iterator.hpp>
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
 #include <cstdint>
-#include <fmt/format.h>
 #include <mutex>
 #include <type_traits>
 
+#include <absl/container/node_hash_map.h>
+#include <boost/filesystem/operations.hpp>
+#include <boost/iterator/transform_iterator.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
+#include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <fmt/format.h>
 // IWYU pragma: no_include "boost/system/detail/error_code.hpp"
 
 #include "mongo/base/error_codes.h"
@@ -80,9 +80,8 @@
 #include "mongo/db/s/scoped_collection_metadata.h"
 #include "mongo/db/server_recovery.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/db/storage/disk_space_util.h"
-#include "mongo/db/storage/durable_catalog.h"
+#include "mongo/db/storage/mdb_catalog.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage/storage_options.h"
@@ -113,7 +112,6 @@
 namespace mongo {
 
 MONGO_FAIL_POINT_DEFINE(hangAfterIndexBuildFirstDrain);
-MONGO_FAIL_POINT_DEFINE(hangAfterIndexBuildSecondDrain);
 MONGO_FAIL_POINT_DEFINE(hangAfterIndexBuildDumpsInsertsFromBulk);
 MONGO_FAIL_POINT_DEFINE(hangAfterIndexBuildDumpsInsertsFromBulkLock);
 MONGO_FAIL_POINT_DEFINE(hangAfterInitializingIndexBuild);
@@ -128,7 +126,6 @@ MONGO_FAIL_POINT_DEFINE(hangIndexBuildBeforeWaitingUntilMajorityOpTime);
 MONGO_FAIL_POINT_DEFINE(hangBeforeUnregisteringAfterCommit);
 MONGO_FAIL_POINT_DEFINE(failSetUpResumeIndexBuild);
 MONGO_FAIL_POINT_DEFINE(failIndexBuildWithError);
-MONGO_FAIL_POINT_DEFINE(failIndexBuildWithErrorInSecondDrain);
 MONGO_FAIL_POINT_DEFINE(hangIndexBuildOnSetupBeforeTakingLocks);
 MONGO_FAIL_POINT_DEFINE(hangAbortIndexBuildByBuildUUIDAfterLocks);
 MONGO_FAIL_POINT_DEFINE(hangOnStepUpAsyncTaskBeforeCheckingCommitQuorum);
@@ -154,7 +151,6 @@ public:
         BSONObjBuilder phases{indexBuilds.subobjStart("phases")};
         phases.append("scanCollection", scanCollection.loadRelaxed());
         phases.append("drainSideWritesTable", drainSideWritesTable.loadRelaxed());
-        phases.append("drainSideWritesTablePreCommit", drainSideWritesTablePreCommit.loadRelaxed());
         phases.append("waitForCommitQuorum", waitForCommitQuorum.loadRelaxed());
         phases.append("drainSideWritesTableOnCommit", drainSideWritesTableOnCommit.loadRelaxed());
         phases.append("processConstraintsViolatonTableOnCommit",
@@ -170,7 +166,6 @@ public:
     AtomicWord<int> failedDueToDataCorruption{0};
     AtomicWord<int> scanCollection{0};
     AtomicWord<int> drainSideWritesTable{0};
-    AtomicWord<int> drainSideWritesTablePreCommit{0};
     AtomicWord<int> waitForCommitQuorum{0};
     AtomicWord<int> drainSideWritesTableOnCommit{0};
     AtomicWord<int> processConstraintsViolatonTableOnCommit{0};
@@ -592,19 +587,13 @@ Status IndexBuildsCoordinator::checkDiskSpaceSufficientToStartIndexBuild(Operati
     return Status::OK();
 }
 
-std::unique_ptr<DiskSpaceMonitor::Action>
-IndexBuildsCoordinator::makeKillIndexBuildOnLowDiskSpaceAction() {
-    class KillIndexBuildsAction : public DiskSpaceMonitor::Action {
-    public:
-        KillIndexBuildsAction(IndexBuildsCoordinator* coordinator) : _coord(coordinator) {}
-
-        int64_t getThresholdBytes() final {
-            // This parameter's validator ensures that this multiplication will not overflow.
-            return gIndexBuildMinAvailableDiskSpaceMB.load() * 1024 * 1024;
-        }
-
-        void act(OperationContext* opCtx, int64_t availableBytes) final {
-            if (_coord->noIndexBuildInProgress()) {
+void IndexBuildsCoordinator::registerKillIndexBuildAction(DiskSpaceMonitor& diskMonitor) {
+    std::function<int64_t()> getThresholdBytes = []() {
+        return gIndexBuildMinAvailableDiskSpaceMB.load() * 1024 * 1024;
+    };
+    std::function<void(OperationContext*, int64_t, int64_t)> act =
+        [this](OperationContext* opCtx, int64_t availableBytes, int64_t thresholdBytes) {
+            if (this->noIndexBuildInProgress()) {
                 // Avoid excessive logging when no index builds are in progress. Nothing prevents an
                 // index build from starting after this check.  Subsequent calls will see any
                 // newly-registered builds.
@@ -614,26 +603,21 @@ IndexBuildsCoordinator::makeKillIndexBuildOnLowDiskSpaceAction() {
                   "Attempting to kill index builds because remaining disk space is less than "
                   "required minimum",
                   "availableBytes"_attr = availableBytes,
-                  "requiredBytes"_attr = getThresholdBytes());
+                  "requiredBytes"_attr = thresholdBytes);
             try {
-                _coord->abortAllIndexBuildsDueToDiskSpace(
-                    opCtx, availableBytes, getThresholdBytes());
+                this->abortAllIndexBuildsDueToDiskSpace(opCtx, availableBytes, thresholdBytes);
             } catch (...) {
                 LOGV2(7333503, "Failed to kill index builds", "reason"_attr = exceptionToStatus());
             }
-        }
-
-    private:
-        IndexBuildsCoordinator* _coord;
-    };
-    return std::make_unique<KillIndexBuildsAction>(this);
-};
+        };
+    diskMonitor.registerAction(std::move(getThresholdBytes), std::move(act));
+}
 
 std::vector<std::string> IndexBuildsCoordinator::extractIndexNames(
     const std::vector<BSONObj>& specs) {
     std::vector<std::string> indexNames;
     for (const auto& spec : specs) {
-        std::string name = spec.getStringField(IndexDescriptor::kIndexNameFieldName).toString();
+        std::string name = std::string{spec.getStringField(IndexDescriptor::kIndexNameFieldName)};
         invariant(!name.empty(),
                   str::stream() << "Bad spec passed into ReplIndexBuildState constructor, missing '"
                                 << IndexDescriptor::kIndexNameFieldName << "' field: " << spec);
@@ -677,7 +661,7 @@ Status IndexBuildsCoordinator::_startIndexBuildForRecovery(OperationContext* opC
 
     std::vector<std::string> indexNames;
     for (auto& spec : specs) {
-        std::string name = spec.getStringField(IndexDescriptor::kIndexNameFieldName).toString();
+        std::string name = std::string{spec.getStringField(IndexDescriptor::kIndexNameFieldName)};
         if (name.empty()) {
             return Status(ErrorCodes::CannotCreateIndex,
                           str::stream()
@@ -813,11 +797,10 @@ Status IndexBuildsCoordinator::_setUpResumeIndexBuild(OperationContext* opCtx,
 
     CollectionWriter collection(opCtx, resumeInfo.getCollectionUUID());
     invariant(collection);
-    auto durableCatalog = DurableCatalog::get(opCtx);
-
+    const auto mdbCatalog = MDBCatalog::get(opCtx);
     for (const auto& spec : specs) {
         std::string indexName =
-            spec.getStringField(IndexDescriptor::kIndexNameFieldName).toString();
+            std::string{spec.getStringField(IndexDescriptor::kIndexNameFieldName)};
         if (indexName.empty()) {
             return Status(ErrorCodes::CannotCreateIndex,
                           str::stream()
@@ -837,8 +820,7 @@ Status IndexBuildsCoordinator::_setUpResumeIndexBuild(OperationContext* opCtx,
                               << durableBuildUUID,
                 durableBuildUUID == buildUUID);
 
-        auto indexIdent =
-            durableCatalog->getIndexIdent(opCtx, collection->getCatalogId(), indexName);
+        auto indexIdent = mdbCatalog->getIndexIdent(opCtx, collection->getCatalogId(), indexName);
         uassert(
             4841703,
             str::stream() << "No index ident found on disk that matches the index build to resume: "
@@ -1080,7 +1062,7 @@ void IndexBuildsCoordinator::applyStartIndexBuild(OperationContext* opCtx,
 
             for (const auto& spec : oplogEntry.indexSpecs) {
                 std::string name =
-                    spec.getStringField(IndexDescriptor::kIndexNameFieldName).toString();
+                    std::string{spec.getStringField(IndexDescriptor::kIndexNameFieldName)};
                 uassert(ErrorCodes::BadValue,
                         str::stream() << "Index spec is missing the 'name' field " << spec,
                         !name.empty());
@@ -1291,8 +1273,7 @@ void IndexBuildsCoordinator::applyAbortIndexBuild(OperationContext* opCtx,
             auto writableEntry = indexCatalog->getWritableEntryByName(
                 opCtx,
                 indexSpec.getStringField(IndexDescriptor::kIndexNameFieldName),
-                IndexCatalog::InclusionPolicy::kReady | IndexCatalog::InclusionPolicy::kUnfinished |
-                    IndexCatalog::InclusionPolicy::kFrozen);
+                IndexCatalog::InclusionPolicy::kAll);
 
             LOGV2(6455400,
                   "Dropping unfinished index during oplog recovery as standalone",
@@ -1374,20 +1355,6 @@ void IndexBuildsCoordinator::_abortAllIndexBuildsWithReason(OperationContext* op
 void IndexBuildsCoordinator::abortAllIndexBuildsWithReason(OperationContext* opCtx,
                                                            const std::string& reason) {
     _abortAllIndexBuildsWithReason(opCtx, IndexBuildAction::kPrimaryAbort, reason);
-}
-
-void IndexBuildsCoordinator::setNewIndexBuildsBlocked(const bool newValue,
-                                                      boost::optional<std::string> reason) {
-    stdx::unique_lock<stdx::mutex> lk(_newIndexBuildsBlockedMutex);
-    invariant(newValue != _newIndexBuildsBlocked);
-    invariant((newValue && reason) || (!newValue && !reason));
-
-    _newIndexBuildsBlocked = newValue;
-    _blockReason = reason;
-
-    if (!_newIndexBuildsBlocked) {
-        _newIndexBuildsBlockedCV.notify_all();
-    }
 }
 
 bool IndexBuildsCoordinator::hasIndexBuilder(OperationContext* opCtx,
@@ -1940,7 +1907,7 @@ void IndexBuildsCoordinator::restartIndexBuildsForRecovery(
 
                 boost::system::error_code ec;
                 boost::filesystem::remove(
-                    storageGlobalParams.dbpath + "/_tmp/" + index.getFileName()->toString(), ec);
+                    storageGlobalParams.dbpath + "/_tmp/" + std::string{*index.getFileName()}, ec);
 
                 if (ec) {
                     LOGV2(5043101,
@@ -2238,34 +2205,6 @@ Status IndexBuildsCoordinator::_setUpIndexBuildForTwoPhaseRecovery(
     invariant(collWriter);
     const auto protocol = IndexBuildProtocol::kTwoPhase;
     return _startIndexBuildForRecovery(opCtx, collWriter, specs, buildUUID, protocol);
-}
-
-void IndexBuildsCoordinator::_waitIfNewIndexBuildsBlocked(OperationContext* opCtx,
-                                                          const UUID& collectionUUID,
-                                                          const std::vector<BSONObj>& specs,
-                                                          const UUID& buildUUID) {
-    stdx::unique_lock<stdx::mutex> lk(_newIndexBuildsBlockedMutex);
-    bool messageLogged = false;
-
-    opCtx->waitForConditionOrInterrupt(_newIndexBuildsBlockedCV, lk, [&] {
-        if (_newIndexBuildsBlocked && !messageLogged) {
-            LOGV2(7738700,
-                  "Index build: new index builds are blocked, waiting",
-                  "reason"_attr = *_blockReason,
-                  "indexSpecs"_attr = specs,
-                  "buildUUID"_attr = buildUUID,
-                  "collectionUUID"_attr = collectionUUID);
-            messageLogged = true;
-        }
-        return !_newIndexBuildsBlocked;
-    });
-    if (messageLogged) {
-        LOGV2(7738701,
-              "Index build: new index builds unblocked, continuing",
-              "indexSpecs"_attr = specs,
-              "buildUUID"_attr = buildUUID,
-              "collectionUUID"_attr = collectionUUID);
-    }
 }
 
 StatusWith<AutoGetCollection> IndexBuildsCoordinator::_autoGetCollectionExclusiveWithTimeout(
@@ -2860,21 +2799,6 @@ void IndexBuildsCoordinator::_runIndexBuildInner(
         return;
     }
 
-    if (replState->isExternalAbort()) {
-        auto replCoord = repl::ReplicationCoordinator::get(opCtx);
-        auto& collector = ResourceConsumption::MetricsCollector::get(opCtx);
-
-        // Only report metrics for index builds on primaries. We are being aborted by an external
-        // thread, thus we can assume it is holding the RSTL while waiting for us to exit.
-        bool wasCollecting = collector.endScopedCollecting();
-        bool isPrimary = replCoord->canAcceptWritesFor_UNSAFE(
-            opCtx, {replState->dbName, replState->collectionUUID});
-        if (isPrimary && wasCollecting && ResourceConsumption::isMetricsAggregationEnabled()) {
-            ResourceConsumption::get(opCtx).merge(
-                opCtx, collector.getDbName(), collector.getMetrics());
-        }
-    }
-
     // If the index build has already been cleaned-up because it encountered an error, there is no
     // work to do. If an external abort was requested, cleanup is handled by the requester, and
     // there is nothing to do.
@@ -2933,7 +2857,6 @@ void IndexBuildsCoordinator::_resumeIndexBuildFromPhase(
 
     _insertKeysFromSideTablesWithoutBlockingWrites(opCtx, replState);
     _signalPrimaryForCommitReadiness(opCtx, replState);
-    _insertKeysFromSideTablesBlockingWrites(opCtx, replState, indexBuildOptions);
     _waitForNextIndexBuildActionAndCommit(opCtx, replState, indexBuildOptions);
 }
 
@@ -3039,7 +2962,6 @@ void IndexBuildsCoordinator::_buildIndex(OperationContext* opCtx,
     _scanCollectionAndInsertSortedKeysIntoIndex(opCtx, replState);
     _insertKeysFromSideTablesWithoutBlockingWrites(opCtx, replState);
     _signalPrimaryForCommitReadiness(opCtx, replState);
-    _insertKeysFromSideTablesBlockingWrites(opCtx, replState, indexBuildOptions);
     _waitForNextIndexBuildActionAndCommit(opCtx, replState, indexBuildOptions);
 }
 
@@ -3144,44 +3066,6 @@ void IndexBuildsCoordinator::_insertKeysFromSideTablesWithoutBlockingWrites(
         hangAfterIndexBuildFirstDrain.pauseWhileSet(opCtx);
     }
 }
-void IndexBuildsCoordinator::_insertKeysFromSideTablesBlockingWrites(
-    OperationContext* opCtx,
-    std::shared_ptr<ReplIndexBuildState> replState,
-    const IndexBuildOptions& indexBuildOptions) {
-    indexBuildsSSS.drainSideWritesTablePreCommit.addAndFetch(1);
-    const NamespaceStringOrUUID dbAndUUID(replState->dbName, replState->collectionUUID);
-
-    failIndexBuildWithErrorInSecondDrain.executeIf(
-        [](const BSONObj& data) {
-            uasserted(data["error"].safeNumberInt(),
-                      "failIndexBuildWithErrorInSecondDrain failpoint triggered");
-        },
-        [&](const BSONObj& data) {
-            return UUID::parse(data["buildUUID"]) == replState->buildUUID;
-        });
-
-    // Perform the second drain while stopping writes on the collection.
-    {
-        // Skip RSTL to avoid deadlocks with prepare conflicts and state transitions. See
-        // SERVER-42621.
-        const auto kAutoGetCollectionOptionsWithSkipRSTL =
-            makeAutoGetCollectionOptions(/*skipRSTL=*/true);
-        AutoGetCollection autoGetColl(
-            opCtx, dbAndUUID, MODE_S, kAutoGetCollectionOptionsWithSkipRSTL);
-
-        uassertStatusOK(_indexBuildsManager.drainBackgroundWrites(
-            opCtx,
-            replState->buildUUID,
-            getReadSourceForDrainBeforeCommitQuorum(*replState),
-            IndexBuildInterceptor::DrainYieldPolicy::kNoYield));
-    }
-
-    if (MONGO_unlikely(hangAfterIndexBuildSecondDrain.shouldFail())) {
-        LOGV2(20667, "Hanging after index build second drain");
-        hangAfterIndexBuildSecondDrain.pauseWhileSet();
-    }
-}
-
 /**
  * Continue the third phase of catching up on all remaining writes that occurred and then commit.
  * Accepts a commit timestamp for the index (null if not available).
@@ -3225,18 +3109,6 @@ IndexBuildsCoordinator::CommitResult IndexBuildsCoordinator::_insertKeysFromSide
     if (IndexBuildAction::kOplogCommit == action) {
         replState->onOplogCommit(isPrimary);
     }
-
-    // While we are still holding the RSTL and before returning, ensure the metrics collected for
-    // this index build are attributed to the primary that commits or aborts the index build.
-    ScopeGuard metricsGuard([&]() {
-        auto& collector = ResourceConsumption::MetricsCollector::get(opCtx);
-        bool wasCollecting = collector.endScopedCollecting();
-        if (!isPrimary || !wasCollecting || !ResourceConsumption::isMetricsAggregationEnabled()) {
-            return;
-        }
-
-        ResourceConsumption::get(opCtx).merge(opCtx, collector.getDbName(), collector.getMetrics());
-    });
 
     // The collection object should always exist while an index build is registered.
     CollectionWriter collection(opCtx, replState->collectionUUID);
@@ -3315,7 +3187,7 @@ IndexBuildsCoordinator::CommitResult IndexBuildsCoordinator::_insertKeysFromSide
         TimestampBlock tsBlock(opCtx, commitIndexBuildTimestamp);
         uassertStatusOK(_indexBuildsManager.commitIndexBuild(
             opCtx, collection, collection->ns(), replState->buildUUID, onCreateEachFn, onCommitFn));
-    } catch (const ExceptionForCat<ErrorCategory::ShutdownError>& e) {
+    } catch (const ExceptionFor<ErrorCategory::ShutdownError>& e) {
         logFailure(e.toStatus(), collection->ns(), replState);
         _completeAbortForShutdown(opCtx, replState, collection.get());
         throw;

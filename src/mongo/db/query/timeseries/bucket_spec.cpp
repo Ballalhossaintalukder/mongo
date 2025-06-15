@@ -29,16 +29,6 @@
 
 #include "mongo/db/query/timeseries/bucket_spec.h"
 
-#include <algorithm>
-#include <boost/cstdint.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <s2cellid.h>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/checked_cast.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -58,6 +48,17 @@
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
+
+#include <algorithm>
+#include <cstddef>
+
+#include <s2cellid.h>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -160,7 +161,7 @@ BucketSpec::BucketPredicate BucketSpec::createPredicatesOnBucketLevelField(
             return handleIneligible(policy, matchExpr, "cannot handle an excluded meta field");
 
         if (auto looseResult = expression::copyExpressionAndApplyRenames(
-                matchExpr, {{bucketSpec.metaField().value(), kBucketMetaFieldName.toString()}});
+                matchExpr, {{bucketSpec.metaField().value(), std::string{kBucketMetaFieldName}}});
             looseResult) {
             auto tightResult = looseResult->clone();
             return {std::move(looseResult), std::move(tightResult)};
@@ -422,8 +423,8 @@ BucketSpec::splitOutMetaOnlyPredicate(std::unique_ptr<MatchExpression> expr,
 
     return expression::splitMatchExpressionBy(
         std::move(expr),
-        {metaField->toString()},
-        {{metaField->toString(), kBucketMetaFieldName.toString()}},
+        {std::string{*metaField}},
+        {{std::string{*metaField}, std::string{kBucketMetaFieldName}}},
         expression::isOnlyDependentOn);
 }
 
@@ -447,8 +448,8 @@ BucketSpec::SplitPredicates BucketSpec::getPushdownPredicates(
     std::unique_ptr<MatchExpression> bucketMetricPred = nullptr;
     if (residualPred) {
         BucketSpec bucketSpec{
-            tsOptions.getTimeField().toString(),
-            metaField.map([](StringData s) { return s.toString(); }),
+            std::string{tsOptions.getTimeField()},
+            metaField.map([](StringData s) { return std::string{s}; }),
             // Since we are operating on a collection, not a query-result,
             // there are no inclusion/exclusion projections we need to apply
             // to the buckets before unpacking. So we can use default values
@@ -531,9 +532,9 @@ BucketSpec::BucketSpec(BucketSpec&& other)
 }
 
 BucketSpec::BucketSpec(const TimeseriesOptions& tsOptions)
-    : BucketSpec(tsOptions.getTimeField().toString(),
+    : BucketSpec(std::string{tsOptions.getTimeField()},
                  tsOptions.getMetaField()
-                     ? boost::optional<string>(tsOptions.getMetaField()->toString())
+                     ? boost::optional<string>(std::string{*tsOptions.getMetaField()})
                      : boost::none) {}
 
 BucketSpec& BucketSpec::operator=(const BucketSpec& other) {
@@ -576,7 +577,7 @@ const std::string& BucketSpec::timeField() const {
 }
 
 HashedFieldName BucketSpec::timeFieldHashed() const {
-    invariant(_timeFieldHashed->key().rawData() == _timeField.data());
+    invariant(_timeFieldHashed->key().data() == _timeField.data());
     invariant(_timeFieldHashed->key() == _timeField);
     return *_timeFieldHashed;
 }

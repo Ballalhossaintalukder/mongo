@@ -27,18 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <boost/algorithm/string/replace.hpp>
-#include <boost/iterator/iterator_traits.hpp>
-#include <boost/none.hpp>
-#include <cstdint>
-#include <deque>
-#include <memory>
-#include <set>
-
-#include <absl/strings/str_split.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/auth/sasl_scram_server_conversation.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -56,7 +45,6 @@
 #include "mongo/db/auth/sasl_mechanism_policies.h"
 #include "mongo/db/auth/sasl_mechanism_registry.h"
 #include "mongo/db/auth/sasl_options.h"
-#include "mongo/db/auth/sasl_scram_server_conversation.h"
 #include "mongo/db/auth/user_name.h"
 #include "mongo/db/connection_health_metrics_parameter_gen.h"
 #include "mongo/logv2/log.h"
@@ -67,6 +55,19 @@
 #include "mongo/util/read_through_cache.h"
 #include "mongo/util/sequence_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <set>
+
+#include <absl/strings/str_split.h>
+#include <boost/algorithm/string/replace.hpp>
+#include <boost/iterator/iterator_traits.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kAccessControl
 
@@ -134,7 +135,7 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_fir
         return badCount(1);
     }
     const auto gs2_cbind_flag = inputData.substr(0, gs2_cbind_comma);
-    if (gs2_cbind_flag.startsWith("p=")) {
+    if (gs2_cbind_flag.starts_with("p=")) {
         return Status(ErrorCodes::BadValue, "Server does not support channel binding");
     }
 
@@ -149,7 +150,7 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_fir
     }
     auto authzId = inputData.substr(gs2_cbind_comma + 1, gs2_header_comma - (gs2_cbind_comma + 1));
     if (authzId.size()) {
-        if (authzId.startsWith("a=")) {
+        if (authzId.starts_with("a=")) {
             authzId = authzId.substr(2);
         } else {
             return Status(ErrorCodes::BadValue,
@@ -158,7 +159,7 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_fir
     }
 
     const auto client_first_message_bare = inputData.substr(gs2_header_comma + 1);
-    if (client_first_message_bare.startsWith("m=")) {
+    if (client_first_message_bare.starts_with("m=")) {
         return Status(ErrorCodes::BadValue, "SCRAM mandatory extensions are not supported");
     }
 
@@ -297,7 +298,7 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_fir
     std::string outputData = sb.str();
 
     // add client-first-message-bare and server-first-message to _authMessage
-    _authMessage = str::stream() << client_first_message_bare.toString() << "," << outputData;
+    _authMessage = str::stream() << std::string{client_first_message_bare} << "," << outputData;
 
     return std::make_tuple(false, std::move(outputData));
 }
@@ -335,10 +336,10 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_sec
 
     // add client-final-message-without-proof to authMessage
     const auto client_final_message_without_proof = inputData.substr(0, last_comma);
-    _authMessage += "," + client_final_message_without_proof.toString();
+    _authMessage += "," + std::string{client_final_message_without_proof};
 
     const auto last_field = inputData.substr(last_comma + 1);
-    if ((last_field.size() < 3) || !last_field.startsWith("p=")) {
+    if ((last_field.size() < 3) || !last_field.starts_with("p=")) {
         return Status(ErrorCodes::BadValue,
                       str::stream() << "Incorrect SCRAM ClientProof: " << last_field);
     }
@@ -380,7 +381,7 @@ StatusWith<std::tuple<bool, std::string>> SaslSCRAMServerMechanism<Policy>::_sec
     // ClientKey := ClientSignature XOR ClientProof
     // ServerSignature := HMAC(ServerKey, AuthMessage)
 
-    const auto decodedProof = base64::decode(proof.toString());
+    const auto decodedProof = base64::decode(std::string{proof});
     std::string serverSignature;
     const auto checkSecret =
         [&](const scram::Secrets<HashBlock, scram::UnlockedSecretsPolicy>& secret) {

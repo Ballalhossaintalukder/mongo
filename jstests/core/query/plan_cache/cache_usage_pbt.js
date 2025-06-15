@@ -5,6 +5,7 @@
  * key we use to store the cache entry. This test attempts to target these potential bugs.
  *
  * @tags: [
+ * query_intensive_pbt,
  * requires_timeseries,
  * assumes_standalone_mongod,
  * # Plan cache state is node-local and will not get migrated alongside user data
@@ -25,12 +26,13 @@ import {isSlowBuild} from "jstests/libs/query/aggregation_pipeline_utils.js";
 import {getRejectedPlans} from "jstests/libs/query/analyze_plan.js";
 import {checkSbeFullyEnabled} from "jstests/libs/query/sbe_util.js";
 
-let numRuns = 200;
 if (isSlowBuild(db)) {
-    numRuns = 20;
-    jsTestLog('Trying less examples because debug is on, opt is off, or a sanitizer is enabled.');
+    jsTestLog("Returning early because debug is on, opt is off, or a sanitizer is enabled.");
+    quit();
 }
-const numQueriesPerRun = 20;
+
+const numRuns = 100;
+const numQueriesPerRun = 40;
 
 const experimentColl = db[jsTestName()];
 
@@ -40,12 +42,11 @@ function repeatQueriesUseCache(getQuery, testHelpers) {
     for (let queryIx = 0; queryIx < testHelpers.numQueryShapes; queryIx++) {
         const query = getQuery(queryIx, 0 /* paramIx */);
         const explain = experimentColl.explain().aggregate(query);
+
         // If there are no rejected plans, there is no need to cache.
         if (getRejectedPlans(explain).length === 0) {
-            return {passed: true};
+            continue;
         }
-
-        const firstResult = experimentColl.aggregate(query).toArray();
 
         // Currently, both classic and SBE queries use the classic plan cache.
         const serverStatusBefore = db.serverStatus();
@@ -59,13 +60,14 @@ function repeatQueriesUseCache(getQuery, testHelpers) {
         const serverStatusAfter = db.serverStatus();
         const classicHitsAfter = serverStatusAfter.metrics.query.planCache.classic.hits;
         const sbeHitsAfter = serverStatusAfter.metrics.query.planCache.sbe.hits;
+
         // If neither the SBE plan cache hits nor the classic plan cache hits have incremented, then
         // our query must not have hit the cache. We check for at least one hit, since ties can
         // prevent a plan from being cached right away.
         if (checkSbeFullyEnabled(db) && sbeHitsAfter - sbeHitsBefore > 0) {
-            return {passed: true};
+            continue;
         } else if (classicHitsAfter - classicHitsBefore > 0) {
-            return {passed: true};
+            continue;
         }
         return {
             passed: false,
@@ -89,8 +91,9 @@ testProperty(
     {experimentColl},
     makeWorkloadModel({collModel: getCollectionModel({isTS: false}), aggModel, numQueriesPerRun}),
     numRuns);
-testProperty(
-    repeatQueriesUseCache,
-    {experimentColl},
-    makeWorkloadModel({collModel: getCollectionModel({isTS: true}), aggModel, numQueriesPerRun}),
-    numRuns);
+// TODO SERVER-103381 re-enable timeseries PBT testing.
+// testProperty(
+//     repeatQueriesUseCache,
+//     {experimentColl},
+//     makeWorkloadModel({collModel: getCollectionModel({isTS: true}), aggModel, numQueriesPerRun}),
+//     numRuns);

@@ -29,16 +29,17 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
+#include "mongo/bson/bsonobj.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/exec/document_value/document_metadata_fields.h"
+#include "mongo/db/pipeline/variables.h"
+
 #include <compare>
 #include <cstddef>
 #include <set>
 #include <string>
 
-#include "mongo/bson/bsonobj.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/exec/document_value/document_metadata_fields.h"
-#include "mongo/db/pipeline/variables.h"
+#include <boost/optional.hpp>
 
 namespace mongo {
 
@@ -150,7 +151,7 @@ struct DepsTracker {
      * TruncateToRootLevel::yes requires all dependencies to be top-level.
      * The example above would return ["a", "c"]
      */
-    static OrderedPathSet simplifyDependencies(OrderedPathSet dependencies,
+    static OrderedPathSet simplifyDependencies(const OrderedPathSet& dependencies,
                                                TruncateToRootLevel truncation);
 
     /**

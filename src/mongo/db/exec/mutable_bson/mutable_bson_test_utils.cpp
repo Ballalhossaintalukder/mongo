@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <cstddef>
-#include <string>
-#include <vector>
+#include "mongo/db/exec/mutable_bson/mutable_bson_test_utils.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
@@ -38,8 +35,12 @@
 #include "mongo/db/exec/mutable_bson/algorithm.h"
 #include "mongo/db/exec/mutable_bson/const_element.h"
 #include "mongo/db/exec/mutable_bson/document.h"
-#include "mongo/db/exec/mutable_bson/mutable_bson_test_utils.h"
 #include "mongo/unittest/unittest.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <string>
+#include <vector>
 
 namespace mongo {
 namespace mutablebson {
@@ -78,8 +79,8 @@ bool checkDocNoOrderingImpl(ConstElement lhs, ConstElement rhs) {
     const BSONType lhsType = lhs.getType();
     const BSONType rhsType = rhs.getType();
 
-    if (lhsType == mongo::Object) {
-        if (rhsType != mongo::Object)
+    if (lhsType == BSONType::object) {
+        if (rhsType != BSONType::object)
             return false;
 
         // For objects, sort the children by field name, then compare in that order.
@@ -114,8 +115,8 @@ bool checkDocNoOrderingImpl(ConstElement lhs, ConstElement rhs) {
 
         return true;
 
-    } else if (lhsType == mongo::Array) {
-        if (rhsType != mongo::Array)
+    } else if (lhsType == BSONType::array) {
+        if (rhsType != BSONType::array)
             return false;
 
         // For arrays, since they are ordered, we don't need the sorting step.

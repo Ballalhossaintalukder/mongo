@@ -34,14 +34,6 @@
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstdint>
-#include <cstring>
-#include <iterator>
-#include <memory>
-#include <utility>
-#include <vector>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -58,6 +50,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decimal_counter.h"
 #include "mongo/util/fail_point.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <iterator>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -398,7 +398,7 @@ boost::optional<BSONObj> decompressBucket(const BSONObj& bucketDoc) try {
                 if (e.fieldNameStringData() == kBucketControlVersionFieldName) {
                     // Check that we have a compressed bucket, and rewrite the version to signal
                     // it's uncompressed now.
-                    if (e.type() != BSONType::NumberInt ||
+                    if (e.type() != BSONType::numberInt ||
                         (e.numberInt() != kTimeseriesControlCompressedSortedVersion &&
                          e.numberInt() != kTimeseriesControlCompressedUnsortedVersion)) {
                         // This bucket isn't compressed.
@@ -419,7 +419,7 @@ boost::optional<BSONObj> decompressBucket(const BSONObj& bucketDoc) try {
 
             // Iterate over the compressed data columns and decompress each one.
             for (auto&& e : topLevel.Obj()) {
-                if (e.type() != BSONType::BinData) {
+                if (e.type() != BSONType::binData) {
                     // This bucket isn't actually compressed.
                     return boost::none;
                 }
@@ -450,7 +450,7 @@ bool isCompressedBucket(const BSONObj& bucketDoc) {
     auto&& controlField = bucketDoc[timeseries::kBucketControlFieldName];
     uassert(6540600,
             "Time-series bucket documents must have 'control' object present",
-            controlField && controlField.type() == BSONType::Object);
+            controlField && controlField.type() == BSONType::object);
 
     auto&& controlFieldObj = controlField.Obj();
     auto&& versionField = controlFieldObj[timeseries::kBucketControlVersionFieldName];

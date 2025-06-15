@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <set>
-#include <vector>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -41,6 +38,9 @@
 #include "mongo/s/stale_exception.h"
 #include "mongo/s/write_ops/batched_command_request.h"
 #include "mongo/unittest/unittest.h"
+
+#include <set>
+#include <vector>
 
 namespace mongo {
 
@@ -85,12 +85,12 @@ public:
      * queries of the form { field : { $gte : <value>, $lt : <value> } }. If `chunkRanges` is not
      * nullptr, also populates a set of ChunkRange for the chunks that are targeted.
      */
-    std::vector<ShardEndpoint> targetUpdate(
-        OperationContext* opCtx,
-        const BatchItemRef& itemRef,
-        bool* useTwoPhaseWriteProtocol = nullptr,
-        bool* isNonTargetedWriteWithoutShardKeyWithExactId = nullptr) const override {
-        return _targetQuery(itemRef.getUpdateRef().getFilter());
+    TargetingResult targetUpdate(OperationContext* opCtx,
+                                 const BatchItemRef& itemRef) const override {
+        TargetingResult result;
+
+        result.endpoints = _targetQuery(itemRef.getUpdateRef().getFilter());
+        return result;
     }
 
     /**
@@ -98,12 +98,12 @@ public:
      * queries of the form { field : { $gte : <value>, $lt : <value> } }. If `chunkRanges` is not
      * nullptr, also populates a set of ChunkRange for the chunks that are targeted.
      */
-    std::vector<ShardEndpoint> targetDelete(
-        OperationContext* opCtx,
-        const BatchItemRef& itemRef,
-        bool* useTwoPhaseWriteProtocol = nullptr,
-        bool* isNonTargetedWriteWithoutShardKeyWithExactId = nullptr) const override {
-        return _targetQuery(itemRef.getDeleteRef().getFilter());
+    TargetingResult targetDelete(OperationContext* opCtx,
+                                 const BatchItemRef& itemRef) const override {
+        TargetingResult result;
+
+        result.endpoints = _targetQuery(itemRef.getDeleteRef().getFilter());
+        return result;
     }
 
     std::vector<ShardEndpoint> targetAllShards(OperationContext* opCtx) const override {

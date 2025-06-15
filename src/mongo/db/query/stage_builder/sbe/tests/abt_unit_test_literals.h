@@ -29,13 +29,14 @@
 
 #pragma once
 
-#include <boost/core/demangle.hpp>
+#include "mongo/db/exec/sbe/util/print_options.h"
+#include "mongo/db/query/stage_builder/sbe/abt/syntax/expr.h"
+
 #include <sstream>
 #include <string>
 #include <typeinfo>
 
-#include "mongo/db/exec/sbe/util/print_options.h"
-#include "mongo/db/query/stage_builder/sbe/abt/syntax/expr.h"
+#include <boost/core/demangle.hpp>
 
 namespace mongo::stage_builder::abt_lower::unit_test_abt_literals {
 using namespace sbe::value;
@@ -84,22 +85,22 @@ inline ABTVector holdersToABTs(T holders) {
 }
 
 // String constant.
-inline auto operator"" _cstr(const char* c, size_t len) {
+inline auto operator""_cstr(const char* c, size_t len) {
     return ExprHolder{Constant::str({c, len})};
 }
 
 // Int32 constant.
-inline auto operator"" _cint32(const char* c, size_t len) {
+inline auto operator""_cint32(const char* c, size_t len) {
     return ExprHolder{Constant::int32(std::stoi({c, len}))};
 }
 
 // Int64 constant.
-inline auto operator"" _cint64(const char* c, size_t len) {
+inline auto operator""_cint64(const char* c, size_t len) {
     return ExprHolder{Constant::int64(std::stol({c, len}))};
 }
 
 // Double constant.
-inline auto operator"" _cdouble(const char* c, size_t len) {
+inline auto operator""_cdouble(const char* c, size_t len) {
     return ExprHolder{Constant::fromDouble(std::stod({c, len}))};
 }
 
@@ -157,7 +158,7 @@ inline auto _cempobj() {
 }
 
 // Variable.
-inline auto operator"" _var(const char* c, size_t len) {
+inline auto operator""_var(const char* c, size_t len) {
     return ExprHolder{make<Variable>(ProjectionName{StringData{c, len}})};
 }
 
@@ -264,7 +265,7 @@ template <typename... Ts>
 inline auto _fn(StringData name, Ts&&... pack) {
     std::vector<ExprHolder> v;
     (v.push_back(std::forward<Ts>(pack)), ...);
-    return ExprHolder{make<FunctionCall>(name.toString(), holdersToABTs(std::move(v)))};
+    return ExprHolder{make<FunctionCall>(std::string{name}, holdersToABTs(std::move(v)))};
 }
 
 /**

@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -55,16 +46,25 @@
 #include "mongo/rpc/write_concern_error_detail.h"
 #include "mongo/s/async_requests_sender.h"
 #include "mongo/s/catalog_cache.h"
-#include "mongo/s/chunk_manager.h"
 #include "mongo/s/client/shard.h"
 #include "mongo/s/database_version.h"
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
+#include "mongo/s/router_role.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/s/transaction_router.h"
 
-namespace mongo {
+#include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
+namespace mongo {
 namespace cluster::unsplittable {
+
 const auto kUnsplittableCollectionShardKey = BSON("_id" << 1);
 const auto kUnsplittableCollectionMinKey = BSON("_id" << MINKEY);
 const auto kUnsplittableCollectionMaxKey = BSON("_id" << MAXKEY);
@@ -83,6 +83,7 @@ ShardsvrReshardCollection makeUnshardCollectionRequest(
     const boost::optional<ShardId>& destinationShard,
     const boost::optional<bool>& performVerification,
     const boost::optional<std::int64_t>& oplogBatchApplierTaskCount = boost::none);
+
 }  // namespace cluster::unsplittable
 
 struct RawResponsesResult {
@@ -156,18 +157,8 @@ std::vector<AsyncRequestsSender::Response> gatherResponses(
     const NamespaceString& nss,
     const ReadPreferenceSetting& readPref,
     Shard::RetryPolicy retryPolicy,
-    const std::vector<AsyncRequestsSender::Request>& requests);
-
-/**
- * Dispatches all the specified requests in parallel and waits until all complete, returning a
- * vector of the same size and positions as that of 'requests'.
- */
-std::vector<AsyncRequestsSender::Response> gatherResponsesNoThrowOnStaleShardVersionErrors(
-    OperationContext* opCtx,
-    const NamespaceString& nss,
-    const ReadPreferenceSetting& readPref,
-    Shard::RetryPolicy retryPolicy,
-    const std::vector<AsyncRequestsSender::Request>& requests);
+    const std::vector<AsyncRequestsSender::Request>& requests,
+    RoutingContext* routingCtx = nullptr);
 
 /**
  * Returns a copy of 'cmdObj' with dbVersion appended if it exists in 'dbInfo'
@@ -309,7 +300,7 @@ std::vector<AsyncRequestsSender::Response> scatterGatherUnversionedTargetConfigS
 [[nodiscard]] std::vector<AsyncRequestsSender::Response> scatterGatherVersionedTargetByRoutingTable(
     OperationContext* opCtx,
     const NamespaceString& nss,
-    const CollectionRoutingInfo& cri,
+    RoutingContext& routingCtx,
     const BSONObj& cmdObj,
     const ReadPreferenceSetting& readPref,
     Shard::RetryPolicy retryPolicy,
@@ -326,7 +317,7 @@ std::vector<AsyncRequestsSender::Response> scatterGatherUnversionedTargetConfigS
 [[nodiscard]] std::vector<AsyncRequestsSender::Response> scatterGatherVersionedTargetByRoutingTable(
     boost::intrusive_ptr<ExpressionContext> expCtx,
     const NamespaceString& nss,
-    const CollectionRoutingInfo& cri,
+    RoutingContext& routingCtx,
     const BSONObj& cmdObj,
     const ReadPreferenceSetting& readPref,
     Shard::RetryPolicy retryPolicy,
@@ -346,7 +337,7 @@ std::vector<AsyncRequestsSender::Response>
 scatterGatherVersionedTargetByRoutingTableNoThrowOnStaleShardVersionErrors(
     OperationContext* opCtx,
     const NamespaceString& nss,
-    const CollectionRoutingInfo& cri,
+    RoutingContext& routingCtx,
     const std::set<ShardId>& shardsToSkip,
     const BSONObj& cmdObj,
     const ReadPreferenceSetting& readPref,
@@ -378,7 +369,7 @@ AsyncRequestsSender::Response executeCommandAgainstDatabasePrimaryOnlyAttachingD
 AsyncRequestsSender::Response executeCommandAgainstShardWithMinKeyChunk(
     OperationContext* opCtx,
     const NamespaceString& nss,
-    const CollectionRoutingInfo& cri,
+    RoutingContext& routingCtx,
     const BSONObj& cmdObj,
     const ReadPreferenceSetting& readPref,
     Shard::RetryPolicy retryPolicy);
@@ -451,10 +442,22 @@ std::vector<AsyncRequestsSender::Request> getVersionedRequestsForTargetedShards(
  * read concern, the latest routing table is returned, otherwise a historical routing table is
  * returned at the global read timestamp, which must have been selected by this point.
  *
+ * Note that this will be deprecated (SERVER-102925) in favor of getRoutingContextForTxnCmd().
+ */
+StatusWith<CollectionRoutingInfo> getCollectionRoutingInfoForTxnCmd_DEPRECATED(
+    OperationContext* opCtx, const NamespaceString& nss);
+
+/**
+ * If the command is running in a transaction, returns the RoutingContext to use for targeting
+ * shards. If there is no active transaction or the transaction is not running with snapshot level
+ * read concern, the RoutingContext acquires the latest routing table, otherwise it acquires a
+ * historical routing table at the global read timestamp, which must have been selected by this
+ * point.
+ *
  * Should be used by all router commands that can be run in a transaction when targeting shards.
  */
-StatusWith<CollectionRoutingInfo> getCollectionRoutingInfoForTxnCmd(OperationContext* opCtx,
-                                                                    const NamespaceString& nss);
+StatusWith<std::unique_ptr<RoutingContext>> getRoutingContextForTxnCmd(OperationContext* opCtx,
+                                                                       const NamespaceString& nss);
 
 /**
  * Force a refresh of the routing cache and fetch the routing info for the given collection.
@@ -485,4 +488,5 @@ StatusWith<Shard::QueryResponse> loadIndexesFromAuthoritativeShard(
  */
 StatusWith<boost::optional<int64_t>> addLimitAndSkipForShards(boost::optional<int64_t> limit,
                                                               boost::optional<int64_t> skip);
+
 }  // namespace mongo

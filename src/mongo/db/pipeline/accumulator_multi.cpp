@@ -29,14 +29,6 @@
 
 #include "mongo/db/pipeline/accumulator_multi.h"
 
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/smart_ptr.hpp>
-#include <iterator>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -49,6 +41,14 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <iterator>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 using FirstLastSense = AccumulatorFirstLastN::Sense;
@@ -144,7 +144,7 @@ void AccumulatorN::processInternal(const Value& input, bool merging) {
     tassert(5787802, "'n' must be initialized", _n);
 
     if (merging) {
-        assertMergingInputType(input, Array);
+        assertMergingInputType(input, BSONType::array);
         const auto& array = input.getArray();
         for (auto&& val : array) {
             _processValue(val);
@@ -231,7 +231,7 @@ AccumulationExpression AccumulatorMinMaxN::parseMinMaxN(ExpressionContext* const
 
     uassert(5787900,
             str::stream() << "specification must be an object; found " << elem,
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     BSONObj obj = elem.embeddedObject();
 
     auto [n, input] = AccumulatorN::parseArgs(expCtx, obj, vps);
@@ -289,11 +289,11 @@ void AccumulatorMinMaxN::reset() {
 }
 
 const char* AccumulatorMinN::getName() {
-    return kName.rawData();
+    return kName.data();
 }
 
 const char* AccumulatorMaxN::getName() {
-    return kName.rawData();
+    return kName.data();
 }
 
 AccumulatorFirstLastN::AccumulatorFirstLastN(ExpressionContext* const expCtx, FirstLastSense sense)
@@ -316,7 +316,7 @@ AccumulationExpression AccumulatorFirstLastN::parseFirstLastN(ExpressionContext*
 
     uassert(5787801,
             str::stream() << "specification must be an object; found " << elem,
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     auto obj = elem.embeddedObject();
 
     auto [n, input] = AccumulatorN::parseArgs(expCtx, obj, vps);
@@ -392,11 +392,11 @@ Value AccumulatorFirstLastN::getValue(bool toBeMerged) {
 }
 
 const char* AccumulatorFirstN::getName() {
-    return kName.rawData();
+    return kName.data();
 }
 
 const char* AccumulatorLastN::getName() {
-    return kName.rawData();
+    return kName.data();
 }
 
 // TODO SERVER-59327 Refactor other operators to use this parse function.
@@ -409,7 +409,7 @@ accumulatorNParseArgs(ExpressionContext* expCtx,
                       const VariablesParseState& vps) {
     uassert(5788001,
             str::stream() << "specification must be an object; found " << elem,
-            elem.type() == BSONType::Object);
+            elem.type() == BSONType::object);
     BSONObj obj = elem.embeddedObject();
 
     // Extract fields from specification object. sortBy and output are not immediately parsed into
@@ -503,7 +503,7 @@ AccumulatorTopBottomN<sense, single>::AccumulatorTopBottomN(ExpressionContext* c
 
 template <TopBottomSense sense, bool single>
 const char* AccumulatorTopBottomN<sense, single>::getOpName() const {
-    return AccumulatorTopBottomN<sense, single>::getName().rawData();
+    return AccumulatorTopBottomN<sense, single>::getName().data();
 }
 
 template <TopBottomSense sense, bool single>
@@ -577,7 +577,7 @@ AccumulationExpression AccumulatorTopBottomN<sense, single>::parseTopBottomN(
     ExpressionContext* const expCtx, BSONElement elem, VariablesParseState vps) {
     auto name = AccumulatorTopBottomN<sense, single>::getName();
     const auto [n, output, sortBy] =
-        accumulatorNParseArgs<single>(expCtx, elem, name.rawData(), true, vps);
+        accumulatorNParseArgs<single>(expCtx, elem, name.data(), true, vps);
     auto [sortPattern, sortFieldsExp, hasMeta] =
         parseAccumulatorTopBottomNSortBy<sense>(expCtx, *sortBy);
 
@@ -701,7 +701,7 @@ void AccumulatorTopBottomN<sense, single>::processInternal(const Value& input, b
             // shard because we may need to spill to disk.
             auto doc = input.getDocument();
             auto vals = doc[kFieldNameOutput];
-            assertMergingInputType(vals, Array);
+            assertMergingInputType(vals, BSONType::array);
             for (auto&& val : vals.getArray()) {
                 _processValue(val);
             }

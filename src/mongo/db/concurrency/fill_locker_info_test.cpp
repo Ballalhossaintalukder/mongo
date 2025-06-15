@@ -27,24 +27,25 @@
  *    it in the license file.
  */
 
-#include <string>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
+#include "mongo/db/concurrency/fill_locker_info.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/concurrency/fill_locker_info.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/concurrency/lock_stats.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
+
+#include <string>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 namespace mongo {
 namespace {
@@ -61,7 +62,7 @@ TEST(FillLockerInfo, DoesReportWaitingForLockIfWaiting) {
     fillLockerInfo(info, infoBuilder);
     const BSONObj infoObj = infoBuilder.done();
 
-    ASSERT(infoObj["waitingForLock"].type() == BSONType::Bool);
+    ASSERT(infoObj["waitingForLock"].type() == BSONType::boolean);
     ASSERT_TRUE(infoObj["waitingForLock"].Bool());
 }
 
@@ -74,7 +75,7 @@ TEST(FillLockerInfo, DoesNotReportWaitingForLockIfNotWaiting) {
     fillLockerInfo(info, infoBuilder);
     const BSONObj infoObj = infoBuilder.done();
 
-    ASSERT(infoObj["waitingForLock"].type() == BSONType::Bool);
+    ASSERT(infoObj["waitingForLock"].type() == BSONType::boolean);
     ASSERT_FALSE(infoObj["waitingForLock"].Bool());
 }
 
@@ -88,7 +89,7 @@ TEST(FillLockerInfo, DoesReportLockStats) {
     fillLockerInfo(info, infoBuilder);
     const BSONObj infoObj = infoBuilder.done();
 
-    ASSERT_EQ(infoObj["lockStats"].type(), BSONType::Object);
+    ASSERT_EQ(infoObj["lockStats"].type(), BSONType::object);
 }
 
 DEATH_TEST(FillLockerInfo, ShouldFailIfLocksAreNotSortedAppropriately, "Invariant failure") {
@@ -114,11 +115,11 @@ TEST(FillLockerInfo, DoesReportLocksHeld) {
     fillLockerInfo(info, infoBuilder);
     const BSONObj infoObj = infoBuilder.done();
 
-    ASSERT_EQ(infoObj["locks"].type(), BSONType::Object);
+    ASSERT_EQ(infoObj["locks"].type(), BSONType::object);
     ASSERT_EQ(infoObj["locks"][resourceTypeName(resourceIdGlobal.getType())].type(),
-              BSONType::String);
+              BSONType::string);
     ASSERT_EQ(infoObj["locks"][resourceTypeName(resourceIdGlobal.getType())].String(), "w");
-    ASSERT_EQ(infoObj["locks"][resourceTypeName(dbId.getType())].type(), BSONType::String);
+    ASSERT_EQ(infoObj["locks"][resourceTypeName(dbId.getType())].type(), BSONType::string);
     ASSERT_EQ(infoObj["locks"][resourceTypeName(dbId.getType())].String(), "w");
 }
 
@@ -136,8 +137,8 @@ TEST(FillLockerInfo, ShouldReportMaxTypeHeldForResourceType) {
     fillLockerInfo(info, infoBuilder);
     BSONObj infoObj = infoBuilder.done();
 
-    ASSERT_EQ(infoObj["locks"].type(), BSONType::Object);
-    ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].type(), BSONType::String);
+    ASSERT_EQ(infoObj["locks"].type(), BSONType::object);
+    ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].type(), BSONType::string);
     ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].String(),
               "W");  // One is held in IX, one in X, so X should win and be displayed as "W".
 
@@ -146,8 +147,8 @@ TEST(FillLockerInfo, ShouldReportMaxTypeHeldForResourceType) {
                   OneLock{secondDbId, MODE_X},
                   OneLock{firstDbId, MODE_IX}};
 
-    ASSERT_EQ(infoObj["locks"].type(), BSONType::Object);
-    ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].type(), BSONType::String);
+    ASSERT_EQ(infoObj["locks"].type(), BSONType::object);
+    ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].type(), BSONType::string);
     ASSERT_EQ(infoObj["locks"][resourceTypeName(firstDbId.getType())].String(), "W");
 }
 

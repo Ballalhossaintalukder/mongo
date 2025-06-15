@@ -32,14 +32,6 @@
 
 #include <cstddef>
 // IWYU pragma: no_include "cxxabi.h"
-#include <chrono>
-#include <exception>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -82,6 +74,14 @@
 #include "mongo/util/str.h"
 #include "mongo/util/testing_proctor.h"
 #include "mongo/util/time_support.h"
+
+#include <chrono>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 
@@ -938,7 +938,7 @@ OpTime BackgroundSync::_readLastAppliedOpTime(OperationContext* opCtx) {
             // This can happen when we are to do an initial sync.
             return OpTime();
         }
-    } catch (const ExceptionForCat<ErrorCategory::ShutdownError>&) {
+    } catch (const ExceptionFor<ErrorCategory::ShutdownError>&) {
         throw;
     } catch (const DBException& ex) {
         LOGV2_FATAL(18904,

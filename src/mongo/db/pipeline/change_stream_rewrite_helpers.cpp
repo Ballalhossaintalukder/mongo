@@ -29,23 +29,8 @@
 
 #include "mongo/db/pipeline/change_stream_rewrite_helpers.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <array>
-#include <boost/algorithm/string/replace.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <functional>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
@@ -67,6 +52,21 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 
+#include <array>
+#include <cstddef>
+#include <functional>
+#include <utility>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/algorithm/string/replace.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
+
 namespace mongo {
 namespace change_stream_rewrite {
 using MatchExpressionRewrite =
@@ -83,6 +83,10 @@ using AggExpressionRewrite =
 
 namespace {
 const auto kExistsTrue = Document{{"$exists", true}};
+
+// Note: there is no physical '$exists' operator that can check for field-nonexistence.
+// That means the expression '{field: {$exists: false}}' is syntactic sugar and will be turned into
+// the slightly less efficient expression '{$not: {field: {$exists: true}}}' by the parser.
 const auto kExistsFalse = Document{{"$exists", false}};
 
 // Maps the operation type to the corresponding rewritten document in the oplog format.
@@ -124,6 +128,14 @@ const std::array<std::string, 3> kUpdateDescriptionUpdateOplogFields = {
 const std::array<std::string, 2> kUpdateDescriptionRemoveOplogFields = {"o.diff.d", "o.$unset"};
 
 const std::set<std::string> kNSValidSubFieldNames = {"ns.db", "ns.coll"};
+
+/**
+ * Whether or not a change stream event type is a CRUD operation.
+ */
+bool isCrudOperation(StringData name) {
+    return name == "insert"_sd || name == "update"_sd || name == "replace"_sd ||
+        name == "delete"_sd;
+}
 
 /**
  * Helpers to clone an expression to the same type and rename the fields to which it applies.
@@ -182,7 +194,7 @@ std::unique_ptr<MatchExpression> matchRewriteOperationType(
         // does not exist for the specified operation type, then it is either handled elsewhere or
         // it's an invalid type. In either case, return $alwaysFalse so that this predicate is
         // ignored.
-        if (BSONType::String != opType.type() || !kOpTypeRewriteMap.count(opType.str())) {
+        if (BSONType::string != opType.type() || !kOpTypeRewriteMap.count(opType.str())) {
             return std::make_unique<AlwaysFalseMatchExpression>();
         }
         return MatchExpressionParser::parseAndNormalize(
@@ -211,14 +223,63 @@ std::unique_ptr<MatchExpression> matchRewriteOperationType(
 
             auto rewrittenOr = std::make_unique<OrMatchExpression>();
 
-            // Add the rewritten sub-expression to the '$or' expression. Abandon the entire rewrite,
-            // if any of the rewrite fails.
+            // First collect all requested operation types in a vector. The operation types in the
+            // IN list should be sorted and unique already.
+            std::vector<StringData> operationTypes;
             for (const auto& elem : inME->getEqualities()) {
-                if (auto rewrittenExpr = getRewrittenOpType(elem)) {
-                    rewrittenOr->add(std::move(rewrittenExpr));
-                    continue;
+                // Abandon the entire rewrite if any of the rewrites fails.
+                if (BSONType::string == elem.type() &&
+                    kOpTypeRewriteMap.contains(elem.valueStringData())) {
+                    operationTypes.push_back(elem.valueStringData());
                 }
-                return nullptr;
+            }
+
+            // Sort the collection operation types so that CRUD operations come first.
+            std::sort(
+                operationTypes.begin(), operationTypes.end(), [&](StringData lhs, StringData rhs) {
+                    bool lhsIsCrud = isCrudOperation(lhs);
+                    bool rhsIsCrud = isCrudOperation(rhs);
+                    if (lhsIsCrud != rhsIsCrud) {
+                        // If one of the compared operations is a CRUD operation and the other
+                        // isn't, sort the CRUD operation first because it should have higher
+                        // selectivity.
+                        return lhsIsCrud;
+                    }
+
+                    // Otherwise sort alphabetically by operation type name so the
+                    return lhs < rhs;
+                });
+
+            // The individual matches for "update" and "replace" are:
+            // - update:  {op: "u", "o._id": {$exists: false}}
+            // - replace: {op: "u", "o._id": {$exists: true}}
+            // These can be fused together into a single match:
+            // - fused:   {op: "u"}
+            // This also allows further optimizations so that the single op type match can be fused
+            // with other op type matches into a single IN list match for the op type, e.g.
+            //            {op: {$in: [...]}}
+            constexpr StringData kFusedUpdateReplace = "fusedUpdateReplace"_sd;
+
+            auto itUpdate = std::find(operationTypes.begin(), operationTypes.end(), "update");
+            auto itReplace = std::find(operationTypes.begin(), operationTypes.end(), "replace");
+            if (itUpdate != operationTypes.end() && itReplace != operationTypes.end()) {
+                // We need to return both 'update' and 'replace' events. We will now turn 'update'
+                // into a temporary 'fusedUpdateReplace' event, and remove 'replace' from the
+                // vector, so we will end up only with 'fusedUpdateReplace'.
+                *itUpdate = kFusedUpdateReplace;
+                operationTypes.erase(itReplace);
+            }
+
+            // Add the rewritten sub-expressions to the final '$or' expression.
+            for (auto&& op : operationTypes) {
+                if (op == kFusedUpdateReplace) {
+                    // 'updateReplace' translates to just '{op: "u"}'.
+                    rewrittenOr->add(MatchExpressionParser::parseAndNormalize(
+                        backingBsonObjs.emplace_back(BSON("op" << "u")), expCtx));
+                } else {
+                    rewrittenOr->add(MatchExpressionParser::parseAndNormalize(
+                        backingBsonObjs.emplace_back(kOpTypeRewriteMap.at(op).toBson()), expCtx));
+                }
             }
             return rewrittenOr;
         }
@@ -602,7 +663,7 @@ std::unique_ptr<MatchExpression> matchRewriteUpdateDescription(
             // Helper to rewrite an equality on "updateDescription.removedFields" into the oplog.
             auto rewriteEqOnRemovedFields = [](auto& rhsElem) -> std::unique_ptr<MatchExpression> {
                 // We can only rewrite equality matches on strings.
-                if (rhsElem.type() != BSONType::String) {
+                if (rhsElem.type() != BSONType::string) {
                     return nullptr;
                 }
                 // We can only rewrite top-level fields, i.e. no dotted subpaths.
@@ -727,7 +788,7 @@ std::unique_ptr<MatchExpression> matchRewriteGenericNamespace(
     // Performs a rewrite based on the type of argument specified in the MatchExpression.
     auto getRewrittenNamespace = [&](auto&& nsElem) -> std::unique_ptr<MatchExpression> {
         switch (nsElem.type()) {
-            case BSONType::Object: {
+            case BSONType::object: {
                 // Handles case with full namespace object, like '{ns: {db: "db", coll: "coll"}}'.
                 // There must be a single part to the field path, ie. 'ns'.
                 if (predicate->fieldRef()->numParts() > 1) {
@@ -755,13 +816,13 @@ std::unique_ptr<MatchExpression> matchRewriteGenericNamespace(
 
                 // Verify that the first field is 'db' and is of type string. We should always have
                 // a db entry no matter what oplog fields we are operating on.
-                if (dbElem.fieldNameStringData() != "db" || dbElem.type() != BSONType::String) {
+                if (dbElem.fieldNameStringData() != "db" || dbElem.type() != BSONType::string) {
                     return std::make_unique<AlwaysFalseMatchExpression>();
                 }
                 // Verify that the second field is 'coll' and is of type string, if it exists.
                 if (collElem &&
                     (collElem.fieldNameStringData() != "coll" ||
-                     collElem.type() != BSONType::String)) {
+                     collElem.type() != BSONType::string)) {
                     return std::make_unique<AlwaysFalseMatchExpression>();
                 }
 
@@ -786,7 +847,7 @@ std::unique_ptr<MatchExpression> matchRewriteGenericNamespace(
                     Value(fmt::format(
                         "{}.{}", dbElem.valueStringDataSafe(), collElem.valueStringData())));
             }
-            case BSONType::String: {
+            case BSONType::string: {
                 // Handles case with field path, like '{"ns.coll": "coll"}'. There must be 2 parts
                 // to the field path, ie. 'ns' and '[db | coll]'.
                 if (predicate->fieldRef()->numParts() != 2) {
@@ -835,7 +896,7 @@ std::unique_ptr<MatchExpression> matchRewriteGenericNamespace(
 
                 return std::make_unique<RegexMatchExpression>(nsField, nsRegex, "");
             }
-            case BSONType::RegEx: {
+            case BSONType::regEx: {
                 // Handles case with field path having regex, like '{"ns.db": /^db$/}'. There must
                 // be 2 parts to the field path, ie. 'ns' and '[db | coll]'.
                 if (predicate->fieldRef()->numParts() != 2) {
@@ -907,7 +968,7 @@ std::unique_ptr<MatchExpression> matchRewriteGenericNamespace(
                                     << BSON("input" << value << "regex" << regex << "options"
                                                     << nsElem.regexFlags()));
                     };
-                    if (exprDbOrCollName.firstElement().type() == BSONType::String) {
+                    if (exprDbOrCollName.firstElement().type() == BSONType::string) {
                         return buildRegexMatch(exprDbOrCollName.firstElement());
                     }
                     return buildRegexMatch(exprDbOrCollName);
@@ -1512,7 +1573,7 @@ boost::intrusive_ptr<Expression> rewriteAggExpressionTree(
 
         // The remaining case is a reference to a field path in the current document.
         tassert(5920002, "Unexpected empty path", fieldExpr->getFieldPath().getPathLength() > 1);
-        auto firstPath = fieldExpr->getFieldPathWithoutCurrentPrefix().getFieldName(0).toString();
+        auto firstPath = std::string{fieldExpr->getFieldPathWithoutCurrentPrefix().getFieldName(0)};
 
         // Only attempt to rewrite paths that begin with one of the caller-requested fields.
         if (fields.find(firstPath) == fields.end()) {
@@ -1662,7 +1723,7 @@ std::unique_ptr<MatchExpression> rewriteMatchExpressionTree(
                     return nullptr;
                 }
 
-                auto firstPath = pathME->fieldRef()->getPart(0).toString();
+                auto firstPath = std::string{pathME->fieldRef()->getPart(0)};
 
                 // Only attempt to rewrite paths that begin with one of the caller-requested fields.
                 if (fields.find(firstPath) == fields.end()) {

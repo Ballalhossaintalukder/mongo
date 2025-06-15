@@ -29,13 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -47,6 +40,13 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/icu.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 
@@ -119,7 +119,7 @@ public:
     std::string generateClientProof(const std::vector<std::uint8_t>& salt,
                                     size_t iterationCount) final {
         auto password = uassertStatusOK(saslPrep(
-            _saslClientSession->getParameter(SaslClientSession::parameterPassword).toString()));
+            std::string{_saslClientSession->getParameter(SaslClientSession::parameterPassword)}));
         scram::Presecrets<HashBlock> presecrets(password, salt, iterationCount);
 
         auto targetHost = HostAndPort::parse(
@@ -145,7 +145,7 @@ public:
 
     StatusWith<std::string> saslPrep(StringData val) const final {
         if (std::is_same<SHA1Block, HashBlock>::value) {
-            return val.toString();
+            return std::string{val};
         } else {
             return icuSaslPrep(val);
         }

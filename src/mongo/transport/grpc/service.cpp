@@ -29,20 +29,6 @@
 
 #include "mongo/transport/grpc/service.h"
 
-#include <charconv>
-#include <cstring>
-#include <fmt/format.h>
-#include <functional>
-#include <numeric>
-
-#include <grpcpp/grpcpp.h>
-#include <grpcpp/impl/rpc_method.h>
-#include <grpcpp/impl/rpc_service_method.h>
-#include <grpcpp/support/byte_buffer.h>
-#include <grpcpp/support/method_handler.h>
-#include <grpcpp/support/status_code_enum.h>
-#include <grpcpp/support/sync_stream.h>
-
 #include "mongo/db/service_context.h"
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/metadata/client_metadata.h"
@@ -53,6 +39,20 @@
 #include "mongo/util/base64.h"
 #include "mongo/util/scopeguard.h"
 #include "mongo/util/shared_buffer.h"
+
+#include <charconv>
+#include <cstring>
+#include <functional>
+#include <numeric>
+
+#include <fmt/format.h>
+#include <grpcpp/grpcpp.h>
+#include <grpcpp/impl/rpc_method.h>
+#include <grpcpp/impl/rpc_service_method.h>
+#include <grpcpp/support/byte_buffer.h>
+#include <grpcpp/support/method_handler.h>
+#include <grpcpp/support/status_code_enum.h>
+#include <grpcpp/support/sync_stream.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
@@ -121,7 +121,7 @@ inline Status makeShutdownTerminationStatus() {
 
     for (const auto& entry : clientMetadata) {
         const auto& key = entry.first;
-        if (key.startsWith(kReservedMetadataKeyPrefix) &&
+        if (key.starts_with(kReservedMetadataKeyPrefix) &&
             !kRecognizedClientMetadataKeys.contains(key)) {
             return ::grpc::Status(::grpc::StatusCode::INVALID_ARGUMENT,
                                   fmt::format("Unrecognized reserved metadata key: \"{}\"", key));
@@ -303,7 +303,7 @@ CommandService::CommandService(TransportLayer* tl,
                         util::constants::kAuthenticatedCommandStreamMethodName,
                         util::constants::kAuthenticationTokenKey)};
     }
-    return _handleStream(serverCtx, stream, authTokenEntry->second.toString());
+    return _handleStream(serverCtx, stream, std::string{authTokenEntry->second});
 }
 
 void CommandService::shutdown() {

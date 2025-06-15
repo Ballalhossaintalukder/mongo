@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/json.h"
@@ -40,6 +37,9 @@
 #include "mongo/db/query/util/make_data_structure.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <memory>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -135,7 +135,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSort) {
     pipeline->optimizePipeline();
 
     auto serialized = pipeline->serializeToBson();
-    auto container = pipeline->getSources();
+    const auto& container = pipeline->getSources();
 
     // The following assertions ensure that the first limit is absorbed by the sort. The serialized
     // array has 4 stages even though the first limit is absorbed by the sort, because
@@ -147,7 +147,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSort) {
     ASSERT_BSONOBJ_EQ(fromjson("{$limit: 2}"), serialized[3]);
 
     ASSERT_EQ(3, container.size());
-    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.begin()->get());
+    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.cbegin()->get());
     ASSERT(firstSort->hasLimit());
     ASSERT_EQ(2, *firstSort->getLimit());
 
@@ -161,7 +161,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSortAndTwoLimit
     pipeline->optimizePipeline();
 
     auto serialized = pipeline->serializeToBson();
-    auto container = pipeline->getSources();
+    const auto& container = pipeline->getSources();
 
     ASSERT_EQ(4, serialized.size());
     ASSERT_BSONOBJ_EQ(fromjson("{$sort: {'meta.a': 1, 'meta.b': -1}}"), serialized[0]);
@@ -170,7 +170,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSortAndTwoLimit
     ASSERT_BSONOBJ_EQ(fromjson("{$limit: 5}"), serialized[3]);
 
     ASSERT_EQ(3, container.size());
-    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.begin()->get());
+    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.cbegin()->get());
     ASSERT(firstSort->hasLimit());
     ASSERT_EQ(5, *firstSort->getLimit());
 
@@ -185,7 +185,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSortAndTwoLimit
     pipeline->optimizePipeline();
 
     auto serialized = pipeline->serializeToBson();
-    auto container = pipeline->getSources();
+    const auto& container = pipeline->getSources();
 
     ASSERT_EQ(4, serialized.size());
     ASSERT_BSONOBJ_EQ(fromjson("{$sort: {'meta.a': 1, 'meta.b': -1}}"), serialized[0]);
@@ -194,7 +194,7 @@ TEST_F(InternalUnpackBucketLimitReorderTest, OptimizeForLimitWithSortAndTwoLimit
     ASSERT_BSONOBJ_EQ(fromjson("{$limit: 2}"), serialized[3]);
 
     ASSERT_EQ(3, container.size());
-    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.begin()->get());
+    auto firstSort = dynamic_cast<DocumentSourceSort*>(container.cbegin()->get());
     ASSERT(firstSort->hasLimit());
     ASSERT_EQ(2, *firstSort->getLimit());
 

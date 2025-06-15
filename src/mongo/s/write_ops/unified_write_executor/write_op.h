@@ -29,10 +29,11 @@
 
 #pragma once
 
-#include <boost/optional.hpp>
+#include "mongo/s/write_ops/batched_command_request.h"
+
 #include <variant>
 
-#include "mongo/s/write_ops/batched_command_request.h"
+#include <boost/optional.hpp>
 
 
 namespace mongo {
@@ -44,32 +45,51 @@ enum WriteType {
     kFindAndMod,  // TODO SERVER-103949 will use this type or remove it.
 };
 
+using WriteOpId = size_t;
+
 class WriteOp {
 public:
-    WriteOp(const BulkWriteCommandRequest& request, int index) : _op(&request, index) {}
+    WriteOp(const BulkWriteCommandRequest& request, int index)
+        : _bulkWriteRequest(&request), _batchedRequest(nullptr), _index(index) {}
+    WriteOp(const BatchedCommandRequest& request, int index)
+        : _bulkWriteRequest(nullptr), _batchedRequest(&request), _index(index) {}
 
-    int getId() const {
-        return _op.getItemIndex();
-    }
+    ~WriteOp() = default;
 
-    const NamespaceString& getNss() const {
-        return _op.getNss();
-    }
-
-    WriteType getType() const {
-        return WriteType(_op.getOpType());
+    WriteOpId getId() const {
+        return _index;
     }
 
     BatchItemRef getRef() const {
-        return _op;
+        if (_bulkWriteRequest) {
+            return BatchItemRef(_bulkWriteRequest, _index);
+        } else {
+            return BatchItemRef(_batchedRequest, _index);
+        }
+    }
+
+    const NamespaceString& getNss() const {
+        return getRef().getNss();
+    }
+
+    WriteType getType() const {
+        return WriteType(getRef().getOpType());
+    }
+
+    BulkWriteOpVariant getBulkWriteOp() const {
+        tassert(10412802, "_bulkWriteRequest is not initialized", _bulkWriteRequest != nullptr);
+        return _bulkWriteRequest->getOps()[_index];
     }
 
     bool isMulti() const {
-        return _op.isMulti();
+        return getRef().isMulti();
     }
 
 private:
-    BatchItemRef _op;
+    // TODO SERVER-104262 refactor the WriteOp implementation to not use raw pointers
+    const BulkWriteCommandRequest* _bulkWriteRequest{nullptr};
+    const BatchedCommandRequest* _batchedRequest{nullptr};
+    int _index;
 };
 
 }  // namespace unified_write_executor

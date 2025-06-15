@@ -27,21 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/optional.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <fmt/format.h>
-#include <memory>
-#include <mutex>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -61,6 +46,7 @@
 #include "mongo/db/commands/test_commands_enabled.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/curop_failpoint_helpers.h"
+#include "mongo/db/cursor_in_use_info.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/namespace_string.h"
@@ -93,7 +79,6 @@
 #include "mongo/db/session/logical_session_id.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/stats/counters.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/db/stats/top.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/tenant_id.h"
@@ -118,6 +103,21 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -277,10 +277,11 @@ void setUpOperationDeadline(OperationContext* opCtx,
  * Sets up the OperationContext in order to correctly inherit options like the read concern from the
  * cursor to this operation.
  */
-void setUpOperationContextStateForGetMore(OperationContext* opCtx,
-                                          const ClientCursor& cursor,
-                                          const GetMoreCommandRequest& cmd,
-                                          bool disableAwaitDataFailpointActive) {
+void setUpOperationContextAndCurOpStateForGetMore(OperationContext* opCtx,
+                                                  CurOp* curOp,
+                                                  const ClientCursor& cursor,
+                                                  const GetMoreCommandRequest& cmd,
+                                                  bool disableAwaitDataFailpointActive) {
     applyConcernsAndReadPreference(opCtx, cursor);
 
     auto apiParamsFromClient = APIParameters::get(opCtx);
@@ -294,12 +295,21 @@ void setUpOperationContextStateForGetMore(OperationContext* opCtx,
 
     setUpOperationDeadline(opCtx, cursor, cmd, disableAwaitDataFailpointActive);
 
-    // If the originating command had a 'comment' field, we extract it and set it on opCtx. Note
-    // that if the 'getMore' command itself has a 'comment' field, we give precedence to it.
-    auto comment = cursor.getOriginatingCommandObj()["comment"];
-    if (!opCtx->getComment() && comment) {
+    auto originatingCommand = cursor.getOriginatingCommandObj();
+    if (!originatingCommand.isEmpty()) {
         stdx::lock_guard<Client> lk(*opCtx->getClient());
-        opCtx->setComment(comment.wrap());
+
+        // Ensure that the original query or command object is available in the slow query log,
+        // profiler and currentOp.
+        curOp->setOriginatingCommand(lk, originatingCommand);
+
+        // If the originating command had a 'comment' field, we extract it and set it on opCtx. Note
+        // that if the 'getMore' command itself has a 'comment' field, we give precedence to it.
+        auto comment = originatingCommand["comment"];
+
+        if (!opCtx->getComment() && comment) {
+            opCtx->setComment(comment.wrap());
+        }
     }
 }
 
@@ -397,8 +407,8 @@ public:
 
         /**
          * Implements populating 'nextBatch' with up to 'batchSize' documents from the plan executor
-         * 'exec'. Outputs the number of documents and relevant size statistics in 'numResults' and
-         * 'docUnitsReturned'. Returns whether or not the cursor should be saved.
+         * 'exec'. Outputs the number of documents and relevant size statistics in 'numResults'.
+         * Returns whether or not the cursor should be saved.
          */
         bool batchedExecute(OperationContext* opCtx,
                             ClientCursor* cursor,
@@ -406,8 +416,7 @@ public:
                             const size_t batchSize,
                             const bool isTailable,
                             CursorResponseBuilder* nextBatch,
-                            uint64_t* numResults,
-                            ResourceConsumption::DocumentUnitCounter* docUnitsReturned) {
+                            uint64_t* numResults) {
             BSONObj obj, pbrt = exec->getPostBatchResumeToken();
             size_t objSize;
             bool failedToAppend = false;
@@ -430,7 +439,6 @@ public:
                 // Don't check document size here before appending, since we always want to make
                 // progress.
                 nextBatch->append(obj);
-                docUnitsReturned->observeOne(objSize);
                 *numResults = 1;
 
                 // As soon as we get a result, this operation no longer waits.
@@ -444,11 +452,8 @@ public:
                 // the first call to getNext() above.
                 *numResults += exec->getNextBatch(
                     batchSize - 1,
-                    FindCommon::BSONObjCursorAppender{false /* alwaysAcceptFirstDoc */,
-                                                      nextBatch,
-                                                      docUnitsReturned,
-                                                      pbrt,
-                                                      failedToAppend});
+                    FindCommon::BSONObjCursorAppender{
+                        false /* alwaysAcceptFirstDoc */, nextBatch, pbrt, failedToAppend});
             }
 
             // Use the resume token generated by the last execution of the plan that didn't stash a
@@ -473,8 +478,7 @@ public:
                            const GetMoreCommandRequest& cmd,
                            const bool isTailable,
                            CursorResponseBuilder* nextBatch,
-                           uint64_t* numResults,
-                           ResourceConsumption::DocumentUnitCounter* docUnitsReturned) {
+                           uint64_t* numResults) {
             // Note: if an awaitData getMore is killed during this process due to our max time
             // expiring at an interrupt point, we just continue as normal and return rather than
             // reporting a timeout to the user.
@@ -487,14 +491,8 @@ public:
             size_t batchSize = cmd.getBatchSize().value_or(std::numeric_limits<size_t>::max());
 
             try {
-                return batchedExecute(opCtx,
-                                      cursor,
-                                      exec,
-                                      batchSize,
-                                      isTailable,
-                                      nextBatch,
-                                      numResults,
-                                      docUnitsReturned);
+                return batchedExecute(
+                    opCtx, cursor, exec, batchSize, isTailable, nextBatch, numResults);
             } catch (const ExceptionFor<ErrorCodes::CloseChangeStream>&) {
                 // This exception indicates that we should close the cursor without reporting an
                 // error.
@@ -534,8 +532,8 @@ public:
                 MONGO_unlikely(disableAwaitDataForGetMoreCmd.shouldFail());
 
             // Inherit properties like readConcern and maxTimeMS from our originating cursor.
-            setUpOperationContextStateForGetMore(
-                opCtx, *cursorPin.getCursor(), _cmd, disableAwaitDataFailpointActive);
+            setUpOperationContextAndCurOpStateForGetMore(
+                opCtx, curOp, *cursorPin.getCursor(), _cmd, disableAwaitDataFailpointActive);
 
             NamespaceString nss = ns();
             CursorLocks locks{opCtx, nss, cursorPin};
@@ -576,13 +574,6 @@ public:
                 stdx::lock_guard<Client> lk(*opCtx->getClient());
                 curOp->setPlanSummary(lk, planSummary);
 
-                // Ensure that the original query or command object is available in the slow query
-                // log, profiler and currentOp.
-                auto originatingCommand = cursorPin->getOriginatingCommandObj();
-                if (!originatingCommand.isEmpty()) {
-                    curOp->setOriginatingCommand(lk, originatingCommand);
-                }
-
                 curOp->debug().queryFramework = exec->getQueryFramework();
                 curOp->setShouldOmitDiagnosticInformation(
                     lk, cursorPin->shouldOmitDiagnosticInformation());
@@ -615,7 +606,6 @@ public:
             }
             CursorResponseBuilder nextBatch(reply, options);
             uint64_t numResults = 0;
-            ResourceConsumption::DocumentUnitCounter docUnitsReturned;
 
             // We report keysExamined and docsExamined to OpDebug for a given getMore operation. To
             // obtain these values we need to take a diff of the pre-execution and post-execution
@@ -649,8 +639,7 @@ public:
                                                         _cmd,
                                                         cursorPin->isTailable(),
                                                         &nextBatch,
-                                                        &numResults,
-                                                        &docUnitsReturned);
+                                                        &numResults);
 
             PlanSummaryStats postExecutionStats;
             exec->getPlanExplainer().getSummaryStats(&postExecutionStats);
@@ -679,9 +668,6 @@ public:
                 exec->detachFromOperationContext();
 
                 cursorPin->setLeftoverMaxTimeMicros(opCtx->getRemainingMaxTimeMicros());
-                // Transfer ownership of the memory tracker from the OpCtx to the cursor so that we
-                // collect memory statistics for subsequent calls to getMore().
-                OperationMemoryUsageTracker::moveToCursorIfAvailable(opCtx, cursorPin.getCursor());
 
                 if (opCtx->isExhaust() && clientsLastKnownCommittedOpTime(opCtx)) {
                     // Update the cursor's lastKnownCommittedOpTime to the current
@@ -703,8 +689,6 @@ public:
 
             // Collect and increment metrics now that we have enough information. It's important
             // we do so before generating the response so that the response can include metrics.
-            auto& metricsCollector = ResourceConsumption::MetricsCollector::get(opCtx);
-            metricsCollector.incrementDocUnitsReturned(curOp->getNS(), docUnitsReturned);
             curOp->debug().additiveMetrics.nBatches = 1;
             curOp->setEndOfOpMetrics(numResults);
             collectQueryStatsMongod(opCtx, cursorPin);
@@ -726,6 +710,49 @@ public:
                     reply->setNextInvocation(boost::none);
                 }
             }
+        }
+
+        ClientCursorPin pinCursorWithRetry(OperationContext* opCtx,
+                                           CursorId cursorId,
+                                           const NamespaceString& nss) {
+            // Perform validation checks which don't cause the cursor to be deleted on failure.
+            auto pinCheck = [&](const ClientCursor& cc) {
+                validateLSID(opCtx, cursorId, &cc);
+                validateTxnNumber(opCtx, cursorId, &cc);
+                validateAuthorization(opCtx, cc);
+                validateNamespace(nss, cc);
+                validateMaxTimeMS(_cmd.getMaxTimeMS(), cc);
+            };
+
+            Backoff retryBackoff{Seconds(1), Milliseconds::max()};
+
+            const size_t maxAttempts = internalQueryGetMoreMaxCursorPinRetryAttempts.loadRelaxed();
+            for (size_t attempt = 1; attempt <= maxAttempts; ++attempt) {
+                auto statusWithCursorPin = CursorManager::get(opCtx)->pinCursor(
+                    opCtx, cursorId, definition()->getName(), pinCheck);
+                auto status = statusWithCursorPin.getStatus();
+                if (status.isOK()) {
+                    return std::move(statusWithCursorPin.getValue());
+                }
+                // We only return CursorInUse errors if the command that is holding the cursor is
+                // "releaseMemory".
+                if (attempt == maxAttempts || status.code() != ErrorCodes::CursorInUse) {
+                    uassertStatusOK(status);
+                }
+                auto extraInfo = status.extraInfo<CursorInUseInfo>();
+                if (extraInfo == nullptr || extraInfo->commandName() != "releaseMemory") {
+                    uassertStatusOK(status);
+                }
+                Milliseconds sleepDuration = retryBackoff.nextSleep();
+                LOGV2_DEBUG(10116501,
+                            3,
+                            "getMore failed to pin cursor, because it is held by releaseMemory "
+                            "command. Will retry after sleep.",
+                            "sleepDuration"_attr = sleepDuration,
+                            "attempt"_attr = attempt);
+                opCtx->sleepFor(sleepDuration);
+            }
+            MONGO_UNREACHABLE_TASSERT(101165);
         }
 
         void run(OperationContext* opCtx, rpc::ReplyBuilderInterface* reply) override {
@@ -776,26 +803,11 @@ public:
                 admissionPriority.emplace(opCtx, AdmissionContext::Priority::kExempt);
             }
 
-            if (_cmd.getIncludeQueryStatsMetrics() &&
-                feature_flags::gFeatureFlagQueryStatsDataBearingNodes.isEnabled(
-                    serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
+            if (_cmd.getIncludeQueryStatsMetrics()) {
                 curOp->debug().queryStatsInfo.metricsRequested = true;
             }
 
-            // Perform validation checks which don't cause the cursor to be deleted on failure.
-            auto pinCheck = [&](const ClientCursor& cc) {
-                validateLSID(opCtx, cursorId, &cc);
-                validateTxnNumber(opCtx, cursorId, &cc);
-                validateAuthorization(opCtx, cc);
-                validateNamespace(nss, cc);
-                validateMaxTimeMS(_cmd.getMaxTimeMS(), cc);
-            };
-
-            auto cursorPin =
-                uassertStatusOK(CursorManager::get(opCtx)->pinCursor(opCtx, cursorId, pinCheck));
-            // Transfer memory tracker ownership from the cursor back to the OpCtx so memory usage
-            // is tracked for the duration of this getMore().
-            OperationMemoryUsageTracker::moveToOpCtxIfAvailable(cursorPin.getCursor(), opCtx);
+            ClientCursorPin cursorPin = pinCursorWithRetry(opCtx, cursorId, nss);
 
             // Get the read concern level here in case the cursor is exhausted while iterating.
             const auto isLinearizableReadConcern = cursorPin->getReadConcernArgs().getLevel() ==

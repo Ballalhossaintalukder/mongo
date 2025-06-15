@@ -29,16 +29,6 @@
 
 #include "mongo/db/s/document_source_analyze_shard_key_read_write_distribution.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <functional>
-#include <vector>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/oid.h"
@@ -77,11 +67,21 @@
 #include "mongo/s/database_version.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
-#include "mongo/s/sharding_index_catalog_cache.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/util/decorable.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/uuid.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <functional>
+#include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 
@@ -351,7 +351,7 @@ DocumentSourceAnalyzeShardKeyReadWriteDistribution::createFromBson(
     BSONElement specElem, const boost::intrusive_ptr<ExpressionContext>& pExpCtx) {
     uassert(6875701,
             str::stream() << kStageName << " must take a nested object but found: " << specElem,
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
     auto spec = DocumentSourceAnalyzeShardKeyReadWriteDistributionSpec::parse(
         IDLParserContext(kStageName), specElem.embeddedObject());
 
@@ -418,7 +418,7 @@ DocumentSourceAnalyzeShardKeyReadWriteDistribution::LiteParsed::parse(
             !gMultitenancySupport);
     uassert(6875700,
             str::stream() << kStageName << " must take a nested object but found: " << specElem,
-            specElem.type() == BSONType::Object);
+            specElem.type() == BSONType::object);
     uassertStatusOK(validateNamespace(nss));
 
     auto spec = DocumentSourceAnalyzeShardKeyReadWriteDistributionSpec::parse(

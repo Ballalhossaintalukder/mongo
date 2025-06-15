@@ -28,18 +28,6 @@
  */
 
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -73,6 +61,18 @@
 #include "mongo/util/processinfo.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -182,7 +182,7 @@ HostInfoReply HostInfoCmd::Invocation::typedRun(OperationContext* opCtx) {
     ProcessInfo p;
 
     HostInfoSystemReply system;
-    system.setCurrentTime(jsTime());
+    system.setCurrentTime(Date_t::now());
     system.setHostname(prettyHostName(opCtx->getClient()->getLocalPort()));
     system.setCpuAddrSize(static_cast<int>(p.getAddrSize()));
     system.setMemSizeMB(static_cast<long>(p.getSystemMemSizeMB()));
@@ -344,7 +344,7 @@ public:
             arr.doneFast();
 
         } else {
-            logv2::RamLog* ramlog = logv2::RamLog::getIfExists(logName.toString());
+            logv2::RamLog* ramlog = logv2::RamLog::getIfExists(std::string{logName});
             uassert(ErrorCodes::OperationFailed,
                     str::stream() << "No log named '" << logName << "'",
                     ramlog != nullptr);
@@ -379,7 +379,7 @@ OkReply ClearLogCmd::Invocation::typedRun(OperationContext* opCtx) {
     uassert(
         ErrorCodes::InvalidOptions, "Only the 'global' log can be cleared", logName == "global");
 
-    auto log = logv2::RamLog::getIfExists(logName.toString());
+    auto log = logv2::RamLog::getIfExists(std::string{logName});
     invariant(log);
     log->clear();
 

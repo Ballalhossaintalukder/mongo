@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/create_indexes_gen.h"
@@ -38,6 +36,8 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo::timeseries {
 
@@ -49,10 +49,8 @@ BSONObj makeTimeseriesCommand(const BSONObj& origCmd,
                               StringData nsFieldName,
                               boost::optional<StringData> appendTimeSeriesFlag);
 
-/*
- * Returns a CreateIndexesCommand for creating indexes on the bucket collection.
- */
-CreateIndexesCommand makeTimeseriesCreateIndexesCommand(OperationContext* opCtx,
-                                                        const CreateIndexesCommand& origCmd,
-                                                        const TimeseriesOptions& options);
+mongo::BSONObj translateIndexSpecFromLogicalToBuckets(OperationContext* opCtx,
+                                                      const NamespaceString& origNs,
+                                                      const BSONObj& origIndex,
+                                                      const TimeseriesOptions& options);
 }  // namespace mongo::timeseries

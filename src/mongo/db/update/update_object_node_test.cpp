@@ -27,9 +27,11 @@
  *    it in the license file.
  */
 
+#include "mongo/db/update/update_object_node.h"
+
+#include "mongo/bson/json.h"
 #include "mongo/db/exec/mutable_bson/algorithm.h"
 #include "mongo/db/exec/mutable_bson/mutable_bson_test_utils.h"
-#include "mongo/db/json.h"
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/query/collation/collator_interface_mock.h"
@@ -37,7 +39,6 @@
 #include "mongo/db/update/rename_node.h"
 #include "mongo/db/update/update_array_node.h"
 #include "mongo/db/update/update_node_test_fixture.h"
-#include "mongo/db/update/update_object_node.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
 

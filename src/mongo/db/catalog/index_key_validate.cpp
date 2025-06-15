@@ -27,19 +27,7 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
-#include <limits>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/numeric/conversion/converter_policies.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/catalog/index_key_validate.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
@@ -53,7 +41,6 @@
 #include "mongo/db/api_parameters.h"
 #include "mongo/db/basic_types_gen.h"
 #include "mongo/db/catalog/clustered_collection_options_gen.h"
-#include "mongo/db/catalog/index_key_validate.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/db/index/index_constants.h"
 #include "mongo/db/index/index_descriptor.h"
@@ -77,6 +64,20 @@
 #include "mongo/util/represent_as.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/numeric/conversion/converter_policies.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kIndex
 
@@ -230,7 +231,7 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
 
         switch (indexVersion) {
             case IndexVersion::kV1: {
-                if (keyElement.type() == BSONType::Object || keyElement.type() == BSONType::Array) {
+                if (keyElement.type() == BSONType::object || keyElement.type() == BSONType::array) {
                     return {code,
                             str::stream() << "Values in index key pattern cannot be of type "
                                           << typeName(keyElement.type()) << " for index version v:"
@@ -247,7 +248,7 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
                     } else if (value == 0.0) {
                         return {code, "Values in the index key pattern cannot be 0."};
                     }
-                } else if (keyElement.type() != BSONType::String) {
+                } else if (keyElement.type() != BSONType::string) {
                     return {code,
                             str::stream()
                                 << "Values in v:2 index key pattern cannot be of type "
@@ -261,9 +262,10 @@ Status validateKeyPattern(const BSONObj& key, IndexDescriptor::IndexVersion inde
                 MONGO_UNREACHABLE;
         }
 
-        if (keyElement.type() == String && pluginName != keyElement.str()) {
+        if (keyElement.type() == BSONType::string && pluginName != keyElement.str()) {
             return Status(code, "Can't use more than one index plugin for a single index.");
-        } else if (keyElement.type() == String && keyElement.str() == IndexNames::WILDCARD) {
+        } else if (keyElement.type() == BSONType::string &&
+                   keyElement.str() == IndexNames::WILDCARD) {
             return Status(code,
                           str::stream() << "The key pattern value for an '" << IndexNames::WILDCARD
                                         << "' index must be a non-zero number, not a string.");
@@ -413,7 +415,7 @@ StatusWith<BSONObj> validateIndexSpec(
     for (auto&& indexSpecElem : indexSpec) {
         auto indexSpecElemFieldName = indexSpecElem.fieldNameStringData();
         if (IndexDescriptor::kKeyPatternFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::Object) {
+            if (indexSpecElem.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kKeyPatternFieldName
@@ -448,7 +450,7 @@ StatusWith<BSONObj> validateIndexSpec(
             }
 
             for (const auto& keyElement : keyPattern) {
-                if (keyElement.type() == String && keyElement.str().empty()) {
+                if (keyElement.type() == BSONType::string && keyElement.str().empty()) {
                     return {ErrorCodes::CannotCreateIndex,
                             str::stream()
                                 << "Values in the index key pattern cannot be empty strings"};
@@ -464,7 +466,7 @@ StatusWith<BSONObj> validateIndexSpec(
 
             hasKeyPatternField = true;
         } else if (IndexDescriptor::kIndexNameFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::String) {
+            if (indexSpecElem.type() != BSONType::string) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kIndexNameFieldName
@@ -473,7 +475,7 @@ StatusWith<BSONObj> validateIndexSpec(
 
             hasIndexNameField = true;
         } else if (IndexDescriptor::kHiddenFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::Bool) {
+            if (indexSpecElem.type() != BSONType::boolean) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kHiddenFieldName
@@ -510,7 +512,7 @@ StatusWith<BSONObj> validateIndexSpec(
             hasVersionField = true;
             resolvedIndexVersion = requestedIndexVersion;
         } else if (IndexDescriptor::kOriginalSpecFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::Object) {
+            if (indexSpecElem.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kOriginalSpecFieldName
@@ -525,7 +527,7 @@ StatusWith<BSONObj> validateIndexSpec(
 
             hasOriginalSpecField = true;
         } else if (IndexDescriptor::kCollationFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::Object) {
+            if (indexSpecElem.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kCollationFieldName
@@ -540,7 +542,7 @@ StatusWith<BSONObj> validateIndexSpec(
 
             hasCollationField = true;
         } else if (IndexDescriptor::kPartialFilterExprFieldName == indexSpecElemFieldName) {
-            if (indexSpecElem.type() != BSONType::Object) {
+            if (indexSpecElem.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << IndexDescriptor::kPartialFilterExprFieldName
@@ -575,7 +577,7 @@ StatusWith<BSONObj> validateIndexSpec(
                             << "The field '" << indexSpecElemFieldName << "' is only allowed in '"
                             << IndexNames::WILDCARD << "' indexes"};
             }
-            if (indexSpecElem.type() != BSONType::Object) {
+            if (indexSpecElem.type() != BSONType::object) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream() << "The field '" << indexSpecElemFieldName
                                       << "' must be a non-empty object, but got "
@@ -609,7 +611,7 @@ StatusWith<BSONObj> validateIndexSpec(
                                    << "Failed to parse projection: " << indexSpecElemFieldName);
             }
         } else if (IndexDescriptor::kWeightsFieldName == indexSpecElemFieldName) {
-            if (!indexSpecElem.isABSONObj() && indexSpecElem.type() != String) {
+            if (!indexSpecElem.isABSONObj() && indexSpecElem.type() != BSONType::string) {
                 return {ErrorCodes::TypeMismatch,
                         str::stream()
                             << "The field '" << indexSpecElemFieldName
@@ -636,7 +638,7 @@ StatusWith<BSONObj> validateIndexSpec(
             }
         } else if ((IndexDescriptor::kDefaultLanguageFieldName == indexSpecElemFieldName ||
                     IndexDescriptor::kLanguageOverrideFieldName == indexSpecElemFieldName) &&
-                   indexSpecElem.type() != BSONType::String) {
+                   indexSpecElem.type() != BSONType::string) {
             return {ErrorCodes::TypeMismatch,
                     str::stream() << "The field '" << indexSpecElemFieldName
                                   << "' must be a string, but got "
@@ -802,7 +804,7 @@ Status validateIdIndexSpec(const BSONObj& indexSpec) {
 
     auto keyPatternElem = indexSpec[IndexDescriptor::kKeyPatternFieldName];
     // validateIndexSpec() should have already verified that 'keyPatternElem' is an object.
-    invariant(keyPatternElem.type() == BSONType::Object);
+    invariant(keyPatternElem.type() == BSONType::object);
     if (SimpleBSONObjComparator::kInstance.evaluate(keyPatternElem.Obj() != BSON("_id" << 1))) {
         return {ErrorCodes::BadValue,
                 str::stream() << "The field '" << IndexDescriptor::kKeyPatternFieldName
@@ -889,7 +891,7 @@ StatusWith<BSONObj> validateIndexSpecCollation(OperationContext* opCtx,
                                                const boost::optional<BSONObj>& newIndexSpec) {
     if (auto collationElem = indexSpec[IndexDescriptor::kCollationFieldName]) {
         // validateIndexSpec() should have already verified that 'collationElem' is an object.
-        invariant(collationElem.type() == BSONType::Object);
+        invariant(collationElem.type() == BSONType::object);
 
         auto collator = CollatorFactoryInterface::get(opCtx->getServiceContext())
                             ->makeFromBSON(collationElem.Obj());
@@ -1036,7 +1038,7 @@ StatusWith<TTLCollectionCache::Info::ExpireAfterSecondsType> validateExpireAfter
         return {ErrorCodes::CannotCreateIndex, str::stream() << status.reason()};
     }
 
-    return expireAfterSeconds.type() == BSONType::NumberInt
+    return expireAfterSeconds.type() == BSONType::numberInt
         ? TTLCollectionCache::Info::ExpireAfterSecondsType::kInt
         : TTLCollectionCache::Info::ExpireAfterSecondsType::kNonInt;
 }

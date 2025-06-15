@@ -27,13 +27,7 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <wiredtiger.h>
-
 #include "mongo/base/string_data.h"
-#include "mongo/db/catalog/collection_options.h"
-#include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/kv/kv_engine.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/record_store_test_harness.h"
@@ -42,6 +36,11 @@
 #include "mongo/db/storage/wiredtiger/wiredtiger_record_store.h"
 #include "mongo/unittest/temp_dir.h"
 #include "mongo/util/clock_source_mock.h"
+
+#include <memory>
+#include <string>
+
+#include <wiredtiger.h>
 
 namespace mongo {
 
@@ -53,18 +52,34 @@ public:
         : WiredTigerHarnessHelper(Options::ReplicationEnabled, extraStrings) {}
 
     WiredTigerHarnessHelper(Options options, StringData extraStrings);
-    ~WiredTigerHarnessHelper() override {}
+    ~WiredTigerHarnessHelper() override {
+#if __has_feature(address_sanitizer)
+        constexpr bool memLeakAllowed = false;
+#else
+        constexpr bool memLeakAllowed = true;
+#endif
+        _engine->cleanShutdown(memLeakAllowed);
+    }
 
     std::unique_ptr<RecordStore> newRecordStore() override {
         return newRecordStore("a.b");
     }
 
     virtual std::unique_ptr<RecordStore> newRecordStore(const std::string& ns) {
-        return newRecordStore(ns, CollectionOptions());
+        return newRecordStore(ns, RecordStore::Options{});
     }
 
-    std::unique_ptr<RecordStore> newRecordStore(const std::string& ns,
-                                                const CollectionOptions& collOptions) override;
+    std::unique_ptr<RecordStore> newRecordStore(
+        const std::string& ns, const RecordStore::Options& recordStoreOptions) override {
+        auto ident = ns;
+        NamespaceString nss = NamespaceString::createNamespaceString_forTest(ns);
+        return newRecordStore(nss, ident, recordStoreOptions, UUID::gen());
+    }
+
+    std::unique_ptr<RecordStore> newRecordStore(const NamespaceString& nss,
+                                                StringData ident,
+                                                const RecordStore::Options& recordStoreOptions,
+                                                boost::optional<UUID> uuid);
 
     std::unique_ptr<RecordStore> newOplogRecordStore() override;
 
@@ -75,7 +90,7 @@ public:
     std::unique_ptr<RecoveryUnit> newRecoveryUnit() override;
 
     /**
-     * Create an oplog record store without setting truncate markers or starting the oplog manager.
+     * Create an oplog record store without starting the oplog manager.
      */
     std::unique_ptr<RecordStore> newOplogRecordStoreNoInit();
 
@@ -92,6 +107,5 @@ private:
     ClockSourceMock _cs;
     std::unique_ptr<WiredTigerKVEngine> _engine;
     bool _isReplSet;
-    bool _shouldRecoverFromOplogAsStandalone;
 };
 }  // namespace mongo

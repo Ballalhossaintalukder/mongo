@@ -32,18 +32,6 @@
 // IWYU pragma: private, include "mongo/unittest/unittest.h"
 // IWYU pragma: friend "mongo/unittest/.*"
 
-#include <algorithm>
-#include <cstddef>
-#include <fmt/format.h>
-#include <functional>
-#include <iterator>
-#include <memory>
-#include <string>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -54,6 +42,19 @@
 #include "mongo/unittest/matcher_core.h"
 #include "mongo/unittest/stringify.h"
 #include "mongo/util/assert_util.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <fmt/format.h>
 
 /**
  * Defines a basic set of matchers to be used with the ASSERT_THAT macro (see
@@ -628,13 +629,13 @@ public:
         if (!tr)
             return MatchResult{false,
                                fmt::format("type failed: {} {}", typeName(x.type()), tr.message())};
-        if (t == NumberInt)
+        if (t == BSONType::numberInt)
             return detail::typeTolerantMatch(_value, x.Int());
-        if (t == NumberLong)
+        if (t == BSONType::numberLong)
             return detail::typeTolerantMatch(_value, x.Long());
-        if (t == NumberDouble)
+        if (t == BSONType::numberDouble)
             return detail::typeTolerantMatch(_value, x.Double());
-        if (t == String)
+        if (t == BSONType::string)
             return detail::typeTolerantMatch(_value, x.String());
         // need to support more BSON element types.
         return MatchResult{false,

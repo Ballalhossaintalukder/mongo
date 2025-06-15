@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/client/cyrus_sasl_client_session.h"
 
@@ -208,7 +207,7 @@ int saslClientGetSimple(void* context, int id, const char** result, unsigned* re
         if (!session->hasParameter(requiredParameterId))
             return SASL_FAIL;
         StringData value = session->getParameter(requiredParameterId);
-        *result = value.rawData();
+        *result = value.data();
         if (resultLen)
             *resultLen = static_cast<unsigned>(value.size());
         return SASL_OK;
@@ -282,8 +281,8 @@ Status CyrusSaslClientSession::initialize() {
         return Status(ErrorCodes::AlreadyInitialized,
                       "Cannot reinitialize CyrusSaslClientSession.");
 
-    int result = sasl_client_new(getParameter(parameterServiceName).toString().c_str(),
-                                 getParameter(parameterServiceHostname).toString().c_str(),
+    int result = sasl_client_new(std::string{getParameter(parameterServiceName)}.c_str(),
+                                 std::string{getParameter(parameterServiceHostname)}.c_str(),
                                  nullptr,
                                  nullptr,
                                  _callbacks,
@@ -306,14 +305,14 @@ Status CyrusSaslClientSession::step(StringData inputData, std::string* outputDat
     if (_step == 0) {
         const char* actualMechanism;
         result = sasl_client_start(_saslConnection,
-                                   getParameter(parameterMechanism).toString().c_str(),
+                                   std::string{getParameter(parameterMechanism)}.c_str(),
                                    nullptr,
                                    &output,
                                    &outputSize,
                                    &actualMechanism);
     } else {
         result = sasl_client_step(_saslConnection,
-                                  inputData.rawData(),
+                                  inputData.data(),
                                   static_cast<unsigned>(inputData.size()),
                                   nullptr,
                                   &output,

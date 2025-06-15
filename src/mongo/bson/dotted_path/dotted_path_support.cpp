@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <cstring>
-#include <limits>
-#include <string>
-
+#include "mongo/bson/dotted_path/dotted_path_support.h"
 
 #include "mongo/bson/bson_depth.h"
 #include "mongo/bson/bsonelement.h"
@@ -39,9 +35,13 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/bson/dotted_path/dotted_path_support.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/ctype.h"
+
+#include <cstddef>
+#include <cstring>
+#include <limits>
+#include <string>
 
 namespace mongo {
 namespace bson {
@@ -83,9 +83,9 @@ BSONElement extractElementAtOrArrayAlongDottedPath(const BSONObj& obj, const cha
 
     if (sub.eoo())
         return BSONElement();
-    else if (sub.type() == Array || path[0] == '\0')
+    else if (sub.type() == BSONType::array || path[0] == '\0')
         return sub;
-    else if (sub.type() == Object)
+    else if (sub.type() == BSONType::object)
         return extractElementAtOrArrayAlongDottedPath(sub.embeddedObject(), path);
     else
         return BSONElement();

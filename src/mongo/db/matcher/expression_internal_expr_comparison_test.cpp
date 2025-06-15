@@ -27,24 +27,25 @@
  *    it in the license file.
  */
 
-#include <string>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/matcher/expression_internal_expr_comparison.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/oid.h"
-#include "mongo/db/matcher/expression_internal_expr_comparison.h"
 #include "mongo/unittest/death_test.h"
 #include "mongo/unittest/unittest.h"
+
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
 DEATH_TEST_REGEX(InternalExprComparisonMatchExpression,
                  CannotCompareToArray,
-                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::Array)#") {
+                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::array)#") {
     BSONObj operand = BSON("x" << BSON_ARRAY(1 << 2));
     InternalExprGTMatchExpression gt(operand.firstElement().fieldNameStringData(),
                                      operand.firstElement());
@@ -52,7 +53,7 @@ DEATH_TEST_REGEX(InternalExprComparisonMatchExpression,
 
 DEATH_TEST_REGEX(InternalExprComparisonMatchExpression,
                  CannotCompareToUndefined,
-                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::Undefined)#") {
+                 R"#(Invariant failure.*_rhs.type\(\) != BSONType::undefined)#") {
     BSONObj operand = BSON("x" << BSONUndefined);
     InternalExprGTMatchExpression gt(operand.firstElement().fieldNameStringData(),
                                      operand.firstElement());

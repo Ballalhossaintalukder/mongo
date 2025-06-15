@@ -27,11 +27,6 @@
  *    it in the license file.
  */
 
-#include <cmath>
-#include <limits>
-#include <numeric>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
@@ -41,6 +36,11 @@
 #include "mongo/platform/decimal128.h"
 #include "mongo/platform/random.h"
 #include "mongo/unittest/unittest.h"
+
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <vector>
 
 namespace mongo {
 namespace {
@@ -79,16 +79,16 @@ TEST_F(WindowFunctionStdDevTest, ReturnsDouble) {
     pop.add(Value{1});
     pop.add(Value{2});
     pop.add(Value{3});
-    ASSERT_EQ(pop.getValue().getType(), NumberDouble);
+    ASSERT_EQ(pop.getValue().getType(), BSONType::numberDouble);
 
     samp.add(Value{1});
     samp.add(Value{2});
     samp.add(Value{3});
     // Returns 1.0
-    ASSERT_EQ(samp.getValue().getType(), NumberDouble);
+    ASSERT_EQ(samp.getValue().getType(), BSONType::numberDouble);
 
     pop.add(Value{Decimal128("100000000000000000000000000000")});
-    ASSERT_EQ(pop.getValue().getType(), NumberDouble);
+    ASSERT_EQ(pop.getValue().getType(), BSONType::numberDouble);
 }
 
 

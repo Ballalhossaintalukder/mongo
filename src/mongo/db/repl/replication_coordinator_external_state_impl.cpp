@@ -34,11 +34,6 @@
 #include <boost/optional/optional.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <functional>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -101,6 +96,7 @@
 #include "mongo/db/s/shard_filtering_metadata_refresh.h"
 #include "mongo/db/s/sharding_initialization_mongod.h"
 #include "mongo/db/s/sharding_ready.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
@@ -134,7 +130,6 @@
 #include "mongo/s/cluster_identity_loader.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/shard_version.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/transport/service_entry_point.h"
 #include "mongo/transport/session_manager.h"
@@ -147,6 +142,11 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
 

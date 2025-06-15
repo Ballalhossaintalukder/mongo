@@ -29,16 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <functional>
-#include <iosfwd>
-#include <map>
-#include <memory>
-#include <queue>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -70,6 +60,17 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/time_support.h"
 
+#include <functional>
+#include <iosfwd>
+#include <map>
+#include <memory>
+#include <queue>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
+
 namespace mongo {
 class CommitQuorumOptions;
 class Timestamp;
@@ -84,6 +85,7 @@ struct MemberState;
 
 // Maximum number of retries for a failed heartbeat.
 const int kMaxHeartbeatRetries = 2;
+extern mongo::Counter64& numSyncSourceChangesDueToSignificantlyCloserNode;
 
 /**
  * Replication Topology Coordinator

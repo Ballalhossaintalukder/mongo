@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <list>
-#include <memory>
-#include <set>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,12 +47,23 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
 
+#include <list>
+#include <memory>
+#include <set>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceGeoNear : public DocumentSource {
+class DocumentSourceGeoNear : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kKeyFieldName = "key"_sd;
     static constexpr StringData kStageName = "$geoNear"_sd;
+    static constexpr StringData kDistanceFieldFieldName = "distanceField"_sd;
+    static constexpr StringData kIncludeLocsFieldName = "includeLocs"_sd;
+    static constexpr StringData kNearFieldName = "near"_sd;
 
     /**
      * Only exposed for testing.
@@ -69,7 +72,7 @@ public:
         const boost::intrusive_ptr<ExpressionContext>&);
 
     const char* getSourceName() const final {
-        return DocumentSourceGeoNear::kStageName.rawData();
+        return DocumentSourceGeoNear::kStageName.data();
     }
 
     static const Id& id;

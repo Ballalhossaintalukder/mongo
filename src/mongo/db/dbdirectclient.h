@@ -29,11 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <string>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/client/connection_string.h"
 #include "mongo/client/dbclient_base.h"
@@ -51,6 +46,12 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/ssl_types.h"
+
+#include <memory>
+#include <string>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -91,12 +92,13 @@ public:
                                          const ReadPreferenceSetting& readPref,
                                          ExhaustMode exhaustMode) override;
 
-    long long count(NamespaceStringOrUUID nsOrUuid,
-                    const BSONObj& query = BSONObj(),
-                    int options = 0,
-                    int limit = 0,
-                    int skip = 0,
-                    boost::optional<repl::ReadConcernArgs> readConcernObj = boost::none) override;
+    long long count(
+        const NamespaceStringOrUUID& nsOrUuid,
+        const BSONObj& query = BSONObj(),
+        int options = 0,
+        int limit = 0,
+        int skip = 0,
+        const boost::optional<repl::ReadConcernArgs>& readConcernObj = boost::none) override;
 
     /**
      * The insert, update, and remove commands only check the top level error status. The caller is

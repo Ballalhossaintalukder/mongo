@@ -28,11 +28,10 @@
  */
 
 #include "mongo/db/query/search/mongot_options.h"
-#include "mongo/db/query/search/mongot_options_gen.h"
-
 
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
+#include "mongo/db/query/search/mongot_options_gen.h"
 #include "mongo/transport/transport_layer.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/net/ssl_options.h"
@@ -48,8 +47,7 @@ MongotParams globalMongotParams;
 
 MongotParams::MongotParams() {
     host = kMongotHostDefault;
-    // TODO SERVER-99787 Change default to kGlobalSSL.
-    sslMode = transport::ConnectSSLMode::kDisableSSL;
+    sslMode = transport::ConnectSSLMode::kGlobalSSLMode;
 }
 
 Status MongotParams::onSetHost(const std::string&) {

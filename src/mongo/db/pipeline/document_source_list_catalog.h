@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <deque>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -55,6 +44,17 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/stdx/unordered_set.h"
 
+#include <deque>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 /**
@@ -63,7 +63,7 @@ namespace mongo {
  * - a single collection with its indexes; or
  * - a view instance.
  */
-class DocumentSourceListCatalog final : public DocumentSource {
+class DocumentSourceListCatalog final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$listCatalog"_sd;
 

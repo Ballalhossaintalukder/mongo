@@ -47,6 +47,7 @@
 #include "mongo/logv2/log.h"
 #include "mongo/s/grid.h"
 #include "mongo/util/stacktrace.h"
+
 #include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
@@ -298,7 +299,7 @@ inline BSONObj createWrappedListSearchIndexesCmd(const NamespaceString& nss,
                                            nss.dbName(), SerializationContext::stateDefault()))
                                       .firstElement());
     BSONObj listSearchIndexes;
-    if (idxCmdType.compare(kCreateCommand.toString()) == 0) {
+    if (idxCmdType.compare(std::string{kCreateCommand}) == 0) {
 
         auto indexDefinition = CreateSearchIndexesCommand::parse(
                                    IDLParserContext("createWrappedListSearchIndexesCmd"), newCmdObj)
@@ -312,7 +313,7 @@ inline BSONObj createWrappedListSearchIndexesCmd(const NamespaceString& nss,
             listSearchIndexes = BSON("$listSearchIndexes" << BSON("name" << "default"));
         }
 
-    } else if (idxCmdType.compare(kUpdateCommand.toString()) == 0) {
+    } else if (idxCmdType.compare(std::string{kUpdateCommand}) == 0) {
         auto updateCmd = UpdateSearchIndexCommand::parse(
             IDLParserContext("createWrappedListSearchIndexesCmd"), newCmdObj);
         if (updateCmd.getName()) {
@@ -342,23 +343,24 @@ inline void _replicateSearchIndexCommandOnAllMongodsForTesting(OperationContext*
     const auto dbName = nss.dbName();
     BSONObj listSearchIndexesCmd;
     boost::optional<BSONObj> searchIdxLatestDefinition;
-    if (idxCmdType.compare(kListCommand.toString()) == 0) {
+    if (idxCmdType.compare(std::string{kListCommand}) == 0) {
         listSearchIndexesCmd = wrapCmdInShardSvrRunSearchIndexCmd(resolvedNss, userCmd, view);
     } else {
         auto cmdObj = wrapCmdInShardSvrRunSearchIndexCmd(resolvedNss, userCmd, view);
         multiCastShardsvrRunSearchIndexCommandOnAllMongods(opCtx, allClusterHosts, dbName, cmdObj);
-        if (idxCmdType.compare(kCreateCommand.toString()) == 0 ||
-            idxCmdType.compare(kUpdateCommand.toString()) == 0) {
+        if (idxCmdType.compare(std::string{kCreateCommand}) == 0 ||
+            idxCmdType.compare(std::string{kUpdateCommand}) == 0) {
             listSearchIndexesCmd = createWrappedListSearchIndexesCmd(resolvedNss, userCmd, view);
-            if (idxCmdType.compare(kUpdateCommand.toString()) == 0) {
-                if (userCmd.hasField("definition") && userCmd["definition"].type() == Object) {
+            if (idxCmdType.compare(std::string{kUpdateCommand}) == 0) {
+                if (userCmd.hasField("definition") &&
+                    userCmd["definition"].type() == BSONType::object) {
                     searchIdxLatestDefinition = boost::make_optional(userCmd["definition"].Obj());
                 }
             }
         }
     }
 
-    if (idxCmdType.compare(kDropCommand.toString()) == 0) {
+    if (idxCmdType.compare(std::string{kDropCommand}) == 0) {
         // dropSearchIndex command doesn't return until the specified index is fully wiped.
         return;
     }

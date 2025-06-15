@@ -29,16 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_change_stream_split_large_event.h"
 
-#include <algorithm>
-#include <iterator>
-#include <list>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
@@ -52,6 +42,16 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <iterator>
+#include <list>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -83,7 +83,7 @@ DocumentSourceChangeStreamSplitLargeEvent::createFromBson(
     // We expect an empty object spec for this stage.
     uassert(7182800,
             "$changeStreamSplitLargeEvent spec should be an empty object",
-            rawSpec.type() == BSONType::Object && rawSpec.Obj().isEmpty());
+            rawSpec.type() == BSONType::object && rawSpec.Obj().isEmpty());
 
     // If there is no change stream spec set on the expression context, then this cannot be a change
     // stream pipeline. Pipeline validation will catch this issue later during parsing.
@@ -96,7 +96,9 @@ DocumentSourceChangeStreamSplitLargeEvent::createFromBson(
 DocumentSourceChangeStreamSplitLargeEvent::DocumentSourceChangeStreamSplitLargeEvent(
     const boost::intrusive_ptr<ExpressionContext>& expCtx,
     boost::optional<ResumeTokenData> resumeAfterSplit)
-    : DocumentSource(getSourceName(), expCtx), _resumeAfterSplit(std::move(resumeAfterSplit)) {
+    : DocumentSource(getSourceName(), expCtx),
+      exec::agg::Stage(getSourceName(), expCtx),
+      _resumeAfterSplit(std::move(resumeAfterSplit)) {
     tassert(7182801,
             "Expected a split event resume token, but found a non-split token",
             !_resumeAfterSplit || _resumeAfterSplit->fragmentNum);

@@ -28,14 +28,17 @@
  */
 
 #include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
-#include "mongo/db/memory_tracking/op_memory_use.h"
-#include "mongo/db/query/client_cursor/clientcursor.h"
+
+#include "mongo/logv2/log.h"
+
+#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
-
 namespace {
-const ClientCursor::Decoration<std::unique_ptr<OperationMemoryUsageTracker>> getFromClientCursor =
-    ClientCursor::declareDecoration<std::unique_ptr<OperationMemoryUsageTracker>>();
+
+const OperationContext::Decoration<std::unique_ptr<OperationMemoryUsageTracker>> _getFromOpCtx =
+    OperationContext::declareDecoration<std::unique_ptr<OperationMemoryUsageTracker>>();
+
 }
 
 /**
@@ -44,19 +47,20 @@ const ClientCursor::Decoration<std::unique_ptr<OperationMemoryUsageTracker>> get
  */
 OperationMemoryUsageTracker* OperationMemoryUsageTracker::getOperationMemoryUsageTracker(
     OperationContext* opCtx) {
-    OperationMemoryUsageTracker* opTracker = OpMemoryUse::operationMemoryAggregator(opCtx).get();
+    OperationMemoryUsageTracker* opTracker = _getFromOpCtx(opCtx).get();
     if (!opTracker) {
         auto uniqueTracker = std::make_unique<OperationMemoryUsageTracker>(opCtx);
         opTracker = uniqueTracker.get();
         opTracker->setDoExtraBookkeeping(
             [opTracker](int64_t currentMemoryBytes, int64_t maxUsedMemoryBytes) {
-                tassert(10076202,
-                        "unable to report memory tracking stats with missing OperationContext",
-                        opTracker->_opCtx);
-                CurOp::get(opTracker->_opCtx)
-                    ->setMemoryTrackingStats(currentMemoryBytes, maxUsedMemoryBytes);
+                if (opTracker->_opCtx) {
+                    CurOp::get(opTracker->_opCtx)
+                        ->setMemoryTrackingStats(currentMemoryBytes, maxUsedMemoryBytes);
+                } else {
+                    LOGV2_DEBUG(10430900, 3, "No OperationContext on OperationMemoryUsageTracker");
+                }
             });
-        OpMemoryUse::operationMemoryAggregator(opCtx) = std::move(uniqueTracker);
+        _getFromOpCtx(opCtx) = std::move(uniqueTracker);
     }
 
     return opTracker;
@@ -64,8 +68,7 @@ OperationMemoryUsageTracker* OperationMemoryUsageTracker::getOperationMemoryUsag
 
 SimpleMemoryUsageTracker OperationMemoryUsageTracker::createSimpleMemoryUsageTrackerForStage(
     const ExpressionContext& expCtx, int64_t maxMemoryUsageBytes) {
-    // TODO SERVER-102382 Remove router check.
-    if (!feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled() || expCtx.getInRouter() ||
+    if (!feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled() ||
         expCtx.isIncompatibleWithMemoryTracking()) {
         return SimpleMemoryUsageTracker{maxMemoryUsageBytes};
     }
@@ -77,52 +80,34 @@ SimpleMemoryUsageTracker OperationMemoryUsageTracker::createSimpleMemoryUsageTra
 
 MemoryUsageTracker OperationMemoryUsageTracker::createMemoryUsageTrackerForStage(
     const ExpressionContext& expCtx, bool allowDiskUse, int64_t maxMemoryUsageBytes) {
-    // TODO SERVER-102382 Remove router check.
-    if (!feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled() || expCtx.getInRouter() ||
+    if (!feature_flags::gFeatureFlagQueryMemoryTracking.isEnabled() ||
         expCtx.isIncompatibleWithMemoryTracking()) {
         return MemoryUsageTracker{allowDiskUse, maxMemoryUsageBytes};
     }
+
     OperationContext* opCtx = expCtx.getOperationContext();
     OperationMemoryUsageTracker* opTracker = getOperationMemoryUsageTracker(opCtx);
     return MemoryUsageTracker{opTracker, allowDiskUse, maxMemoryUsageBytes};
 }
 
-void OperationMemoryUsageTracker::moveToCursorIfAvailable(OperationContext* opCtx,
-                                                          ClientCursor* cursor) {
-    std::unique_ptr<OperationMemoryUsageTracker> opCtxTracker{
-        std::move(OpMemoryUse::operationMemoryAggregator(opCtx))};
-    if (opCtxTracker) {
-        std::unique_ptr<OperationMemoryUsageTracker>& cursorTracker = getFromClientCursor(cursor);
-        tassert(10076200,
-                "OperationMemoryUsageTracker already attached to ClientCursor",
-                !cursorTracker);
-        cursorTracker = std::move(opCtxTracker);
-        cursorTracker->_opCtx = nullptr;
+std::unique_ptr<OperationMemoryUsageTracker> OperationMemoryUsageTracker::moveFromOpCtxIfAvailable(
+    OperationContext* opCtx) {
+    std::unique_ptr<OperationMemoryUsageTracker> tracker = std::move(_getFromOpCtx(opCtx));
+    if (tracker) {
+        tracker->_opCtx = nullptr;
     }
+    return tracker;
 }
 
-void OperationMemoryUsageTracker::moveToOpCtxIfAvailable(ClientCursor* cursor,
-                                                         OperationContext* opCtx) {
-    std::unique_ptr<OperationMemoryUsageTracker> cursorTracker{
-        std::move(getFromClientCursor(cursor))};
-    if (cursorTracker) {
-        std::unique_ptr<OperationMemoryUsageTracker>& opCtxTracker =
-            OpMemoryUse::operationMemoryAggregator(opCtx);
-        tassert(10076201,
-                "OperationMemoryUsageTracker already attached to OperationContext",
-                !opCtxTracker);
-        opCtxTracker = std::move(cursorTracker);
-        opCtxTracker->_opCtx = opCtx;
-
-        // Propagate stats from the previous operation to this one.
-        CurOp::get(opCtx)->setMemoryTrackingStats(opCtxTracker->currentMemoryBytes(),
-                                                  opCtxTracker->maxMemoryBytes());
+void OperationMemoryUsageTracker::moveToOpCtxIfAvailable(
+    OperationContext* opCtx, std::unique_ptr<OperationMemoryUsageTracker> tracker) {
+    invariant(opCtx);
+    if (tracker) {
+        tracker->_opCtx = opCtx;
+        CurOp::get(opCtx)->setMemoryTrackingStats(tracker->currentMemoryBytes(),
+                                                  tracker->maxMemoryBytes());
     }
-}
-
-OperationMemoryUsageTracker* OperationMemoryUsageTracker::getFromClientCursor_forTest(
-    ClientCursor* clientCursor) {
-    return getFromClientCursor(clientCursor).get();
+    _getFromOpCtx(opCtx) = std::move(tracker);
 }
 
 }  // namespace mongo

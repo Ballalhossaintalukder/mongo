@@ -27,18 +27,18 @@
  *    it in the license file.
  */
 
-#include <algorithm>
-#include <memory>
-
+#include "mongo/db/repl/repl_set_tag.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/repl/repl_set_tag.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/sequence_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
 
 namespace mongo {
 namespace repl {
@@ -100,7 +100,7 @@ bool ReplSetTagMatch::BoundTagValue::isSatisfied() const {
 ReplSetTag ReplSetTagConfig::makeTag(StringData key, StringData value) {
     int32_t keyIndex = _findKeyIndex(key);
     if (size_t(keyIndex) == _tagData.size()) {
-        _tagData.push_back(make_pair(key.toString(), ValueVector()));
+        _tagData.push_back(make_pair(std::string{key}, ValueVector()));
     }
     ValueVector& values = _tagData[keyIndex].second;
     for (size_t valueIndex = 0; valueIndex < values.size(); ++valueIndex) {
@@ -108,7 +108,7 @@ ReplSetTag ReplSetTagConfig::makeTag(StringData key, StringData value) {
             continue;
         return ReplSetTag(keyIndex, int32_t(valueIndex));
     }
-    values.push_back(value.toString());
+    values.push_back(std::string{value});
     return ReplSetTag(keyIndex, int32_t(values.size()) - 1);
 }
 

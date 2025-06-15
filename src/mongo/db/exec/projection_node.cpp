@@ -27,20 +27,20 @@
  *    it in the license file.
  */
 
-#include <absl/meta/type_traits.h>
-#include <boost/optional.hpp>
-
-#include <absl/container/flat_hash_map.h>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/exec/projection_node.h"
 
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document_metadata_fields.h"
-#include "mongo/db/exec/projection_node.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::projection_executor {
 using ArrayRecursionPolicy = ProjectionPolicies::ArrayRecursionPolicy;
@@ -66,7 +66,7 @@ void ProjectionNode::_addProjectionForPath(const FieldPath& path) {
         }
     } else {
         // FieldPath can't be empty, so it is safe to obtain the first path component here.
-        addOrGetChild(path.getFieldName(0).toString())->_addProjectionForPath(path.tail());
+        addOrGetChild(std::string{path.getFieldName(0)})->_addProjectionForPath(path.tail());
     }
 }
 
@@ -96,12 +96,12 @@ void ProjectionNode::_addExpressionForPath(const FieldPath& path,
         return;
     }
     // FieldPath can't be empty, so it is safe to obtain the first path component here.
-    addOrGetChild(path.getFieldName(0).toString())->_addExpressionForPath(path.tail(), expr);
+    addOrGetChild(std::string{path.getFieldName(0)})->_addExpressionForPath(path.tail(), expr);
 }
 
 boost::intrusive_ptr<Expression> ProjectionNode::getExpressionForPath(const FieldPath& path) const {
     // The FieldPath always conatins at least one field.
-    auto fieldName = path.getFieldName(0).toString();
+    auto fieldName = std::string{path.getFieldName(0)};
 
     if (path.getPathLength() == 1) {
         if (_expressions.find(fieldName) != _expressions.end()) {
@@ -186,11 +186,11 @@ void ProjectionNode::applyProjections(const Document& inputDoc, MutableDocument*
 }
 
 Value ProjectionNode::applyProjectionsToValue(Value inputValue) const {
-    if (inputValue.getType() == BSONType::Object) {
+    if (inputValue.getType() == BSONType::object) {
         MutableDocument outputSubDoc{initializeOutputDocument(inputValue.getDocument())};
         applyProjections(inputValue.getDocument(), &outputSubDoc);
         return outputSubDoc.freezeToValue();
-    } else if (inputValue.getType() == BSONType::Array) {
+    } else if (inputValue.getType() == BSONType::array) {
         std::vector<Value> values;
         values.reserve(inputValue.getArrayLength());
         for (const auto& input : inputValue.getArray()) {
@@ -223,8 +223,9 @@ void ProjectionNode::applyExpressions(const Document& root, MutableDocument* out
     for (auto&& field : _orderToProcessAdditionsAndChildren) {
         auto childIt = _children.find(field);
         if (childIt != _children.end()) {
-            outputDoc->setField(
-                field, childIt->second->applyExpressionsToValue(root, outputDoc->peek()[field]));
+            outputDoc->setField(field,
+                                childIt->second->applyExpressionsToValue(
+                                    root, outputDoc->peek()[StringData{field}]));
         } else {
             auto expressionIt = _expressions.find(field);
             tassert(7241726,
@@ -239,11 +240,11 @@ void ProjectionNode::applyExpressions(const Document& root, MutableDocument* out
 }
 
 Value ProjectionNode::applyExpressionsToValue(const Document& root, Value inputValue) const {
-    if (inputValue.getType() == BSONType::Object) {
+    if (inputValue.getType() == BSONType::object) {
         MutableDocument outputDoc(inputValue.getDocument());
         applyExpressions(root, &outputDoc);
         return outputDoc.freezeToValue();
-    } else if (inputValue.getType() == BSONType::Array) {
+    } else if (inputValue.getType() == BSONType::array) {
         std::vector<Value> values;
         values.reserve(inputValue.getArrayLength());
         for (const auto& input : inputValue.getArray()) {

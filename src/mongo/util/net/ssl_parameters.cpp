@@ -28,8 +28,6 @@
  */
 
 
-#include "mongo/platform/basic.h"
-
 #include "mongo/util/net/ssl_parameters.h"
 
 #include "mongo/bson/json.h"
@@ -78,11 +76,6 @@ void SSLModeServerParameter::append(OperationContext*,
                                     BSONObjBuilder* builder,
                                     StringData fieldName,
                                     const boost::optional<TenantId>&) {
-    std::call_once(warnForSSLMode, [] {
-        LOGV2_WARNING(
-            23803, "Use of deprecated server parameter 'sslMode', please use 'tlsMode' instead.");
-    });
-
     builder->append(fieldName, SSLParams::sslModeFormat(sslGlobalParams.sslMode.load()));
 }
 
@@ -95,12 +88,15 @@ void TLSModeServerParameter::append(OperationContext*,
         SSLParams::tlsModeFormat(static_cast<SSLParams::SSLModes>(sslGlobalParams.sslMode.load())));
 }
 
-Status SSLModeServerParameter::setFromString(StringData strMode, const boost::optional<TenantId>&) {
-    std::call_once(warnForSSLMode, [] {
-        LOGV2_WARNING(
-            23804, "Use of deprecated server parameter 'sslMode', please use 'tlsMode' instead.");
+void SSLModeServerParameter::warnIfDeprecated(StringData action) {
+    std::call_once(warnForSSLMode, [&] {
+        LOGV2_WARNING(23804,
+                      "Use of deprecated server parameter 'sslMode', please use 'tlsMode' instead.",
+                      "action"_attr = action);
     });
+}
 
+Status SSLModeServerParameter::setFromString(StringData strMode, const boost::optional<TenantId>&) {
     auto swNewMode = checkTLSModeTransition(
         SSLParams::sslModeFormat, SSLParams::sslModeParse, "sslMode", strMode);
     if (!swNewMode.isOK()) {
@@ -179,13 +175,13 @@ void TLSCATrustsSetParameter::append(OperationContext*,
  */
 Status TLSCATrustsSetParameter::set(const BSONElement& element,
                                     const boost::optional<TenantId>&) try {
-    if ((element.type() != Object) || !element.Obj().couldBeArray()) {
+    if ((element.type() != BSONType::object) || !element.Obj().couldBeArray()) {
         return {ErrorCodes::BadValue, "Value must be an array"};
     }
 
     SSLParams::TLSCATrusts trusts;
     for (const auto& trustElement : BSONArray(element.Obj())) {
-        if (trustElement.type() != Object) {
+        if (trustElement.type() != BSONType::object) {
             return {ErrorCodes::BadValue, "Value must be an array of trust definitions"};
         }
 
@@ -233,7 +229,7 @@ void ClusterAuthX509OverrideParameter::append(OperationContext* opCtx,
 
 Status ClusterAuthX509OverrideParameter::set(const BSONElement& element,
                                              const boost::optional<TenantId>&) try {
-    if ((element.type() != Object)) {
+    if ((element.type() != BSONType::object)) {
         return {ErrorCodes::BadValue, "Value must be an object"};
     }
 
@@ -248,10 +244,10 @@ Status ClusterAuthX509OverrideParameter::set(const BSONElement& element,
 
     if (overrideParam.getAttributes()) {
         sslGlobalParams.clusterAuthX509OverrideAttributes =
-            overrideParam.getAttributes()->toString();
+            std::string{*overrideParam.getAttributes()};
     } else if (overrideParam.getExtensionValue()) {
         sslGlobalParams.clusterAuthX509OverrideExtensionValue =
-            overrideParam.getExtensionValue()->toString();
+            std::string{*overrideParam.getExtensionValue()};
     }
 
     return Status::OK();

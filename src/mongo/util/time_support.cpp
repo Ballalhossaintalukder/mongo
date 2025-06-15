@@ -28,15 +28,12 @@
  */
 
 #include <algorithm>
+
 #include <boost/move/utility_core.hpp>
 #include <fmt/compile.h>
 #include <fmt/format.h>
 #include <sys/types.h>
 // IWYU pragma: no_include "bits/types/struct_tm.h"
-#include <cstdio>
-#include <cstring>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/parse_number.h"
@@ -45,14 +42,19 @@
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/util/assert_util.h"
+#include "mongo/util/errno_util.h"
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 
-#if defined(_WIN32)
-#include <mmsystem.h>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
+#if defined(_WIN32)
 #include "mongo/util/system_tick_source.h"
 #include "mongo/util/timer.h"
+
+#include <mmsystem.h>
 #elif defined(__linux__)
 #include <ctime>
 #elif defined(__APPLE__)
@@ -115,10 +117,6 @@ bool Date_t::isFormattable() const {
 }
 
 
-// jsTime_virtual_skew is just for testing. a test command manipulates it.
-long long jsTime_virtual_skew = 0;
-thread_local long long jsTime_virtual_thread_skew = 0;
-
 void time_t_to_Struct(time_t t, struct tm* buf, bool local) {
     bool itWorked;
 #if defined(_WIN32)
@@ -179,7 +177,7 @@ std::string terseCurrentTimeForFilename(bool appendZed) {
     const std::size_t expLen = appendZed ? 20 : 19;
 
     char buf[32];
-    fassert(16226, strftime(buf, sizeof(buf), fmt.rawData(), &t) == expLen);
+    fassert(16226, strftime(buf, sizeof(buf), fmt.data(), &t) == expLen);
     return buf;
 }
 
@@ -580,28 +578,6 @@ int Backoff::getNextSleepMillis(long long lastSleepMillis,
     return lastSleepMillis;
 }
 
-// DO NOT TOUCH except for testing
-void jsTimeVirtualSkew(long long skew) {
-    jsTime_virtual_skew = skew;
-}
-long long getJSTimeVirtualSkew() {
-    return jsTime_virtual_skew;
-}
-
-void jsTimeVirtualThreadSkew(long long skew) {
-    jsTime_virtual_thread_skew = skew;
-}
-
-long long getJSTimeVirtualThreadSkew() {
-    return jsTime_virtual_thread_skew;
-}
-
-/** Date_t is milliseconds since epoch */
-Date_t jsTime() {
-    return Date_t::now() + Milliseconds(getJSTimeVirtualThreadSkew()) +
-        Milliseconds(getJSTimeVirtualSkew());
-}
-
 #ifdef _WIN32  // no gettimeofday on windows
 unsigned long long curTimeMillis64() {
     using stdx::chrono::system_clock;
@@ -617,19 +593,29 @@ unsigned long long curTimeMicros64() {
 }
 
 #else
-unsigned long long curTimeMillis64() {
+
+namespace {
+
+Microseconds curTimeDuration() {
     timeval tv;
-    int ret = gettimeofday(&tv, nullptr);
-    if (ret == -1) {
-        uasserted(1125408, str::stream() << "gettimeofday failed with errno " << errno);
+    if (MONGO_unlikely(gettimeofday(&tv, nullptr) < 0)) {
+        // only possible error is EFAULT, we're passing a pointer to stack memory
+        auto e = lastSystemError();
+        fasserted(1125408,
+                  {ErrorCodes::InternalError, fmt::format("gettimeofday: {}", errorMessage(e))});
     }
-    return ((unsigned long long)tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+
+    return Seconds(tv.tv_sec) + Microseconds(tv.tv_usec);
+}
+
+}  // namespace
+
+unsigned long long curTimeMillis64() {
+    return static_cast<unsigned long long>(durationCount<Milliseconds>(curTimeDuration()));
 }
 
 unsigned long long curTimeMicros64() {
-    timeval tv;
-    gettimeofday(&tv, nullptr);
-    return (((unsigned long long)tv.tv_sec) * 1000 * 1000) + tv.tv_usec;
+    return static_cast<unsigned long long>(durationCount<Microseconds>(curTimeDuration()));
 }
 #endif
 

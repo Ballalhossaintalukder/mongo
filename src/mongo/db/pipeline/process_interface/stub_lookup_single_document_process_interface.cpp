@@ -27,24 +27,25 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/process_interface/stub_lookup_single_document_process_interface.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_mock.h"
 #include "mongo/db/pipeline/pipeline.h"
-#include "mongo/db/pipeline/process_interface/stub_lookup_single_document_process_interface.h"
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -93,14 +94,16 @@ boost::optional<Document> StubLookupSingleDocumentProcessInterface::lookupSingle
     // ExpressionContext with the new namespace.
     auto foreignExpCtx = expCtx->copyWith(nss, collectionUUID, boost::none);
     std::unique_ptr<Pipeline, PipelineDeleter> pipeline;
+    std::unique_ptr<exec::agg::Pipeline> execPipeline;
     try {
         pipeline = Pipeline::makePipeline({BSON("$match" << documentKey)}, foreignExpCtx);
+        execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
     } catch (ExceptionFor<ErrorCodes::NamespaceNotFound>&) {
         return boost::none;
     }
 
-    auto lookedUpDocument = pipeline->getNext();
-    if (auto next = pipeline->getNext()) {
+    auto lookedUpDocument = execPipeline->getNext();
+    if (auto next = execPipeline->getNext()) {
         uasserted(ErrorCodes::TooManyMatchingDocuments,
                   str::stream() << "found more than one document matching "
                                 << documentKey.toString() << " [" << lookedUpDocument->toString()

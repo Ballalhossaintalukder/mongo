@@ -27,13 +27,6 @@
  *    it in the license file.
  */
 
-#include <map>
-#include <string>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <boost/move/utility_core.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -50,6 +43,13 @@
 #include "mongo/db/fts/tokenizer.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <map>
+#include <string>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 
@@ -69,7 +69,7 @@ void _addFTSStuff(BSONObjBuilder* b) {
 
 const FTSLanguage& FTSSpec::_getLanguageToUseV1(const BSONObj& userDoc) const {
     BSONElement e = userDoc[_languageOverrideField];
-    if (e.type() == String) {
+    if (e.type() == BSONType::string) {
         StringData x = e.valueStringData();
         if (e.size() > 0) {
             // make() w/ TEXT_INDEX_VERSION_1 guaranteed to not fail.
@@ -96,7 +96,7 @@ void FTSSpec::_scoreStringV1(const Tools& tools,
         std::string term = str::toLower(t.data);
         if (tools.stopwords->isStopWord(term))
             continue;
-        term = tools.stemmer->stem(term).toString();
+        term = std::string{tools.stemmer->stem(term)};
 
         ScoreHelperStruct& data = terms[term];
 
@@ -124,7 +124,7 @@ void FTSSpec::_scoreStringV1(const Tools& tools,
         // if term is identical to the raw form of the
         // field (untokenized) give it a small boost.
         double adjustment = 1;
-        if (raw.size() == term.length() && raw.equalCaseInsensitive(term))
+        if (str::equalCaseInsensitive(raw, term))
             adjustment += 0.1;
 
         double& score = (*docScores)[term];
@@ -134,7 +134,7 @@ void FTSSpec::_scoreStringV1(const Tools& tools,
 }
 
 bool FTSSpec::_weightV1(StringData field, double* out) const {
-    Weights::const_iterator i = _weights.find(field.toString());
+    Weights::const_iterator i = _weights.find(std::string{field});
     if (i == _weights.end())
         return false;
     *out = i->second;
@@ -158,7 +158,7 @@ void FTSSpec::_scoreRecurseV1(const Tools& tools,
         if (languageOverrideField() == x.fieldName())
             continue;
 
-        if (x.type() == String) {
+        if (x.type() == BSONType::string) {
             double w = 1;
             _weightV1(x.fieldName(), &w);
             _scoreStringV1(tools, x.valueStringData(), term_freqs, w);
@@ -191,16 +191,16 @@ void FTSSpec::_scoreDocumentV1(const BSONObj& obj, TermFrequencyMap* term_freqs)
 
         if (e.eoo()) {
             // do nothing
-        } else if (e.type() == Array) {
+        } else if (e.type() == BSONType::array) {
             BSONObjIterator j(e.Obj());
             while (j.more()) {
                 BSONElement x = j.next();
                 if (leftOverName[0] && x.isABSONObj())
                     x = ::mongo::bson::extractElementAtDottedPath(x.Obj(), leftOverName);
-                if (x.type() == String)
+                if (x.type() == BSONType::string)
                     _scoreStringV1(tools, x.valueStringData(), term_freqs, weight);
             }
-        } else if (e.type() == String) {
+        } else if (e.type() == BSONType::string) {
             _scoreStringV1(tools, e.valueStringData(), term_freqs, weight);
         }
     }
@@ -220,7 +220,7 @@ StatusWith<BSONObj> FTSSpec::_fixSpecV1(const BSONObj& spec) {
             if ((e.fieldNameStringData() == "_fts") || (e.fieldNameStringData() == "_ftsx")) {
                 addedFtsStuff = true;
                 b.append(e);
-            } else if (e.type() == String &&
+            } else if (e.type() == BSONType::string &&
                        (e.valueStringData() == "fts" || e.valueStringData() == "text")) {
                 if (!addedFtsStuff) {
                     _addFTSStuff(&b);

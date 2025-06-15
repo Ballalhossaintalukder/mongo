@@ -27,19 +27,10 @@
  *    it in the license file.
  */
 
-#include <benchmark/benchmark.h>
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
+#include "mongo/db/catalog/collection_catalog.h"
 
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/collection.h"
-#include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_mock.h"
 #include "mongo/db/client.h"
 #include "mongo/db/concurrency/d_concurrency.h"
@@ -51,6 +42,16 @@
 #include "mongo/db/tenant_id.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+
+#include <benchmark/benchmark.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 namespace mongo {
 namespace {
@@ -65,15 +66,15 @@ ServiceContext* setupServiceContext() {
 void createCollections(OperationContext* opCtx, int numCollections) {
     Lock::GlobalLock globalLk(opCtx, MODE_X);
 
-    for (auto i = 0; i < numCollections; i++) {
-        const NamespaceString nss = NamespaceString::createNamespaceString_forTest(
-            "collection_catalog_bm", std::to_string(i));
-        CollectionCatalog::write(opCtx, [&](CollectionCatalog& catalog) {
+    CollectionCatalog::write(opCtx, [&](CollectionCatalog& catalog) {
+        for (auto i = 0; i < numCollections; i++) {
+            const NamespaceString nss = NamespaceString::createNamespaceString_forTest(
+                "collection_catalog_bm", std::to_string(i));
             catalog.registerCollection(opCtx,
                                        std::make_shared<CollectionMock>(nss),
                                        /*ts=*/boost::none);
-        });
-    }
+        }
+    });
 }
 
 }  // namespace
@@ -189,7 +190,7 @@ void BM_CollectionCatalogIterateCollections(benchmark::State& state) {
     }
 }
 
-BENCHMARK(BM_CollectionCatalogWrite)->Ranges({{{1}, {100'000}}});
+BENCHMARK(BM_CollectionCatalogWrite)->Arg(1)->Arg(1000)->Arg(100'000);
 BENCHMARK(BM_CollectionCatalogCreateDropCollection)->Ranges({{{1}, {100'000}}});
 BENCHMARK(BM_CollectionCatalogCreateNCollections)->Ranges({{{1}, {32'768}}});
 BENCHMARK(BM_CollectionCatalogLookupCollectionByNamespace)->Ranges({{{1}, {100'000}}});

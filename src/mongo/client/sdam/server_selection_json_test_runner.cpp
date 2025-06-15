@@ -27,27 +27,12 @@
  *    it in the license file.
  */
 
-#include <boost/filesystem/directory.hpp>
-#include <boost/filesystem/path.hpp>
-#include <boost/filesystem/path_traits.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/iterator/iterator_facade.hpp>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <fstream>  // IWYU pragma: keep
-#include <iostream>
-#include <iterator>
-#include <memory>
-#include <ratio>
-#include <set>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -75,6 +60,19 @@
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/options_parser/value.h"
 #include "mongo/util/time_support.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <fstream>  // IWYU pragma: keep
+#include <iostream>
+#include <iterator>
+#include <memory>
+#include <ratio>
+#include <set>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kDefault
 
@@ -188,7 +186,7 @@ private:
         // Only create the initial server description if the original avg rtt is not "NULL". If it
         // is, the test case is meant to mimic creating the first ServerDescription which we will do
         // above.
-        std::string origRttAsString = _jsonTest.getStringField("avg_rtt_ms").toString();
+        std::string origRttAsString = std::string{_jsonTest.getStringField("avg_rtt_ms")};
         if (origRttAsString.compare("NULL") != 0) {
             auto serverDescription = ServerDescriptionBuilder()
                                          .withAddress(HostAndPort("dummy"))
@@ -312,7 +310,7 @@ private:
         // lowercased keywords. Also, change the key "tags_set" to "tags".
         // This can throw for test cases that have invalid read preferences.
         auto readPrefObj = _jsonTest.getObjectField("read_preference");
-        std::string mode = readPrefObj.getStringField("mode").toString();
+        std::string mode = std::string{readPrefObj.getStringField("mode")};
         mode[0] = ctype::toLower(mode[0]);
         auto tagSetsObj = readPrefObj["tag_sets"];
         auto tags = tagSetsObj ? BSONArray(readPrefObj["tag_sets"].Obj()) : BSONArray();
@@ -390,7 +388,7 @@ private:
             auto tagsObj = server.getObjectField("tags");
             const auto keys = tagsObj.getFieldNames<std::set<std::string>>();
             for (const auto& key : keys) {
-                serverDescription.withTag(key, tagsObj.getStringField(key).toString());
+                serverDescription.withTag(key, std::string{tagsObj.getStringField(key)});
             }
 
             serverDescriptions.push_back(serverDescription.instance());

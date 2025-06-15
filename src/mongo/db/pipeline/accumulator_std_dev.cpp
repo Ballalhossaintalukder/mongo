@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <cmath>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -43,6 +39,10 @@
 #include "mongo/db/pipeline/window_function/window_function_expression.h"
 #include "mongo/db/pipeline/window_function/window_function_stddev.h"
 #include "mongo/util/assert_util.h"
+
+#include <cmath>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -85,7 +85,7 @@ void AccumulatorStdDev::processInternal(const Value& input, bool merging) {
         }
     } else {
         // This is what getValue(true) produced below.
-        assertMergingInputType(input, Object);
+        assertMergingInputType(input, BSONType::object);
         const double m2 = input["m2"].getDouble();
         const double mean = input["mean"].getDouble();
         const long long count = input["count"].getLong();

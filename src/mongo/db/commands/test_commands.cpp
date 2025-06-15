@@ -29,14 +29,6 @@
 
 #include "mongo/db/commands/test_commands.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <memory>
-#include <ostream>
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status.h"
@@ -62,6 +54,7 @@
 #include "mongo/db/feature_flag_test_gen.h"
 #include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/namespace_string.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/query/internal_plans.h"
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/plan_yield_policy.h"
@@ -77,6 +70,15 @@
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <algorithm>
+#include <memory>
+#include <ostream>
+#include <string>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -128,9 +130,15 @@ public:
         LOGV2(20505, "Test-only command 'godinsert' invoked", "collection"_attr = nss.coll());
         BSONObj obj = cmdObj["obj"].embeddedObjectUserCheck();
 
-        Lock::DBLock lk(opCtx, dbName, MODE_X);
-        OldClientContext ctx(opCtx, nss);
-        Database* db = ctx.db();
+        AutoGetDb autodb(opCtx, dbName, MODE_X);
+        Database* db = autodb.ensureDbExists(opCtx);
+
+        AutoStatsTracker statsTracker(opCtx,
+                                      nss,
+                                      Top::LockType::WriteLocked,
+                                      AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                                      DatabaseProfileSettings::get(opCtx->getServiceContext())
+                                          .getDatabaseProfileLevel(dbName));
 
         auto collection = acquireCollection(
             opCtx,
@@ -283,9 +291,12 @@ public:
              const BSONObj& cmdObj,
              BSONObjBuilder& result) override {
         const NamespaceString fullNs = CommandHelpers::parseNsCollectionRequired(dbName, cmdObj);
-        AutoGetCollection autoColl(opCtx, fullNs, MODE_IS);
-        uassert(7927100, "Could not find a collection with the requested namespace", autoColl);
-        auto output = autoColl->timeseriesBucketingParametersHaveChanged();
+        const auto coll = acquireCollection(
+            opCtx,
+            CollectionAcquisitionRequest::fromOpCtx(opCtx, fullNs, AcquisitionPrerequisites::kRead),
+            MODE_IS);
+        uassert(7927100, "Could not find a collection with the requested namespace", coll.exists());
+        auto output = coll.getCollectionPtr()->timeseriesBucketingParametersHaveChanged();
         if (output) {
             result.append("changed", *output);
         }
@@ -344,13 +355,19 @@ std::string TestingDurableHistoryPin::getName() {
 }
 
 boost::optional<Timestamp> TestingDurableHistoryPin::calculatePin(OperationContext* opCtx) {
-    AutoGetCollectionForRead autoColl(opCtx, NamespaceString::kDurableHistoryTestNamespace);
-    if (!autoColl) {
+    const auto coll = acquireCollection(
+        opCtx,
+        CollectionAcquisitionRequest(NamespaceString::kDurableHistoryTestNamespace,
+                                     PlacementConcern::kPretendUnsharded,
+                                     repl::ReadConcernArgs::get(opCtx),
+                                     AcquisitionPrerequisites::kRead),
+        MODE_IS);
+    if (!coll.exists()) {
         return boost::none;
     }
 
     Timestamp ret = Timestamp::max();
-    auto cursor = autoColl->getCursor(opCtx);
+    auto cursor = coll.getCollectionPtr()->getCursor(opCtx);
     for (auto doc = cursor->next(); doc; doc = cursor->next()) {
         const BSONObj obj = doc.value().data.toBson();
         const Timestamp ts = obj["pinTs"].timestamp();

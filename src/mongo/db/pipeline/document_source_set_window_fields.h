@@ -29,26 +29,12 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <list>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/memory_tracking/memory_usage_tracker.h"
+#include "mongo/db/memory_tracking/operation_memory_usage_tracker.h"
 #include "mongo/db/pipeline/accumulation_statement.h"
 #include "mongo/db/pipeline/accumulator.h"
 #include "mongo/db/pipeline/dependencies.h"
@@ -69,6 +55,21 @@
 #include "mongo/db/query/sort_pattern.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/string_map.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <list>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -91,7 +92,7 @@ std::list<boost::intrusive_ptr<DocumentSource>> create(
 
 }  // namespace document_source_set_window_fields
 
-class DocumentSourceInternalSetWindowFields final : public DocumentSource {
+class DocumentSourceInternalSetWindowFields final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$_internalSetWindowFields"_sd;
 
@@ -110,10 +111,12 @@ public:
         int64_t maxMemoryBytes,
         SbeCompatibility sbeCompatibility)
         : DocumentSource(kStageName, expCtx),
+          exec::agg::Stage(kStageName, expCtx),
           _partitionBy(partitionBy),
           _sortBy(std::move(sortBy)),
           _outputFields(std::move(outputFields)),
-          _memoryTracker{expCtx->getAllowDiskUse(), maxMemoryBytes},
+          _memoryTracker{OperationMemoryUsageTracker::createMemoryUsageTrackerForStage(
+              *expCtx, expCtx->getAllowDiskUse() && !expCtx->getInRouter(), maxMemoryBytes)},
           // TODO SERVER-98563 I think we can remove the sortBy here in favor of {$meta: "sortKey"}
           // also.
           _iterator(expCtx.get(), pSource, &_memoryTracker, std::move(partitionBy), _sortBy),
@@ -128,7 +131,6 @@ public:
         return {DocumentSource::GetModPathsReturn::Type::kFiniteSet, std::move(outputPaths), {}};
     }
 
-
     StageConstraints constraints(Pipeline::SplitState pipeState) const final {
         return StageConstraints(StreamType::kBlocking,
                                 PositionRequirement::kNone,
@@ -141,7 +143,7 @@ public:
     }
 
     const char* getSourceName() const override {
-        return kStageName.rawData();
+        return kStageName.data();
     };
 
     static const Id& id;
@@ -190,6 +192,8 @@ public:
 
     DocumentSource::GetNextResult doGetNext() override;
 
+    void doDispose() override;
+
     void setSource(Stage* source) final {
         pSource = source;
         _iterator.setSource(source);
@@ -198,6 +202,10 @@ public:
     bool usedDisk() final {
         return _iterator.usedDisk();
     };
+
+    const SpecificStats* getSpecificStats() const final {
+        return &_stats;
+    }
 
     SbeCompatibility sbeCompatibility() const {
         return _sbeCompatibility;
@@ -213,6 +221,10 @@ public:
 
     const std::vector<WindowFunctionStatement>& getOutputFields() const {
         return _outputFields;
+    }
+
+    void doForceSpill() override {
+        _iterator.spillToDisk();
     }
 
 private:
@@ -234,6 +246,8 @@ private:
     // Used by the failpoint to determine when to spill to disk.
     int32_t _numDocsProcessed = 0;
     SbeCompatibility _sbeCompatibility = SbeCompatibility::noRequirements;
+
+    DocumentSourceSetWindowFieldsStats _stats;
 };
 
 }  // namespace mongo

@@ -29,16 +29,18 @@
 
 #pragma once
 
-#include <list>
-
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_score_fusion_gen.h"
 #include "mongo/db/pipeline/document_source_score_fusion_inputs_gen.h"
 #include "mongo/db/pipeline/expression_context.h"
+#include "mongo/db/pipeline/lite_parsed_document_source.h"
+#include "mongo/db/pipeline/lite_parsed_pipeline.h"
+
+#include <list>
+
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -89,57 +91,6 @@ public:
         bool isSearchStage() const final {
             return true;
         }
-    };
-
-    // TODO (SERVER-102534): Make ScoreCombination private.
-
-    // The ScoreCombination class validates and stores the combination.method and
-    // combination.expression fields. combination.expression is not immediately parsed into an
-    // expression because any pipelines variables it references will be considered undefined and
-    // will therefore throw an error at parsing time. combination.expression will only be parsed
-    // into an expression when the enclosing $let var (which defines the pipeline variables) is
-    // constructed.
-    class ScoreCombination {
-    public:
-        ScoreCombination(const ScoreFusionSpec& spec) {
-            auto& combination = spec.getCombination();
-            ScoreFusionCombinationMethodEnum combinationMethod =
-                ScoreFusionCombinationMethodEnum::kSum;
-            boost::optional<IDLAnyType> combinationExpression = boost::none;
-            if (combination.has_value() && combination->getMethod().has_value()) {
-                combinationMethod = combination->getMethod().get();
-                uassert(10017300,
-                        "combination.expression should only be specified when combination.method "
-                        "has the value \"expression\"",
-                        (combinationMethod != ScoreFusionCombinationMethodEnum::kExpression &&
-                         !combination->getExpression().has_value()) ||
-                            (combinationMethod == ScoreFusionCombinationMethodEnum::kExpression &&
-                             combination->getExpression().has_value()));
-                combinationExpression = combination->getExpression();
-                uassert(
-                    10017301,
-                    "both combination.expression and combination.weights cannot be specified",
-                    !(combination->getWeights().has_value() && combinationExpression.has_value()));
-            }
-            _combinationMethod = std::move(combinationMethod);
-            _combinationExpression = std::move(combinationExpression);
-        }
-
-        ScoreFusionCombinationMethodEnum getCombinationMethod() const {
-            return _combinationMethod;
-        }
-
-        boost::optional<IDLAnyType> getCombinationExpression() const {
-            return _combinationExpression;
-        }
-
-    private:
-        // The default combination.method value is ScoreFusionCombinationMethodEnum::kSum. The IDL
-        // handles the default behavior.
-        ScoreFusionCombinationMethodEnum _combinationMethod;
-        // This field should only be populated when combination.method has the value
-        // ScoreFusionCombinationMethodEnum::kExpression.
-        boost::optional<IDLAnyType> _combinationExpression = boost::none;
     };
 
 private:

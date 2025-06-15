@@ -29,9 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <memory>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -49,6 +46,10 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cancellation.h"
 #include "mongo/util/future.h"
+
+#include <memory>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -81,8 +82,9 @@ private:
     ExecutorFuture<void> _runImpl(std::shared_ptr<executor::ScopedTaskExecutor> executor,
                                   const CancellationToken& token) noexcept override;
 
-    void _dropShardedCollection(OperationContext* opCtx,
+    void _dropTrackedCollection(OperationContext* opCtx,
                                 const CollectionType& coll,
+                                const ShardId& changeStreamsNotifierShardId,
                                 std::shared_ptr<executor::ScopedTaskExecutor> executor,
                                 const CancellationToken& token);
 

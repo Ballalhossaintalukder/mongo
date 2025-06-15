@@ -85,7 +85,7 @@ public:
 
     Status initFromExisting(OperationContext*,
                             const std::shared_ptr<const Collection>&,
-                            const DurableCatalogEntry&,
+                            const durable_catalog::CatalogEntry&,
                             boost::optional<Timestamp>) override {
         MONGO_UNREACHABLE;
     }
@@ -160,15 +160,9 @@ public:
         MONGO_UNREACHABLE;
     }
 
-    void cappedTruncateAfter(OperationContext*, const RecordId&, bool) const {
-        MONGO_UNREACHABLE;
-    }
-
-    Validator parseValidator(
-        OperationContext*,
-        const BSONObj&,
-        MatchExpressionParser::AllowedFeatureSet,
-        boost::optional<multiversion::FeatureCompatibilityVersion>) const override {
+    Validator parseValidator(OperationContext*,
+                             const BSONObj&,
+                             MatchExpressionParser::AllowedFeatureSet) const override {
         MONGO_UNREACHABLE;
     }
 
@@ -462,7 +456,7 @@ public:
     }
 
     void replaceMetadata(OperationContext*,
-                         std::shared_ptr<BSONCollectionCatalogEntry::MetaData>) override {
+                         std::shared_ptr<durable_catalog::CatalogEntryMetaData>) override {
         MONGO_UNREACHABLE;
     }
 

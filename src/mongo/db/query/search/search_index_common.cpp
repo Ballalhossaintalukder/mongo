@@ -28,6 +28,7 @@
  */
 
 #include "mongo/db/query/search/search_index_common.h"
+
 #include "mongo/db/query/search/manage_search_index_request_gen.h"
 #include "mongo/db/query/search/mongot_options.h"
 #include "mongo/db/query/search/search_index_options.h"
@@ -64,7 +65,7 @@ executor::RemoteCommandRequest createManageSearchIndexRemoteCommandRequest(
 
     if (view) {
         manageSearchIndexRequest.setView(boost::make_optional(
-            MongotQueryViewSpec(view->getNss().coll().toString(), view->getEffectivePipeline())));
+            MongotQueryViewSpec(std::string{view->getNss().coll()}, view->getEffectivePipeline())));
     }
 
     // Create a RemoteCommandRequest with the request and host-and-port.

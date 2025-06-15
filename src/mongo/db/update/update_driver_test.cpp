@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <fmt/format.h>
-#include <map>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/update/update_driver.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -54,9 +45,19 @@
 #include "mongo/db/query/collation/collator_interface_mock.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/service_context_test_fixture.h"
-#include "mongo/db/update/update_driver.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/str.h"
+
+#include <map>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -265,7 +266,7 @@ static void assertSameElements(const BSONElement& elA, const BSONElement& elB) {
                                  &simpleStringDataComparator);
     if (elA.type() != elB.type() || (!elA.isABSONObj() && eltCmp.evaluate(elA != elB))) {
         FAIL(str::stream() << "element " << elA << " not equal to " << elB);
-    } else if (elA.type() == mongo::Array) {
+    } else if (elA.type() == BSONType::array) {
         std::vector<BSONElement> elsA = elA.Array();
         std::vector<BSONElement> elsB = elB.Array();
         if (elsA.size() != elsB.size())
@@ -276,7 +277,7 @@ static void assertSameElements(const BSONElement& elA, const BSONElement& elB) {
         for (; arrItA != elsA.end(); ++arrItA, ++arrItB) {
             assertSameElements(*arrItA, *arrItB);
         }
-    } else if (elA.type() == mongo::Object) {
+    } else if (elA.type() == BSONType::object) {
         assertSameFields(elA.Obj(), elB.Obj());
     }
 }

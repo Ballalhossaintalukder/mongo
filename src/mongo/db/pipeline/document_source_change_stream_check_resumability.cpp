@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/optional.hpp>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_change_stream_check_resumability.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonobj.h"
@@ -42,27 +38,29 @@
 #include "mongo/db/exec/document_value/value_comparator.h"
 #include "mongo/db/pipeline/change_stream_helpers.h"
 #include "mongo/db/pipeline/document_source_change_stream.h"
-#include "mongo/db/pipeline/document_source_change_stream_check_resumability.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/intrusive_counter.h"
 #include "mongo/util/str.h"
-#include "mongo/util/uuid.h"
+
+#include <utility>
+
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 using boost::intrusive_ptr;
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
 namespace mongo {
-namespace {
 
 REGISTER_INTERNAL_DOCUMENT_SOURCE(_internalChangeStreamCheckResumability,
                                   LiteParsedDocumentSourceChangeStreamInternal::parse,
                                   DocumentSourceChangeStreamCheckResumability::createFromBson,
                                   true);
-
-}  // namespace
+ALLOCATE_DOCUMENT_SOURCE_ID(_internalChangeStreamCheckResumability,
+                            DocumentSourceChangeStreamCheckResumability::id)
 
 // Returns ResumeStatus::kFoundToken if the document retrieved from the resumed pipeline satisfies
 // the client's resume token, ResumeStatus::kCheckNextDoc if it is older than the client's token,
@@ -162,7 +160,7 @@ DocumentSourceChangeStreamCheckResumability::createFromBson(
     BSONElement spec, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5467603,
             str::stream() << "the '" << kStageName << "' object spec must be an object",
-            spec.type() == Object);
+            spec.type() == BSONType::object);
 
     auto parsed = DocumentSourceChangeStreamCheckResumabilitySpec::parse(
         IDLParserContext("DocumentSourceChangeStreamCheckResumabilitySpec"), spec.embeddedObject());
@@ -171,7 +169,7 @@ DocumentSourceChangeStreamCheckResumability::createFromBson(
 }
 
 const char* DocumentSourceChangeStreamCheckResumability::getSourceName() const {
-    return kStageName.rawData();
+    return kStageName.data();
 }
 
 DocumentSource::GetNextResult DocumentSourceChangeStreamCheckResumability::doGetNext() {

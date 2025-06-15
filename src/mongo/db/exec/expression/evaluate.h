@@ -29,8 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/pipeline/expression.h"
@@ -41,6 +39,8 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/datetime/date_time_support.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -441,9 +441,9 @@ inline Value evaluate(const ExpressionFieldPath& expr, const Document& root, Var
 
     Value var = variables->getValue(variable, root);
     switch (var.getType()) {
-        case Object:
+        case BSONType::object:
             return evaluatePath(fieldPath, 1, var.getDocument());
-        case Array:
+        case BSONType::array:
             return evaluatePathArray(fieldPath, 1, var);
         default:
             return Value();

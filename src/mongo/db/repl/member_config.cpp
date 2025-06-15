@@ -27,21 +27,21 @@
  *    it in the license file.
  */
 
-#include <boost/algorithm/string/trim.hpp>
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/repl/member_config.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/bsontypes.h"
-#include "mongo/db/repl/member_config.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/algorithm/string/trim.hpp>
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace repl {
@@ -65,7 +65,7 @@ MemberConfig MemberConfig::parseFromBSON(const BSONObj& mcfg) {
 MemberConfig::MemberConfig(const BSONObj& mcfg) {
     parseProtected(IDLParserContext("MemberConfig"), mcfg);
 
-    std::string hostAndPortString = getHost().toString();
+    std::string hostAndPortString = std::string{getHost()};
     boost::trim(hostAndPortString);
     HostAndPort host;
     uassertStatusOK(host.initialize(hostAndPortString));
@@ -121,7 +121,7 @@ void MemberConfig::addTagInfo(ReplSetTagConfig* tagConfig) {
     //
     if (getTags()) {
         for (auto&& tag : getTags().value()) {
-            if (tag.type() != String) {
+            if (tag.type() != BSONType::string) {
                 uasserted(ErrorCodes::TypeMismatch,
                           str::stream()
                               << "tags." << tag.fieldName()

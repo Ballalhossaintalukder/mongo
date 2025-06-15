@@ -28,20 +28,7 @@
  */
 
 // IWYU pragma: no_include "cxxabi.h"
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <system_error>
-#include <type_traits>
-#include <utility>
-#include <vector>
+#include "mongo/s/query/exec/document_source_merge_cursors.h"
 
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/string_data.h"
@@ -56,6 +43,7 @@
 #include "mongo/client/remote_command_targeter_mock.h"
 #include "mongo/db/curop.h"
 #include "mongo/db/database_name.h"
+#include "mongo/db/exec/agg/pipeline_builder.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/exec/document_value/value.h"
@@ -82,13 +70,28 @@
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/query/exec/async_results_merger_params_gen.h"
-#include "mongo/s/query/exec/document_source_merge_cursors.h"
 #include "mongo/s/sharding_mongos_test_fixture.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/net/hostandport.h"
 #include "mongo/util/str.h"
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <system_error>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {
@@ -247,7 +250,7 @@ TEST_F(DocumentSourceMergeCursorsTest, ShouldBeAbleToParseSerializedARMParams) {
 
     // Make sure the serialized version can be parsed into an identical AsyncResultsMergerParams.
     auto newSpec = serializationArray[0].getDocument().toBson();
-    ASSERT(newSpec["$mergeCursors"].type() == BSONType::Object);
+    ASSERT(newSpec["$mergeCursors"].type() == BSONType::object);
     auto newParams = AsyncResultsMergerParams::parse(IDLParserContext("$mergeCursors test"),
                                                      newSpec["$mergeCursors"].Obj());
     checkSerializedAsyncResultsMergerParams(params, newParams, getTenantIdNss());
@@ -296,14 +299,15 @@ TEST_F(DocumentSourceMergeCursorsTest, ShouldBeAbleToIterateCursorsUntilEOF) {
     armParams.setRemotes(std::move(cursors));
     auto pipeline = Pipeline::create({}, expCtx);
     pipeline->addInitialSource(DocumentSourceMergeCursors::create(expCtx, std::move(armParams)));
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
 
     // Iterate the $mergeCursors stage asynchronously on a different thread, since it will block
     // waiting for network responses, which we will manually schedule below.
-    auto future = launchAsync([&pipeline]() {
+    auto future = launchAsync([&execPipeline]() {
         for (int i = 0; i < 5; ++i) {
-            ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 1}}));
+            ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 1}}));
         }
-        ASSERT_FALSE(static_cast<bool>(pipeline->getNext()));
+        ASSERT_FALSE(static_cast<bool>(execPipeline->getNext()));
     });
 
 
@@ -367,12 +371,14 @@ TEST_F(DocumentSourceMergeCursorsTest, ShouldKillCursorIfPartiallyIterated) {
     armParams.setRemotes(std::move(cursors));
     auto pipeline = Pipeline::create({}, expCtx);
     pipeline->addInitialSource(DocumentSourceMergeCursors::create(expCtx, std::move(armParams)));
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
 
     // Iterate the pipeline asynchronously on a different thread, since it will block waiting for
     // network responses, which we will manually schedule below.
-    auto future = launchAsync([&pipeline]() {
-        ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 1}}));
-        pipeline.reset();  // Stop iterating and delete the pipeline.
+    auto future = launchAsync([&]() {
+        ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 1}}));
+        execPipeline.reset();  // Stop iterating and delete the pipeline.
+        pipeline.reset();
     });
 
     // Note we do not use 'kExhaustedCursorID' here, so the cursor is still open.
@@ -385,7 +391,7 @@ TEST_F(DocumentSourceMergeCursorsTest, ShouldKillCursorIfPartiallyIterated) {
     onCommand([&](const auto& request) {
         ASSERT(request.cmdObj["killCursors"]);
         auto cursors = request.cmdObj["cursors"];
-        ASSERT_EQ(cursors.type(), BSONType::Array);
+        ASSERT_EQ(cursors.type(), BSONType::array);
         auto cursorsArray = cursors.Array();
         ASSERT_FALSE(cursorsArray.empty());
         auto cursorId = cursorsArray[0].Long();
@@ -418,14 +424,16 @@ TEST_F(DocumentSourceMergeCursorsTest, ShouldEnforceSortSpecifiedViaARMParams) {
     ASSERT_EQ(pipeline->getSources().size(), 1UL);
     ASSERT_TRUE(dynamic_cast<DocumentSourceMergeCursors*>(pipeline->getSources().front().get()));
 
+    auto execPipeline = exec::agg::buildPipeline(pipeline->getSources(), pipeline->getContext());
+
     // Iterate the pipeline asynchronously on a different thread, since it will block waiting for
     // network responses, which we will manually schedule below.
-    auto future = launchAsync([&pipeline]() {
-        ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 1}}));
-        ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 2}}));
-        ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 3}}));
-        ASSERT_DOCUMENT_EQ(*pipeline->getNext(), (Document{{"x", 4}}));
-        ASSERT_FALSE(static_cast<bool>(pipeline->getNext()));
+    auto future = launchAsync([&execPipeline]() {
+        ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 1}}));
+        ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 2}}));
+        ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 3}}));
+        ASSERT_DOCUMENT_EQ(*execPipeline->getNext(), (Document{{"x", 4}}));
+        ASSERT_FALSE(static_cast<bool>(execPipeline->getNext()));
     });
 
     onCommand([&](const auto& request) {
@@ -497,7 +505,7 @@ TEST_F(DocumentSourceMergeCursorsMultiTenancyTest, ShouldBeAbleToParseSerialized
 
     // Make sure the serialized version can be parsed into an identical AsyncResultsMergerParams.
     const auto newSpec = serializationArray[0].getDocument().toBson();
-    ASSERT(newSpec["$mergeCursors"].type() == BSONType::Object);
+    ASSERT(newSpec["$mergeCursors"].type() == BSONType::object);
     const auto vts = auth::ValidatedTenancyScopeFactory::create(
         tenantId,
         auth::ValidatedTenancyScope::TenantProtocol::kDefault,
@@ -556,7 +564,7 @@ TEST_F(DocumentSourceMergeCursorsMultiTenancyAndFeatureFlagTest,
 
     // Make sure the serialized version can be parsed into an identical AsyncResultsMergerParams.
     const auto newSpec = serializationArray[0].getDocument().toBson();
-    ASSERT(newSpec["$mergeCursors"].type() == BSONType::Object);
+    ASSERT(newSpec["$mergeCursors"].type() == BSONType::object);
     const auto vts = auth::ValidatedTenancyScopeFactory::create(
         tenantId,
         auth::ValidatedTenancyScope::TenantProtocol::kDefault,

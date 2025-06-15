@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/none.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/plan_executor_sbe.h"
 
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
@@ -45,7 +38,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/sbe/values/bson.h"
 #include "mongo/db/pipeline/expression_context.h"
-#include "mongo/db/query/plan_executor_sbe.h"
 #include "mongo/db/query/plan_explainer_factory.h"
 #include "mongo/db/query/plan_insert_listener.h"
 #include "mongo/db/query/plan_yield_policy_remote_cursor.h"
@@ -64,6 +56,15 @@
 #include "mongo/util/str.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <tuple>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -177,15 +178,10 @@ PlanExecutorSBE::PlanExecutorSBE(OperationContext* opCtx,
 }
 
 void PlanExecutorSBE::saveState() {
-    if (_isSaveRecoveryUnitAcrossCommandsEnabled) {
-        // TODO SERVER-103267 This is no longer supported and related code should be removed.
-        MONGO_UNREACHABLE_TASSERT(9858501);
-    } else {
-        // Discard the slots as we won't access them before subsequent PlanExecutorSBE::getNext()
-        // method call.
-        const bool discardSlotState = true;
-        _root->saveState(discardSlotState);
-    }
+    // Discard the slots as we won't access them before subsequent PlanExecutorSBE::getNext()
+    // method call.
+    const bool discardSlotState = true;
+    _root->saveState(discardSlotState);
 
     if (_yieldPolicy && !_yieldPolicy->usesCollectionAcquisitions()) {
         _yieldPolicy->setYieldable(nullptr);
@@ -204,12 +200,7 @@ void PlanExecutorSBE::restoreState(const RestoreContext& context) {
         }
     }
 
-    if (_isSaveRecoveryUnitAcrossCommandsEnabled) {
-        // TODO SERVER-103267 This is no longer supported and related code should be removed.
-        MONGO_UNREACHABLE_TASSERT(9858502);
-    } else {
-        _root->restoreState();
-    }
+    _root->restoreState();
 }
 
 void PlanExecutorSBE::detachFromOperationContext() {

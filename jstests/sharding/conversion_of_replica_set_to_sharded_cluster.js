@@ -5,9 +5,6 @@
  * @tags: [
  *   multiversion_incompatible,
  *   requires_persistence,
- *   # TODO (SERVER-97257): Re-enable this test.
- *   # Test doesn't start enough mongods to have num_mongos routers
- *   embedded_router_incompatible,
  *   requires_scripting,
  *   # This test is incompatible with 'config shard' as it creates a cluster with 0 shards in order
  *   # to be able to add shard with data on it (which is only allowed on the first shard).
@@ -337,23 +334,19 @@ rst0.restart(0, {shardsvr: ''});
 rst0.restart(1, {shardsvr: ''});
 rst0.awaitReplication();
 
-// TODO SERVER-82316: currently we don't have full compatibility for direct connections.
-if (!FeatureFlagUtil.isPresentAndEnabled(rst0.getPrimary(),
-                                         "TrackUnshardedCollectionsUponCreation")) {
-    checkCRUDCommands(rst0.getPrimary().getDB(dbName));
-    checkDDLCommands(rst0.getPrimary().getDB(DDLDbName));
+checkCRUDCommands(rst0.getPrimary().getDB(dbName));
+checkDDLCommands(rst0.getPrimary().getDB(DDLDbName));
 
-    jsTest.log("Third test, using the rs connection directly.");
-    let addShardRes = st.s.adminCommand({addShard: rst0.getURL(), name: rst0.name});
-    assertAddShardSucceeded(addShardRes, rst0.name);
+jsTest.log("Third test, using the rs connection directly.");
+let addShardRes = st.s.adminCommand({addShard: rst0.getURL(), name: rst0.name});
+assertAddShardSucceeded(addShardRes, rst0.name);
 
-    checkCRUDCommands(rst0.getPrimary().getDB(dbName));
-    checkDDLCommands(rst0.getPrimary().getDB(DDLDbName));
+checkCRUDCommands(rst0.getPrimary().getDB(dbName));
+checkDDLCommands(rst0.getPrimary().getDB(DDLDbName));
 
-    jsTest.log("Fourth test, using the router.");
-    checkCRUDCommands(st.s0.getDB(dbName));
-    checkDDLCommands(st.s0.getDB(DDLDbName));
-}
+jsTest.log("Fourth test, using the router.");
+checkCRUDCommands(st.s0.getDB(dbName));
+checkDDLCommands(st.s0.getDB(DDLDbName));
 
 // Cleaning up.
 jsTest.log("Finished test, stopping sharding test");

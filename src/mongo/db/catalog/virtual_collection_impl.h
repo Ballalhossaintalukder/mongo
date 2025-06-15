@@ -29,17 +29,6 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/clonable_ptr.h"
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -52,6 +41,8 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_options.h"
 #include "mongo/db/catalog/collection_options_gen.h"
+#include "mongo/db/catalog/durable_catalog_entry.h"
+#include "mongo/db/catalog/durable_catalog_entry_metadata.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/index_catalog_entry.h"
 #include "mongo/db/catalog/virtual_collection_options.h"
@@ -65,8 +56,6 @@
 #include "mongo/db/query/collation/collator_interface.h"
 #include "mongo/db/query/virtual_collection/external_record_store.h"
 #include "mongo/db/record_id.h"
-#include "mongo/db/storage/bson_collection_catalog_entry.h"
-#include "mongo/db/storage/durable_catalog_entry.h"
 #include "mongo/db/storage/ident.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/db/storage/snapshot.h"
@@ -74,6 +63,17 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 class VirtualCollectionImpl final : public Collection {
@@ -107,7 +107,7 @@ public:
 
     Status initFromExisting(OperationContext* opCtx,
                             const std::shared_ptr<const Collection>& collection,
-                            const DurableCatalogEntry& catalogEntry,
+                            const durable_catalog::CatalogEntry& catalogEntry,
                             boost::optional<Timestamp> readTimestamp) final {
         unimplementedTasserted();
         return Status(ErrorCodes::UnknownError, "unknown");
@@ -205,9 +205,7 @@ public:
 
     Validator parseValidator(OperationContext* opCtx,
                              const BSONObj& validator,
-                             MatchExpressionParser::AllowedFeatureSet allowedFeatures,
-                             boost::optional<multiversion::FeatureCompatibilityVersion>
-                                 maxFeatureCompatibilityVersion = boost::none) const final {
+                             MatchExpressionParser::AllowedFeatureSet allowedFeatures) const final {
         unimplementedTasserted();
         return Validator();
     }
@@ -442,7 +440,7 @@ public:
     }
 
     void replaceMetadata(OperationContext* opCtx,
-                         std::shared_ptr<BSONCollectionCatalogEntry::MetaData> md) final {
+                         std::shared_ptr<durable_catalog::CatalogEntryMetaData> md) final {
         unimplementedTasserted();
     }
 

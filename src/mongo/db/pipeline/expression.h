@@ -37,18 +37,6 @@
 #include <boost/smart_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <algorithm>
-#include <cstddef>
-#include <functional>
-#include <initializer_list>
-#include <iterator>
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -72,7 +60,6 @@
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/db/query/datetime/date_time_support.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
-#include "mongo/db/query/sort_pattern.h"
 #include "mongo/db/query/util/named_enum.h"
 #include "mongo/db/update/pattern_cmp.h"
 #include "mongo/db/version_context.h"
@@ -83,10 +70,38 @@
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace mongo {
 constexpr size_t kMaxArgumentCountForSwitchAndSetExprForSbe = 100;
 
 class BSONElement;
+
+/**
+ * The reasons why an expression is disabled (used for better error messages):
+ *
+ * testCommandsDisabled: Expression was registered via REGISTER_TEST_EXPRESSION, but
+ *                       getTestCommandsEnabled() is false.
+ * featureFlagDisabled:  Expression was registered via REGISTER_EXPRESSION_WITH_FEATURE_FLAG, but
+ *                       the feature flag was not enabled.
+ * otherReasonDisabled:  Expression was registered differently; probably by directly calling
+ *                       REGISTER_EXPRESSION_CONDITIONALLY with evaluatedCondition set to false.
+ */
+enum class ExpressionDisabledReason {
+    testCommandsDisabled,
+    featureFlagDisabled,
+    otherReasonDisabled,
+};
 
 /**
  * You can specify a condition, evaluated during startup,
@@ -100,17 +115,28 @@ class BSONElement;
  *
  * This is the most general REGISTER_EXPRESSION* macro, which all others should delegate to.
  */
-#define REGISTER_EXPRESSION_CONDITIONALLY(                                                   \
-    key, parser, allowedWithApiStrict, allowedClientType, featureFlag, ...)                  \
-    MONGO_INITIALIZER_GENERAL(addToExpressionParserMap_##key,                                \
-                              ("BeginExpressionRegistration"),                               \
-                              ("EndExpressionRegistration"))                                 \
-    (InitializerContext*) {                                                                  \
-        if (!(__VA_ARGS__)) {                                                                \
-            return;                                                                          \
-        }                                                                                    \
-        Expression::registerExpression(                                                      \
-            "$" #key, (parser), (allowedWithApiStrict), (allowedClientType), (featureFlag)); \
+#define REGISTER_EXPRESSION_CONDITIONALLY(                                                      \
+    key, parser, allowedWithApiStrict, allowedClientType, featureFlag, ...)                     \
+    MONGO_INITIALIZER_GENERAL(addToExpressionParserMap_##key,                                   \
+                              ("BeginExpressionRegistration"),                                  \
+                              ("EndExpressionRegistration"))                                    \
+    (InitializerContext*) {                                                                     \
+        /* Require 'featureFlag' to be a constexpr. */                                          \
+        constexpr FeatureFlag* constFeatureFlag{featureFlag};                                   \
+        /* This non-constexpr variable works around a bug in GCC when 'featureFlag' is null. */ \
+        FeatureFlag* featureFlagValue{constFeatureFlag};                                        \
+        bool evaluatedCondition{__VA_ARGS__};                                                   \
+        if (!evaluatedCondition || (featureFlagValue && !featureFlagValue->canBeEnabled())) {   \
+            Expression::registerDisabledExpressionName(                                         \
+                "$" #key,                                                                       \
+                evaluatedCondition ? ExpressionDisabledReason::featureFlagDisabled              \
+                                   : (getTestCommandsEnabled()                                  \
+                                          ? ExpressionDisabledReason::otherReasonDisabled       \
+                                          : ExpressionDisabledReason::testCommandsDisabled));   \
+            return;                                                                             \
+        }                                                                                       \
+        Expression::registerExpression(                                                         \
+            "$" #key, (parser), (allowedWithApiStrict), (allowedClientType), (featureFlag));    \
     }
 
 /**
@@ -127,7 +153,7 @@ class BSONElement;
                                       parser,                        \
                                       AllowedWithApiStrict::kAlways, \
                                       AllowedWithClientType::kAny,   \
-                                      kDoesNotRequireFeatureFlag,    \
+                                      nullptr, /* featureFlag */     \
                                       true)
 
 /**
@@ -151,18 +177,10 @@ class BSONElement;
  * parser and enforce the 'sometimes' behavior during that invocation. No extra validation will be
  * done here.
  */
-#define REGISTER_EXPRESSION_WITH_FEATURE_FLAG(                                                    \
-    key, parser, allowedWithApiStrict, allowedClientType, featureFlag)                            \
-    REGISTER_EXPRESSION_CONDITIONALLY(                                                            \
-        key,                                                                                      \
-        parser,                                                                                   \
-        allowedWithApiStrict,                                                                     \
-        allowedClientType,                                                                        \
-        featureFlag,                                                                              \
-        CheckableFeatureFlagRef(featureFlag).isEnabled([](auto& fcvGatedFlag) {                   \
-            return fcvGatedFlag.isEnabledUseLatestFCVWhenUninitialized(                           \
-                kNoVersionContext, serverGlobalParams.featureCompatibility.acquireFCVSnapshot()); \
-        }))
+#define REGISTER_EXPRESSION_WITH_FEATURE_FLAG(                         \
+    key, parser, allowedWithApiStrict, allowedClientType, featureFlag) \
+    REGISTER_EXPRESSION_CONDITIONALLY(                                 \
+        key, parser, allowedWithApiStrict, allowedClientType, featureFlag, true)
 
 /**
  * Registers a Parser only if test commands are enabled. Use this if your expression is only used
@@ -173,7 +191,7 @@ class BSONElement;
                                       parser,                                          \
                                       allowedWithApiStrict,                            \
                                       allowedClientType,                               \
-                                      kDoesNotRequireFeatureFlag,                      \
+                                      nullptr /* featureFlag */,                       \
                                       getTestCommandsEnabled())
 
 class Expression : public RefCountable {
@@ -328,7 +346,20 @@ public:
                                    Parser parser,
                                    AllowedWithApiStrict allowedWithApiStrict,
                                    AllowedWithClientType allowedWithClientType,
-                                   CheckableFeatureFlagRef featureFlag);
+                                   FeatureFlag* featureFlag);
+
+    /**
+     * Register an expression name as disabled to later improve the error message via
+     * getErrorMessage. There is no need to call this function directly - it will be called in
+     * REGISTER_EXPRESSION_CONDITIONALLY.
+     */
+    static void registerDisabledExpressionName(std::string key, ExpressionDisabledReason reason);
+
+    /**
+     * Return an error message for an unknown expression. Adds a hint in case the expression is
+     * switched off by a feature flag or is only available in testing mode.
+     */
+    static std::string getErrorMessage(StringData key);
 
     const ExpressionVector& getChildren() const {
         return _children;
@@ -653,7 +684,7 @@ public:
     }
 
     const char* getOpName() const final {
-        return AccumulatorState::kName.rawData();
+        return AccumulatorState::kName.data();
     }
 
     void acceptVisitor(ExpressionMutableVisitor* visitor) final {
@@ -676,7 +707,7 @@ public:
     }
 
     const char* getOpName() const {
-        return AccumulatorN::kName.rawData();
+        return AccumulatorN::kName.data();
     }
 
     Value serialize(const SerializationOptions& options = {}) const override {
@@ -3201,7 +3232,7 @@ public:
 
         uassert(9567004,
                 str::stream() << getOpName() << " requires argument to be a string",
-                constVal.getType() == BSONType::String);
+                constVal.getType() == BSONType::string);
 
         return FieldPath(constVal.getString());
     }
@@ -3540,7 +3571,7 @@ public:
                    boost::intrusive_ptr<Expression> charactersToTrim)
         : Expression(expCtx, {std::move(input), std::move(charactersToTrim)}),
           _trimType(trimType),
-          _name(name.toString()) {}
+          _name(std::string{name}) {}
 
     Value evaluate(const Document& root, Variables* variables) const final;
     [[nodiscard]] boost::intrusive_ptr<Expression> optimize() final;
@@ -3889,7 +3920,7 @@ public:
     }
 
     static bool checkBinDataConvertAllowed();
-    static bool checkBinDataConvertNumericAllowed(const VersionContext& vCtx);
+    static bool checkBinDataConvertNumericAllowed(const ExpressionContext* expCtx);
 
     const Expression* getInput() const {
         return _children[_kInput].get();
@@ -4841,7 +4872,7 @@ private:
 /**
  * Returns a UUID.
  */
-class ExpressionUUID final : public Expression {
+class ExpressionCreateUUID final : public Expression {
 public:
     static boost::intrusive_ptr<Expression> parse(ExpressionContext* expCtx,
                                                   BSONElement exprElement,
@@ -4864,7 +4895,7 @@ public:
     }
 
 private:
-    explicit ExpressionUUID(ExpressionContext* expCtx);
+    explicit ExpressionCreateUUID(ExpressionContext* expCtx);
 };
 
 /**

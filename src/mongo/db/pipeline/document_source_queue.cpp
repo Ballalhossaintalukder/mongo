@@ -29,10 +29,6 @@
 
 #include "mongo/db/pipeline/document_source_queue.h"
 
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -40,6 +36,10 @@
 #include "mongo/db/pipeline/stage_constraints.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -53,13 +53,13 @@ boost::intrusive_ptr<DocumentSource> DocumentSourceQueue::createFromBson(
     BSONElement arrayElem, const boost::intrusive_ptr<ExpressionContext>& expCtx) {
     uassert(5858201,
             "literal documents specification must be an array",
-            arrayElem.type() == BSONType::Array);
+            arrayElem.type() == BSONType::array);
     auto queue = DocumentSourceQueue::create(expCtx);
     // arrayElem is an Array and can be iterated through by using .Obj() method
     for (const auto& elem : arrayElem.Obj()) {
         uassert(5858202,
                 "literal documents specification must be an array of objects",
-                elem.type() == BSONType::Object);
+                elem.type() == BSONType::object);
         queue->emplace_back(Document{elem.Obj()}.getOwned());
     }
     return queue;
@@ -77,13 +77,14 @@ DocumentSourceQueue::DocumentSourceQueue(DocumentSourceQueue::DeferredQueue resu
                                          boost::optional<Value> serializeOverride,
                                          boost::optional<StageConstraints> constraintsOverride)
     : DocumentSource(kStageName /* pass the real stage name here for execution stats */, expCtx),
+      exec::agg::Stage(kStageName, expCtx),
       _queue(std::move(results)),
       _stageNameOverride(std::move(stageNameOverride)),
       _serializeOverride(std::move(serializeOverride)),
       _constraintsOverride(std::move(constraintsOverride)) {}
 
 const char* DocumentSourceQueue::getSourceName() const {
-    return _stageNameOverride.value_or(kStageName).rawData();
+    return _stageNameOverride.value_or(kStageName).data();
 }
 
 DocumentSource::GetNextResult DocumentSourceQueue::doGetNext() {

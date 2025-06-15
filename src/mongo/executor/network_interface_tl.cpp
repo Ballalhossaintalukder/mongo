@@ -38,11 +38,6 @@
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <fmt/format.h>
 // IWYU pragma: no_include "cxxabi.h"
-#include <algorithm>
-#include <memory>
-#include <tuple>
-#include <type_traits>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonmisc.h"
@@ -75,6 +70,11 @@
 #include "mongo/util/str.h"
 #include "mongo/util/testing_proctor.h"
 
+#include <algorithm>
+#include <memory>
+#include <tuple>
+#include <type_traits>
+
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kNetwork
 
 
@@ -85,6 +85,7 @@ namespace {
 MONGO_FAIL_POINT_DEFINE(triggerSendRequestNetworkTimeout);
 MONGO_FAIL_POINT_DEFINE(forceConnectionNetworkTimeout);
 MONGO_FAIL_POINT_DEFINE(hangBeforeDrainingCommandStates);
+MONGO_FAIL_POINT_DEFINE(increaseTimeoutOnKillOp);
 
 auto& numConnectionNetworkTimeouts =
     *MetricBuilder<Counter64>("operation.numConnectionNetworkTimeouts");
@@ -651,8 +652,8 @@ void NetworkInterfaceTL::_killOperation(CommandStateBase* cmdStateToKill) try {
         DatabaseName::kAdmin,
         BSON("_killOperations" << 1 << "operationKeys" << BSON_ARRAY(*operationKey)),
         nullptr,
-        TestingProctor::instance().isEnabled() ? kCancelCommandTimeout_forTest
-                                               : kCancelCommandTimeout);
+        increaseTimeoutOnKillOp.shouldFail() ? kCancelCommandTimeout_forTest
+                                             : kCancelCommandTimeout);
     auto cbHandle = executor::TaskExecutor::CallbackHandle();
     auto killOpCmdState = std::make_shared<CommandState>(
         this, killOpRequest, cbHandle, nullptr, CancellationToken::uncancelable());
@@ -771,12 +772,12 @@ bool NetworkInterfaceTL::onNetworkThread() {
     return _reactor->onReactorThread();
 }
 
-void NetworkInterfaceTL::dropConnections(const HostAndPort& hostAndPort) {
+void NetworkInterfaceTL::dropConnections(const HostAndPort& target, const Status& status) {
     if (MONGO_unlikely(!_initialized.load())) {
         return;
     }
 
-    _clientFactory->dropConnections(hostAndPort);
+    _clientFactory->dropConnections(target, status);
 }
 
 AsyncDBClient* NetworkInterfaceTL::LeasedStream::getClient() {
@@ -962,7 +963,8 @@ ExecutorFuture<RemoteCommandResponse> NetworkInterfaceTL::_runCommand(
                 const std::string requestCmdName =
                     cmdState->request.cmdObj.firstElement().fieldName();
                 for (auto&& cmdName : data.getObjectField("cmdNames")) {
-                    if (cmdName.type() == String && cmdName.valueStringData() == requestCmdName) {
+                    if (cmdName.type() == BSONType::string &&
+                        cmdName.valueStringData() == requestCmdName) {
                         return true;
                     }
                 }

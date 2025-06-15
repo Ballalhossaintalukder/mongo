@@ -30,6 +30,7 @@
 #pragma once
 
 #include "mongo/db/storage/record_store.h"
+#include "mongo/db/storage/spill_table.h"
 
 namespace mongo {
 
@@ -37,10 +38,10 @@ namespace mongo {
  * Manages the lifetime of a temporary RecordStore. Unless keep() is called, the managed RecordStore
  * will be dropped after destruction.
  */
-class TemporaryRecordStore {
+class TemporaryRecordStore : public SpillTable {
 public:
-    TemporaryRecordStore(std::unique_ptr<RecordStore> rs) : _rs(std::move(rs)) {};
-    virtual ~TemporaryRecordStore() {}
+    explicit TemporaryRecordStore(std::unique_ptr<RecordStore> rs)
+        : SpillTable(nullptr, std::move(rs)) {}
 
     // Not copyable.
     TemporaryRecordStore(const TemporaryRecordStore&) = delete;
@@ -63,7 +64,6 @@ public:
     }
 
 protected:
-    std::unique_ptr<RecordStore> _rs;
     bool _keep = false;
 };
 }  // namespace mongo

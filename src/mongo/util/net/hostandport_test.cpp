@@ -27,14 +27,14 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
-#include <fmt/format.h>
+#include "mongo/util/net/hostandport.h"
 
 #include "mongo/db/server_options.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/net/hostandport.h"
+
+#include <fmt/format.h>
 
 namespace mongo {
 namespace {

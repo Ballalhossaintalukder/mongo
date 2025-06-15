@@ -27,16 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstdint>
-#include <functional>
-#include <utility>
-
-#include <absl/container/node_hash_map.h>
-#include <absl/meta/type_traits.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/query/stage_builder/sbe/gen_accumulator.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/bson/bsontypes.h"
@@ -52,12 +43,22 @@
 #include "mongo/db/pipeline/window_function/window_function_expression.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/query/stage_builder/sbe/builder.h"
-#include "mongo/db/query/stage_builder/sbe/gen_accumulator.h"
 #include "mongo/db/query/stage_builder/sbe/gen_helpers.h"
 #include "mongo/db/query/stage_builder/sbe/sbexpr_helpers.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <cstdint>
+#include <functional>
+#include <utility>
+
+#include <absl/container/node_hash_map.h>
+#include <absl/meta/type_traits.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo::stage_builder {
 AccumInputs::~AccumInputs() = default;
@@ -287,11 +288,11 @@ namespace {
 SbExpr nullMissingUndefinedToNothing(SbExpr arg, StageBuilderState& state) {
     SbExprBuilder b(state);
 
-    return b.makeFunction("fillType",
-                          std::move(arg),
-                          b.makeInt32Constant(getBSONTypeMask(BSONType::jstNULL) |
-                                              getBSONTypeMask(BSONType::Undefined)),
-                          b.makeNothingConstant());
+    return b.makeFunction(
+        "fillType",
+        std::move(arg),
+        b.makeInt32Constant(getBSONTypeMask(BSONType::null) | getBSONTypeMask(BSONType::undefined)),
+        b.makeNothingConstant());
 }
 
 /**
@@ -1995,15 +1996,15 @@ static const StringDataMap<AccumOpInfo> accumOpInfoMap = {
 };  // accumOpInfoMap
 
 std::string AccumOp::getOpNameForAccStmt(const AccumulationStatement& accStmt) {
-    std::string opName = accStmt.expr.name.toString();
+    std::string opName = std::string{accStmt.expr.name};
 
     // The parser transforms "{$count: ..}" into "{$group: {..: {$sum: NumberInt(1)}}}".
     // We pattern match for "{$sum: 1}" here to reverse the transform performed by the parser.
     if (auto constArg = dynamic_cast<ExpressionConstant*>(accStmt.expr.argument.get())) {
         mongo::Value value = constArg->getValue();
-        if (opName == AccumulatorSum::kName && value.getType() == BSONType::NumberInt &&
+        if (opName == AccumulatorSum::kName && value.getType() == BSONType::numberInt &&
             value.coerceToInt() == 1) {
-            return kAccumulatorCountName.toString();
+            return std::string{kAccumulatorCountName};
         }
     }
 

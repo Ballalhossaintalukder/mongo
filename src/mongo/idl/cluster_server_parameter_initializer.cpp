@@ -29,13 +29,6 @@
 
 #include "mongo/idl/cluster_server_parameter_initializer.h"
 
-#include <memory>
-#include <set>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/concurrency/d_concurrency.h"
@@ -43,10 +36,18 @@
 #include "mongo/db/multitenancy_gen.h"
 #include "mongo/db/repl/replica_set_aware_service.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/shard_role.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/idl/cluster_parameter_synchronization_helpers.h"
 #include "mongo/logv2/log.h"
 #include "mongo/util/decorable.h"
+
+#include <memory>
+#include <set>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kControl
 
@@ -86,10 +87,16 @@ void ClusterServerParameterInitializer::synchronizeAllParametersFromDisk(Operati
     LOGV2_INFO(6608200, "Initializing cluster server parameters from disk");
 
     auto initializeTenantParameters = [opCtx](const boost::optional<TenantId>& tenantId) {
-        AutoGetCollectionForRead coll{opCtx, NamespaceString::makeClusterParametersNSS(tenantId)};
-        if (coll.getCollection()) {
+        const auto coll = acquireCollection(
+            opCtx,
+            CollectionAcquisitionRequest(NamespaceString::makeClusterParametersNSS(tenantId),
+                                         PlacementConcern(boost::none, ShardVersion::UNSHARDED()),
+                                         repl::ReadConcernArgs::get(opCtx),
+                                         AcquisitionPrerequisites::kRead),
+            MODE_IS);
+        if (coll.exists()) {
             cluster_parameters::initializeAllTenantParametersFromCollection(
-                opCtx, *coll.getCollection().get());
+                opCtx, *coll.getCollectionPtr().get());
         }
     };
 

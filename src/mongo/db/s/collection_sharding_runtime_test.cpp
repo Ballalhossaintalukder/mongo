@@ -27,14 +27,7 @@
  *    it in the license file.
  */
 
-#include <boost/optional.hpp>
-#include <boost/smart_ptr.hpp>
-#include <chrono>
-#include <tuple>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
+#include "mongo/db/s/collection_sharding_runtime.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
@@ -59,14 +52,13 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/repl/wait_for_majority_service.h"
-#include "mongo/db/s/collection_sharding_runtime.h"
 #include "mongo/db/s/operation_sharding_state.h"
 #include "mongo/db/s/range_deleter_service.h"
 #include "mongo/db/s/range_deleter_service_test.h"
 #include "mongo/db/s/range_deletion_task_gen.h"
 #include "mongo/db/s/shard_server_test_fixture.h"
-#include "mongo/db/s/sharding_index_catalog_ddl_util.h"
 #include "mongo/db/s/sharding_mongod_test_fixture.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/shard_id.h"
 #include "mongo/db/vector_clock.h"
@@ -81,7 +73,6 @@
 #include "mongo/s/database_version.h"
 #include "mongo/s/resharding/type_collection_fields_gen.h"
 #include "mongo/s/shard_version_factory.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/s/type_collection_common_types_gen.h"
 #include "mongo/stdx/thread.h"
 #include "mongo/unittest/unittest.h"
@@ -89,6 +80,15 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/net/hostandport.h"
+
+#include <chrono>
+#include <tuple>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr.hpp>
 
 namespace mongo {
 
@@ -146,10 +146,7 @@ TEST_F(CollectionShardingRuntimeTest,
     ASSERT_FALSE(csr.getCollectionDescription(opCtx).isSharded());
     auto metadata = makeShardedMetadata(opCtx);
     ScopedSetShardRole scopedSetShardRole{
-        opCtx,
-        kTestNss,
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none)),
-        boost::none /* databaseVersion */};
+        opCtx, kTestNss, ShardVersionFactory::make(metadata), boost::none /* databaseVersion */};
     ASSERT_THROWS_CODE(csr.getCollectionDescription(opCtx), DBException, ErrorCodes::StaleConfig);
 }
 
@@ -168,10 +165,7 @@ TEST_F(CollectionShardingRuntimeTest,
     auto metadata = makeShardedMetadata(opCtx);
     csr.setFilteringMetadata(opCtx, metadata);
     ScopedSetShardRole scopedSetShardRole{
-        opCtx,
-        kTestNss,
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none)),
-        boost::none /* databaseVersion */};
+        opCtx, kTestNss, ShardVersionFactory::make(metadata), boost::none /* databaseVersion */};
     ASSERT_TRUE(csr.getCollectionDescription(opCtx).isSharded());
 }
 
@@ -235,10 +229,7 @@ TEST_F(CollectionShardingRuntimeTest,
     auto metadata = makeShardedMetadata(opCtx);
     csr.setFilteringMetadata(opCtx, metadata);
     ScopedSetShardRole scopedSetShardRole{
-        opCtx,
-        kTestNss,
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none)),
-        boost::none /* databaseVersion */};
+        opCtx, kTestNss, ShardVersionFactory::make(metadata), boost::none /* databaseVersion */};
     ASSERT_EQ(getNumMetadataManagerChanges(csr), 1);
 
     // Set it again with a different metadata object (UUID is generated randomly in
@@ -417,8 +408,7 @@ TEST_F(CollectionShardingRuntimeTest, ShardVersionCheckDetectsClusterTimeConflic
 
     const auto collectionTimestamp = metadata.getShardPlacementVersion().getTimestamp();
 
-    auto receivedShardVersion =
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none));
+    auto receivedShardVersion = ShardVersionFactory::make(metadata);
 
     // Test that conflict is thrown when transaction 'atClusterTime' is not valid the current shard
     // version.
@@ -842,25 +832,11 @@ public:
     }
 };
 
-TEST_F(CollectionShardingRuntimeWithCatalogTest, TestShardingIndexesCatalogCache) {
-    OperationContext* opCtx = operationContext();
-
-    ASSERT_EQ(false, csr()->getIndexes(opCtx).is_initialized());
-
-    Timestamp indexVersion(1, 0);
-    addShardingIndexCatalogEntryToCollection(
-        opCtx, kTestNss, "x_1", BSON("x" << 1), BSONObj(), uuid(), indexVersion, boost::none);
-
-    ASSERT_EQ(true, csr()->getIndexes(opCtx).is_initialized());
-    ASSERT_EQ(CollectionIndexes(uuid(), indexVersion), *csr()->getCollectionIndexes(opCtx));
-}
-
 // Test the CSR before and after the initialization of the ShardingState with ClusterRole::None.
 TEST_F(ShardingMongoDTestFixture, ShardingStateDisabledReturnsUntrackedVersion) {
     OperationContext* opCtx = operationContext();
     const auto metadata = CollectionShardingRuntimeTest::makeShardedMetadata(opCtx);
-    auto receivedShardVersion =
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none));
+    auto receivedShardVersion = ShardVersionFactory::make(metadata);
     ScopedSetShardRole scopedSetShardRole{
         opCtx, kTestNss, receivedShardVersion, boost::none /* databaseVersion */};
 
@@ -885,8 +861,7 @@ TEST_F(ShardingMongoDTestFixture, ShardingStateDisabledReturnsUntrackedVersion) 
 TEST_F(ShardingMongoDTestFixture, ShardingStateEnabledReturnsTrackedVersion) {
     OperationContext* opCtx = operationContext();
     const auto metadata = CollectionShardingRuntimeTest::makeShardedMetadata(opCtx);
-    auto receivedShardVersion =
-        ShardVersionFactory::make(metadata, boost::optional<CollectionIndexes>(boost::none));
+    auto receivedShardVersion = ShardVersionFactory::make(metadata);
     ScopedSetShardRole scopedSetShardRole{
         opCtx, kTestNss, receivedShardVersion, boost::none /* databaseVersion */};
 

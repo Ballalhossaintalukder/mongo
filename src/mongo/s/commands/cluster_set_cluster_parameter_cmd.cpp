@@ -28,13 +28,6 @@
  */
 
 
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <fmt/format.h>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/shim.h"
 #include "mongo/client/read_preference.h"
@@ -44,7 +37,6 @@
 #include "mongo/db/auth/resource_pattern.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/cluster_server_parameter_cmds_gen.h"
-#include "mongo/db/commands/set_cluster_parameter_command_impl.h"
 #include "mongo/db/database_name.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -58,6 +50,13 @@
 #include "mongo/s/request_types/sharded_ddl_commands_gen.h"
 #include "mongo/s/set_cluster_server_parameter_router_impl.h"
 #include "mongo/util/assert_util.h"
+
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kSharding
 

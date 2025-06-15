@@ -31,13 +31,6 @@
 
 #include <boost/optional/optional.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <algorithm>
-#include <cstddef>
-#include <deque>
-#include <functional>
-#include <memory>
-#include <string>
-
 #include "mongo/base/status.h"
 #include "mongo/db/exec/plan_stage.h"
 #include "mongo/db/exec/plan_stats.h"
@@ -46,6 +39,13 @@
 #include "mongo/db/query/query_solution.h"
 #include "mongo/db/query/stage_types.h"
 #include "mongo/platform/atomic_word.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <string>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -110,18 +110,21 @@ public:
         // $groupByDistinct rewrite can reduce the amount of overall work the query needs to do.
         if (cq.getExpCtx()->isFeatureFlagShardFilteringDistinctScanEnabled() && cq.getDistinct() &&
             !cq.cqPipeline().empty() && hasStage(STAGE_DISTINCT_SCAN, stats)) {
-            // Assume that every advance in a distinct scan is twice as productive as the
+            // Assume that every advance in a distinct scan is 5x as productive as the
             // equivalent index scan, up to the number of works actually done by the
-            // distinct scan, in order to favor distinct scans. The maximum bonus is 0.5
-            // (productivity = 0.5), while the minimum bonus is 0 (productivity = 1). If the
-            // distinct scan is not very productive (< 0.5) we don't want to prioritize it
+            // distinct scan, in order to favor distinct scans. The maximum bonus is 0.8
+            // (productivity = 0.2), while the minimum bonus is 0 (productivity = 1). If the
+            // distinct scan is not very productive (< 0.2) we don't want to prioritize it
             // too much; conversely, if it is very productive, we don't need a huge bonus.
-            groupByDistinctBonus = std::min(1 - productivity, productivity);
+            constexpr auto productivityRatio = 5;
+            groupByDistinctBonus =
+                std::min(1 - productivity, productivity * (productivityRatio - 1));
             LOGV2_DEBUG(9961700,
                         5,
                         "Adding groupByDistinctBonus, boost formula is: std::min(1 - productivity, "
-                        "productivity)",
-                        "groupByDistinctBonus"_attr = *groupByDistinctBonus);
+                        "productivity * (productivityRatio - 1))",
+                        "groupByDistinctBonus"_attr = *groupByDistinctBonus,
+                        "productivityRatio"_attr = productivityRatio);
         }
 
         double score = baseScore + productivity + tieBreakers + groupByDistinctBonus.value_or(0.0);

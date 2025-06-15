@@ -28,19 +28,20 @@
  */
 
 
+#include "mongo/platform/random.h"
+
+#include "mongo/base/string_data.h"
+#include "mongo/logv2/log.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/debug_util.h"
+#include "mongo/util/str.h"
+
 #include <cmath>
 #include <set>
 #include <string>
 #include <vector>
 
 #include <fmt/format.h>
-
-#include "mongo/base/string_data.h"
-#include "mongo/logv2/log.h"
-#include "mongo/platform/random.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/debug_util.h"
-#include "mongo/util/str.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kTest
 
@@ -213,12 +214,30 @@ TEST(RandomTest, NextInt32InRange) {
     }
 }
 
+TEST(RandomTest, NextUInt32InRange) {
+    PseudoRandom a(11);
+    for (int i = 0; i < 1000; i++) {
+        auto res = a.nextUInt32(10);
+        ASSERT_GTE(res, (uint32_t)0);
+        ASSERT_LT(res, (uint32_t)10);
+    }
+}
+
 TEST(RandomTest, NextInt64InRange) {
     PseudoRandom a(11);
     for (int i = 0; i < 1000; i++) {
         auto res = a.nextInt64(10);
         ASSERT_GTE(res, 0);
         ASSERT_LT(res, 10);
+    }
+}
+
+TEST(RandomTest, NextUInt64InRange) {
+    PseudoRandom a(11);
+    for (int i = 0; i < 1000; i++) {
+        auto res = a.nextUInt64(10);
+        ASSERT_GTE(res, (uint64_t)0);
+        ASSERT_LT(res, (uint64_t)10);
     }
 }
 

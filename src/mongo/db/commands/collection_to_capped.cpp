@@ -27,8 +27,6 @@
  *    it in the license file.
  */
 
-#include <string>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
@@ -52,6 +50,8 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/str.h"
+
+#include <string>
 
 namespace mongo {
 namespace {
@@ -83,7 +83,7 @@ public:
         const auto nssElt = cmdObj["toCollection"];
         uassert(ErrorCodes::TypeMismatch,
                 "'toCollection' must be of type String",
-                nssElt.type() == BSONType::String);
+                nssElt.type() == BSONType::string);
         const NamespaceString nss(
             NamespaceStringUtil::deserialize(dbName, nssElt.valueStringData()));
         uassert(ErrorCodes::InvalidNamespace,
@@ -108,10 +108,10 @@ public:
 
         uassert(ErrorCodes::TypeMismatch,
                 "'cloneCollectionAsCapped' must be of type String",
-                fromElt.type() == BSONType::String);
+                fromElt.type() == BSONType::string);
         uassert(ErrorCodes::TypeMismatch,
                 "'toCollection' must be of type String",
-                toElt.type() == BSONType::String);
+                toElt.type() == BSONType::string);
 
         const StringData from(fromElt.valueStringData());
         const StringData to(toElt.valueStringData());

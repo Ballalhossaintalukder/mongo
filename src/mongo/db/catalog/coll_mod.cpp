@@ -29,21 +29,6 @@
 
 #include "mongo/db/catalog/coll_mod.h"
 
-#include <boost/optional.hpp>
-#include <cstdint>
-#include <fmt/format.h>
-#include <list>
-#include <memory>
-#include <string>
-#include <utility>
-#include <variant>
-#include <vector>
-
-#include <boost/cstdint.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
@@ -74,6 +59,7 @@
 #include "mongo/db/matcher/expression_parser.h"
 #include "mongo/db/op_observer/op_observer.h"
 #include "mongo/db/pipeline/change_stream_pre_and_post_images_options_gen.h"
+#include "mongo/db/profile_settings.h"
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/database_sharding_state.h"
@@ -108,6 +94,21 @@
 #include "mongo/util/str.h"
 #include "mongo/util/uuid.h"
 #include "mongo/util/version/releases.h"
+
+#include <cstdint>
+#include <list>
+#include <memory>
+#include <string>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include <boost/cstdint.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -188,7 +189,7 @@ StatusWith<std::pair<ParsedCollModRequest, BSONObj>> parseCollModRequest(
     const boost::optional<ShardKeyPattern>& shardKeyPattern) {
 
     bool isView = !coll;
-    bool isTimeseries = coll && coll->getTimeseriesOptions() != boost::none;
+    bool isTimeseries = coll && coll->isTimeseriesCollection();
 
     ParsedCollModRequest parsed;
     auto& cmr = cmd.getCollModRequest();
@@ -383,6 +384,8 @@ StatusWith<std::pair<ParsedCollModRequest, BSONObj>> parseCollModRequest(
             // Disallow index hiding/unhiding on system collections.
             // Bucket collections, which hold data for user-created time-series collections, do
             // not have this restriction.
+            //
+            // TODO SERVER-105548 remove the check on buckets collection after 9.0 becomes last LTS
             if (nss.isSystem() && !nss.isTimeseriesBucketsCollection()) {
                 return {ErrorCodes::BadValue, "Can't hide index on system collection"};
             }
@@ -474,22 +477,9 @@ StatusWith<std::pair<ParsedCollModRequest, BSONObj>> parseCollModRequest(
             return getNotSupportedOnTimeseriesError(CollMod::kValidatorFieldName);
         }
         parsed.numModifications++;
-        // If the feature compatibility version is not kLatest, and we are validating features as
-        // primary, ban the use of new agg features introduced in kLatest to prevent them from being
-        // persisted in the catalog.
-        boost::optional<multiversion::FeatureCompatibilityVersion> maxFeatureCompatibilityVersion;
-        // (Generic FCV reference): This FCV check should exist across LTS binary versions.
-        multiversion::FeatureCompatibilityVersion fcv;
-        if (serverGlobalParams.validateFeaturesAsPrimary.load() &&
-            serverGlobalParams.featureCompatibility.acquireFCVSnapshot().isLessThan(
-                multiversion::GenericFCV::kLatest, &fcv)) {
-            maxFeatureCompatibilityVersion = fcv;
-        }
         auto validatorObj = *validator;
-        parsed.collValidator = coll->parseValidator(opCtx,
-                                                    validatorObj.getOwned(),
-                                                    MatchExpressionParser::kDefaultSpecialFeatures,
-                                                    maxFeatureCompatibilityVersion);
+        parsed.collValidator = coll->parseValidator(
+            opCtx, validatorObj.getOwned(), MatchExpressionParser::kDefaultSpecialFeatures);
 
         // Increment counters to track the usage of schema validators.
         validatorCounters.incrementCounters(
@@ -540,7 +530,7 @@ StatusWith<std::pair<ParsedCollModRequest, BSONObj>> parseCollModRequest(
         if (!isView) {
             return getOnlySupportedOnViewError(CollMod::kViewOnFieldName);
         }
-        parsed.viewOn = viewOn->toString();
+        parsed.viewOn = std::string{*viewOn};
         oplogEntryBuilder.append(CollMod::kViewOnFieldName, *viewOn);
     }
 
@@ -872,6 +862,7 @@ Status _collModInternal(OperationContext* opCtx,
 
     // If collection/view does not exist, short circuit and return.
     if (!coll && !view) {
+        // TODO SERVER-105548 remove the check on buckets collection after 9.0 becomes last LTS
         if (nss.isTimeseriesBucketsCollection()) {
             // If a sharded time-series collection is dropped, it's possible that a stale mongos
             // sends the request on the buckets namespace instead of the view namespace. Ensure that
@@ -883,9 +874,13 @@ Status _collModInternal(OperationContext* opCtx,
         return Status(ErrorCodes::NamespaceNotFound, "ns does not exist");
     }
 
-    // This is necessary to set up CurOp, update the Top stats, and check shard version if the
-    // operation is not on a view.
-    OldClientContext ctx(opCtx, nss, !view);
+    // This is necessary to set up CurOp and update the Top stats.
+    AutoStatsTracker statsTracker(opCtx,
+                                  nss,
+                                  Top::LockType::NotLocked,
+                                  AutoStatsTracker::LogMode::kUpdateTopAndCurOp,
+                                  DatabaseProfileSettings::get(opCtx->getServiceContext())
+                                      .getDatabaseProfileLevel(nss.dbName()));
 
     bool userInitiatedWritesAndNotPrimary = opCtx->writesAreReplicated() &&
         !repl::ReplicationCoordinator::get(opCtx)->canAcceptWritesFor(opCtx, nss);
@@ -953,6 +948,11 @@ Status _collModInternal(OperationContext* opCtx,
         // options so we save the relevant TTL index data in a separate object.
 
         const CollectionOptions& oldCollOptions = coll->getCollectionOptions();
+
+        // Writing invalidates the collection pointer until commit. Snapshot the relevant old
+        // collections settings needed before committing.
+        const auto timeseriesBucketingParametersHaveChanged =
+            coll->timeseriesBucketingParametersHaveChanged();
 
         auto collWriter = [&] {
             if (acquisition) {
@@ -1043,7 +1043,7 @@ Status _collModInternal(OperationContext* opCtx,
         // this flag.
         // (Generic FCV reference): This FCV check should exist across LTS binary versions.
         // TODO SERVER-80003 remove special version handling when LTS becomes 8.0.
-        if (cmrNew.numModifications == 0 && coll->timeseriesBucketingParametersHaveChanged() &&
+        if (cmrNew.numModifications == 0 && timeseriesBucketingParametersHaveChanged &&
             version == multiversion::GenericFCV::kDowngradingFromLatestToLastLTS) {
             writableColl->setTimeseriesBucketingParametersChanged(opCtx, boost::none);
         }
@@ -1087,6 +1087,19 @@ Status _collModInternal(OperationContext* opCtx,
 }
 
 }  // namespace
+
+void staticValidateCollMod(OperationContext* opCtx,
+                           const NamespaceString& nss,
+                           const CollModRequest& request) {
+    // Targeting the underlying buckets collection directly would make the time-series
+    // Collection out of sync with the time-series view document. Additionally, we want to
+    // ultimately obscure/hide the underlying buckets collection from the user, so we're
+    // disallowing targetting it.
+    uassert(ErrorCodes::InvalidNamespace,
+            "collMod on a time-series collection's underlying buckets collection is not "
+            "supported.",
+            !nss.isTimeseriesBucketsCollection());
+}
 
 bool isCollModIndexUniqueConversion(const CollModRequest& request) {
     auto index = request.getIndex();

@@ -27,17 +27,17 @@
  *    it in the license file.
  */
 
-#include <js/Id.h>
-#include <js/String.h>
-
-#include <js/RootingAPI.h>
-#include <js/TypeDecls.h>
+#include "mongo/scripting/mozjs/idwrapper.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/scripting/mozjs/exception.h"
-#include "mongo/scripting/mozjs/idwrapper.h"
 #include "mongo/scripting/mozjs/jsstringwrapper.h"
 #include "mongo/util/assert_util.h"
+
+#include <js/Id.h>
+#include <js/RootingAPI.h>
+#include <js/String.h>
+#include <js/TypeDecls.h>
 
 namespace mongo {
 namespace mozjs {
@@ -46,7 +46,7 @@ IdWrapper::IdWrapper(JSContext* cx, JS::HandleId value) : _context(cx), _value(c
 
 std::string IdWrapper::toString() const {
     JSStringWrapper jsstr;
-    return toStringData(&jsstr).toString();
+    return std::string{toStringData(&jsstr)};
 }
 
 StringData IdWrapper::toStringData(JSStringWrapper* jsstr) const {
@@ -97,7 +97,7 @@ bool IdWrapper::equalsAscii(StringData sd) const {
         }
 
         bool matched;
-        if (!JS_StringEqualsAscii(_context, str, sd.rawData(), &matched)) {
+        if (!JS_StringEqualsAscii(_context, str, sd.data(), &matched)) {
             uasserted(ErrorCodes::JSInterpreterFailure, "Failed to JS_StringEqualsAscii");
         }
 

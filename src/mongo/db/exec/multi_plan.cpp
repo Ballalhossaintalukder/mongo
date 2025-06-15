@@ -30,20 +30,9 @@
 
 #include "mongo/db/exec/multi_plan.h"
 
-#include <algorithm>
-#include <boost/move/utility_core.hpp>
-#include <deque>
-#include <fmt/format.h>
-#include <memory>
-#include <string>
-#include <utility>
-
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/commands/server_status_metric.h"
-#include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/exec/histogram_server_status_metric.h"
 #include "mongo/db/exec/multi_plan_bucket.h"
 #include "mongo/db/exec/trial_period_utils.h"
@@ -57,6 +46,7 @@
 #include "mongo/db/query/plan_ranker_util.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/service_context.h"
+#include "mongo/db/storage/exceptions.h"
 #include "mongo/logv2/log.h"
 #include "mongo/platform/atomic_proxy.h"
 #include "mongo/platform/atomic_word.h"
@@ -64,6 +54,16 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/str.h"
 #include "mongo/util/tick_source.h"
+
+#include <algorithm>
+#include <deque>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -244,6 +244,7 @@ Status MultiPlanStage::pickBestPlan(PlanYieldPolicy* yieldPolicy) {
             return Status(ErrorCodes::RetryMultiPlanning,
                           "Too many multi plans running for the same shape");
         }
+
         LOGV2_DEBUG(8712803,
                     1,
                     "Multiplanning rate limiter tokens are available, continue multiplanning...");
@@ -263,11 +264,10 @@ Status MultiPlanStage::pickBestPlan(PlanYieldPolicy* yieldPolicy) {
     classicNumPlansHistogram.increment(_candidates.size());
     classicCount.increment();
 
-    const size_t numWorks =
-        trial_period::getTrialPeriodMaxWorks(opCtx(),
-                                             collectionPtr(),
-                                             internalQueryPlanEvaluationWorks.load(),
-                                             internalQueryPlanEvaluationCollFraction.load());
+    const double collFraction =
+        trial_period::getCollFractionPerCandidatePlan(*_query, _candidates.size());
+    const size_t numWorks = trial_period::getTrialPeriodMaxWorks(
+        opCtx(), collectionPtr(), internalQueryPlanEvaluationWorks.load(), collFraction);
     size_t numResults = trial_period::getTrialPeriodNumToReturn(*_query);
 
     try {

@@ -27,11 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <string>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
+#include "mongo/db/pipeline/document_path_support.h"
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
@@ -42,10 +38,15 @@
 #include "mongo/db/exec/document_value/document_value_test_util.h"
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/exec/document_value/value_comparator.h"
-#include "mongo/db/pipeline/document_path_support.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/assert_util.h"
+
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
 
 namespace mongo {
 namespace document_path_support {
@@ -334,51 +335,6 @@ TEST(VisitAllValuesAtPathTest, StrictNumericFields) {
         ASSERT_EQ(values.size(), 1UL);
         ASSERT_EQ(values.count(Value(2)), 1UL);
     }
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, ReturnsMissingIfPathDoesNotExist) {
-    Document doc{{"a", 1}, {"b", 2}};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"c.d"});
-    ASSERT_OK(result.getStatus());
-    ASSERT_VALUE_EQ(result.getValue(), Value{});
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, ReturnsMissingIfPathPartiallyExists) {
-    Document doc{fromjson("{a: {b: {c: 1}}}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b.c.d"});
-    ASSERT_OK(result.getStatus());
-    ASSERT_VALUE_EQ(result.getValue(), Value{});
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, ReturnsValueIfPathExists) {
-    Document doc{fromjson("{a: {b: {c: {d: {e: 1}}}}}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b.c.d"});
-    ASSERT_OK(result.getStatus());
-    ASSERT_VALUE_EQ(result.getValue(), Value{BSON("e" << 1)});
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, FailsIfPathTerminatesAtEmptyArray) {
-    Document doc{fromjson("{a: {b: {c: {d: []}}}}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b.c.d"});
-    ASSERT_EQ(result.getStatus(), ErrorCodes::InternalError);
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, FailsIfPathTerminatesAtNonEmptyArray) {
-    Document doc{fromjson("{a: {b: {c: {d: [1, 2, 3]}}}}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b.c.d"});
-    ASSERT_EQ(result.getStatus(), ErrorCodes::InternalError);
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, FailsIfPathContainsArray) {
-    Document doc{fromjson("{a: {b: [{c: {d: 1}}]}}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b.c.d"});
-    ASSERT_EQ(result.getStatus(), ErrorCodes::InternalError);
-}
-
-TEST(ExtractElementAlongNonArrayPathTest, FailsIfFirstPathComponentIsArray) {
-    Document doc{fromjson("{a: [1, 2, {b: 1}]}")};
-    auto result = extractElementAlongNonArrayPath(doc, FieldPath{"a.b"});
-    ASSERT_EQ(result.getStatus(), ErrorCodes::InternalError);
 }
 
 TEST(DocumentToBsonWithPathsTest, ShouldExtractTopLevelFieldIfDottedFieldNeeded) {

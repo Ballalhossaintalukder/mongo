@@ -29,14 +29,6 @@
 
 #include "mongo/db/query/virtual_collection/multi_bson_stream_cursor.h"
 
-#include <cstring>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <fmt/format.h>
-
 #include "mongo/base/data_type_endian.h"
 #include "mongo/base/data_view.h"
 #include "mongo/base/error_codes.h"
@@ -46,6 +38,14 @@
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/record_store.h"
 #include "mongo/platform/compiler.h"
+
+#include <cstring>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 
 namespace mongo {
 
@@ -170,7 +170,7 @@ boost::optional<Record> MultiBsonStreamCursor::nextFromCurrentStream() {
  */
 std::unique_ptr<InputStream<NamedPipeInput>> MultiBsonStreamCursor::getInputStream(
     const std::string& url) {
-    auto filePathPos = url.find(ExternalDataSourceMetadata::kUrlProtocolFile.toString());
+    auto filePathPos = url.find(std::string{ExternalDataSourceMetadata::kUrlProtocolFile});
     tassert(ErrorCodes::BadValue,
             fmt::format("Invalid file url: {}", url),
             filePathPos != std::string::npos);

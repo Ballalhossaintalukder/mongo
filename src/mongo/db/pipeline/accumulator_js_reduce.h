@@ -29,15 +29,6 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -49,6 +40,16 @@
 #include "mongo/db/pipeline/variables.h"
 #include "mongo/db/query/query_shape/serialization_options.h"
 
+#include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
 class AccumulatorInternalJsReduce final : public AccumulatorState {
@@ -56,7 +57,7 @@ public:
     static constexpr auto kName = "$_internalJsReduce"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     static AccumulationExpression parseInternalJsReduce(ExpressionContext* expCtx,
@@ -91,7 +92,7 @@ public:
     static constexpr auto kName = "$accumulator"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     // An AccumulatorState instance only owns its "static" arguments: those that don't need to be

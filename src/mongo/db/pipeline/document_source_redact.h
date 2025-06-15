@@ -29,12 +29,6 @@
 
 #pragma once
 
-#include <set>
-
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/db/exec/document_value/document.h"
@@ -50,9 +44,15 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/util/intrusive_counter.h"
 
+#include <set>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+
 namespace mongo {
 
-class DocumentSourceRedact final : public DocumentSource {
+class DocumentSourceRedact final : public DocumentSource, public exec::agg::Stage {
 public:
     static constexpr StringData kStageName = "$redact"_sd;
     const char* getSourceName() const final;

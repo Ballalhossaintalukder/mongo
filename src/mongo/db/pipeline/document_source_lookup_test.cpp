@@ -27,17 +27,7 @@
  *    it in the license file.
  */
 
-#include <deque>
-#include <initializer_list>
-#include <iostream>
-#include <list>
-#include <vector>
-
-#include <absl/container/node_hash_set.h>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include "mongo/db/pipeline/document_source_lookup.h"
 
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -52,7 +42,6 @@
 #include "mongo/db/exec/document_value/value.h"
 #include "mongo/db/matcher/expression.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
-#include "mongo/db/pipeline/document_source_lookup.h"
 #include "mongo/db/pipeline/document_source_match.h"
 #include "mongo/db/pipeline/document_source_mock.h"
 #include "mongo/db/pipeline/document_source_unwind.h"
@@ -69,14 +58,26 @@
 #include "mongo/db/repl/replication_coordinator_mock.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/storage_interface_mock.h"
+#include "mongo/db/s/sharding_state.h"
 #include "mongo/db/stats/counters.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/platform/atomic_word.h"
-#include "mongo/s/sharding_state.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/str.h"
 #include "mongo/util/string_map.h"
+
+#include <deque>
+#include <initializer_list>
+#include <iostream>
+#include <list>
+#include <vector>
+
+#include <absl/container/node_hash_set.h>
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 namespace {
@@ -189,8 +190,7 @@ TEST_F(DocumentSourceLookUpTest, LookupEmptyPipelineDoesntUseDiskAndIsOKInATrans
     expCtx->setResolvedNamespaces(ResolvedNamespaceMap{{fromNs, {fromNs, std::vector<BSONObj>()}}});
 
     auto docSource = DocumentSourceLookUp::createFromBson(
-        BSON("$lookup" << BSON("from" << fromNs.coll().toString() << "pipeline" << BSONArray()
-                                      << "as"
+        BSON("$lookup" << BSON("from" << fromNs.coll() << "pipeline" << BSONArray() << "as"
                                       << "as"))
             .firstElement(),
         expCtx);
@@ -445,11 +445,11 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStage) {
     std::vector<Value> serialization;
     lookupStage->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     // The fields are in no guaranteed order, so we can't perform a simple Document comparison.
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
     ASSERT_EQ(serializedStage.computeSize(), 4ULL);
@@ -459,10 +459,10 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStage) {
     ASSERT_DOCUMENT_EQ(serializedStage["let"].getDocument(),
                        Document(fromjson("{local_x: \"$x\"}")));
 
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 1UL);
 
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{x: 1}")));
 
@@ -494,7 +494,7 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwind)
 
     auto sourceContainers = pipeline->getSources();
     ASSERT_EQ(sourceContainers.size(), 1);
-    auto iter = sourceContainers.begin();
+    auto iter = sourceContainers.cbegin();
     ASSERT(typeid(DocumentSourceLookUp) == typeid(**iter));
 
     auto lookup = boost::dynamic_pointer_cast<DocumentSourceLookUp>((*iter));
@@ -509,10 +509,10 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwind)
     serialization.clear();
     lookup->serializeToArray(serialization, SerializationOptions{.serializeForCloning = true});
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
     ASSERT_EQ(serializedStage.computeSize(), 5ULL);
@@ -521,15 +521,15 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwind)
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{subfield: {$eq: 1}}")));
 
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 1UL);
 
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{subfield: {$eq: 1}}")));
 
-    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["let"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["let"].getType(), BSONType::object);
 
     //
     // Create a new $lookup stage from the serialization. Serialize the new stage and confirm that
@@ -562,7 +562,7 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwindA
 
     auto sourceContainers = pipeline->getSources();
     ASSERT_EQ(sourceContainers.size(), 1);
-    auto iter = sourceContainers.begin();
+    auto iter = sourceContainers.cbegin();
     ASSERT(typeid(DocumentSourceLookUp) == typeid(**iter));
 
     auto lookup = boost::dynamic_pointer_cast<DocumentSourceLookUp>((*iter));
@@ -572,35 +572,35 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwindA
     lookup->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 2UL);
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
     serializedDoc = serialization[1].getDocument();
-    ASSERT_EQ(serializedDoc["$unwind"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$unwind"].getType(), BSONType::object);
 
     serialization.clear();
     lookup->serializeToArray(serialization, SerializationOptions{.serializeForCloning = true});
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
     ASSERT_EQ(serializedStage.computeSize(), 5ULL);
     ASSERT_VALUE_EQ(serializedStage["from"], Value(std::string("coll")));
     ASSERT_VALUE_EQ(serializedStage["as"], Value(std::string("asField")));
 
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 2UL);
 
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["pipeline"][1].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["pipeline"][1].getType(), BSONType::object);
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{subfield: {$eq: 1}}")));
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][1]["$match"].getDocument(),
                        Document(fromjson("{subfield2: {$eq: 2}}")));
 
-    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["let"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["let"].getType(), BSONType::object);
 
     //
     // Create a new $lookup stage from the serialization. Serialize the new stage and confirm that
@@ -635,7 +635,7 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwindA
 
     auto sourceContainers = pipeline->getSources();
     ASSERT_EQ(sourceContainers.size(), 1);
-    auto iter = sourceContainers.begin();
+    auto iter = sourceContainers.cbegin();
     ASSERT(typeid(DocumentSourceLookUp) == typeid(**iter));
 
     auto lookup = boost::dynamic_pointer_cast<DocumentSourceLookUp>((*iter));
@@ -647,36 +647,36 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithUnwindA
     lookup->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 2UL);
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
     serializedDoc = serialization[1].getDocument();
-    ASSERT_EQ(serializedDoc["$unwind"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$unwind"].getType(), BSONType::object);
 
     serialization.clear();
     lookup->serializeToArray(serialization, SerializationOptions{.serializeForCloning = true});
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
     ASSERT_EQ(serializedStage.computeSize(), 5ULL);
     ASSERT_VALUE_EQ(serializedStage["from"], Value(std::string("coll")));
     ASSERT_VALUE_EQ(serializedStage["as"], Value(std::string("asField")));
 
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 2UL);
 
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["pipeline"][1].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["pipeline"][1].getType(), BSONType::object);
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{subfield: {$eq: 1}}")));
     ASSERT_DOCUMENT_EQ(
         serializedStage["pipeline"][1]["$match"].getDocument(),
         Document(fromjson("{$and: [{subfield2: {$eq: 2}}, {subfield3: {$eq: 3}}]}")));
 
-    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["let"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["$_internalUnwind"].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["let"].getType(), BSONType::object);
 
     //
     // Create a new $lookup stage from the serialization. Serialize the new stage and confirm that
@@ -718,11 +718,11 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithFieldsA
     std::vector<Value> serialization;
     lookupStage->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 1UL);
-    ASSERT_EQ(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQ(serialization[0].getType(), BSONType::object);
 
     // The fields are in no guaranteed order, so we can't perform a simple Document comparison.
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
     ASSERT_EQ(serializedStage.computeSize(), 6ULL);
@@ -734,10 +734,10 @@ TEST_F(DocumentSourceLookUpTest, ShouldBeAbleToReParseSerializedStageWithFieldsA
     ASSERT_DOCUMENT_EQ(serializedStage["let"].getDocument(),
                        Document(fromjson("{local_x: \"$x\"}")));
 
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 1UL);
 
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
     ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$match"].getDocument(),
                        Document(fromjson("{x: 1}")));
 
@@ -855,15 +855,15 @@ TEST_F(DocumentSourceLookUpTest, LookupReParseSerializedStageWithDocumentsPipeli
         lookupStage->serializeToArray(serialization, opts);
         ASSERT_EQ(serialization.size(), 1UL);
         auto serializedDoc = serialization[0].getDocument();
-        ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+        ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
         // Ensure the $documents desugared to $queue properly.
         auto serializedStage = serializedDoc["$lookup"].getDocument();
-        ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+        ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
         ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 4UL);
 
-        ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
-        ASSERT_EQ(serializedStage["pipeline"][0]["$queue"].getType(), BSONType::Array);
+        ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
+        ASSERT_EQ(serializedStage["pipeline"][0]["$queue"].getType(), BSONType::array);
 
         auto roundTripped =
             DocumentSourceLookUp::createFromBson(serializedDoc.toBson().firstElement(), expCtx);
@@ -898,17 +898,17 @@ TEST_F(DocumentSourceLookUpTest, LookupReParseSerializedStageWithSearchPipelineS
     lookupStage->serializeToArray(serialization);
     ASSERT_EQ(serialization.size(), 1UL);
     auto serializedDoc = serialization[0].getDocument();
-    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::Object);
+    ASSERT_EQ(serializedDoc["$lookup"].getType(), BSONType::object);
 
     auto serializedStage = serializedDoc["$lookup"].getDocument();
-    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::Array);
+    ASSERT_EQ(serializedStage["pipeline"].getType(), BSONType::array);
     ASSERT_EQ(serializedStage["pipeline"].getArrayLength(), 1UL);
 
     // If the serialized pipeline doesn't have $search as the first stage, extractSourceStage()
     // needs to be updated to include the desugared $search for sharded queries to work properly.
-    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::Object);
-    ASSERT_EQ(serializedStage["pipeline"][0]["$search"].getType(), BSONType::Object);
-    ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$search"].getDocument(),
+    ASSERT_EQ(serializedStage["pipeline"][0].getType(), BSONType::object);
+    ASSERT_EQ(serializedStage["pipeline"][0]["$search"].getType(), BSONType::object);
+    ASSERT_DOCUMENT_EQ(serializedStage["pipeline"][0]["$search"]["mongotQuery"].getDocument(),
                        Document(fromjson("{term: 'asdf'}")));
 
     auto roundTripped =
@@ -1129,7 +1129,7 @@ public:
         std::unique_ptr<Pipeline, PipelineDeleter> pipeline(
             ownedPipeline, PipelineDeleter(ownedPipeline->getContext()->getOperationContext()));
 
-        while (_removeLeadingQueryStages && !pipeline->getSources().empty()) {
+        while (_removeLeadingQueryStages && !pipeline->empty()) {
             if (pipeline->popFrontWithName("$match") || pipeline->popFrontWithName("$sort") ||
                 pipeline->popFrontWithName("$project")) {
                 continue;
@@ -1406,11 +1406,11 @@ TEST_F(DocumentSourceLookUpTest, ExprEmbeddedInMatchExpressionShouldBeOptimized)
     auto subPipeline = lookupStage->getSubPipeline_forTest(DOC("_id" << 5));
     ASSERT(subPipeline);
 
-    auto sources = subPipeline->getSources();
+    const auto& sources = subPipeline->getSources();
     ASSERT_GTE(sources.size(), 2u);
 
     // The first source is our mock data source, and the second should be the $match expression.
-    auto secondSource = *(++sources.begin());
+    auto secondSource = *(++sources.cbegin());
     auto& matchSource = dynamic_cast<const DocumentSourceMatch&>(*secondSource);
 
     // Ensure that the '$$var' in the embedded expression got optimized to ExpressionConstant.

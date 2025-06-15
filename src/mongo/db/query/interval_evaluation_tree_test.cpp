@@ -27,10 +27,7 @@
  *    it in the license file.
  */
 
-#include <cstddef>
-#include <memory>
-
-#include <boost/optional/optional.hpp>
+#include "mongo/db/query/interval_evaluation_tree.h"
 
 #include "mongo/base/checked_cast.h"
 #include "mongo/base/string_data.h"
@@ -46,9 +43,13 @@
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/db/query/index_bounds_builder.h"
-#include "mongo/db/query/interval_evaluation_tree.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/intrusive_counter.h"
+
+#include <cstddef>
+#include <memory>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 class IntervalEvaluationTreeTest : public unittest::Test {
@@ -223,8 +224,8 @@ TEST_F(IntervalEvaluationTreeTest, TranslateToEval) {
         {BSON("$in" << BSON_ARRAY(5 << 10 << 15)), "(eval $in #0)"},
         {BSON("$regex" << "aaa"), "(eval $regex #0)"},
         // TODO SERVER-64776: fix the $type test cases below
-        {BSON("$type" << "int"), "(const [nan.0, inf.0])"},
-        {BSON("$type" << BSON_ARRAY("string" << "double")), "(const [nan.0, inf.0] [\"\", {}))"},
+        {BSON("$type" << "int"), "(const [nan, inf])"},
+        {BSON("$type" << BSON_ARRAY("string" << "double")), "(const [nan, inf] [\"\", {}))"},
     };
 
     assertMany(testCases);
@@ -232,7 +233,7 @@ TEST_F(IntervalEvaluationTreeTest, TranslateToEval) {
 
 TEST_F(IntervalEvaluationTreeTest, TranslateToConst) {
     std::vector<std::pair<BSONObj, std::string>> testCases = {
-        {BSON("$mod" << BSON_ARRAY(2 << 3)), "(const [nan.0, inf.0])"},
+        {BSON("$mod" << BSON_ARRAY(2 << 3)), "(const [nan, inf])"},
         {BSON("$lt" << MAXKEY), "(const [MinKey, MaxKey))"},
         {BSON("$exists" << true), "(const [MinKey, MaxKey])"},
         {BSON("$exists" << false), "(const [null, null])"},

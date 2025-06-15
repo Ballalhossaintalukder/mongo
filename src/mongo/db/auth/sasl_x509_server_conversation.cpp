@@ -27,7 +27,6 @@
  *    it in the license file.
  */
 
-#include "mongo/platform/basic.h"
 
 #include "mongo/db/auth/sasl_x509_server_conversation.h"
 
@@ -67,7 +66,7 @@ std::string unpackName(StringData inputData) {
         X509MechanismClientStep1::parse(IDLParserContext{"x509-authentication"}, payload);
     const auto& user = request.getPrincipalName();
 
-    return user.value_or("").toString();
+    return std::string{user.value_or("")};
 }
 
 /**
@@ -218,7 +217,7 @@ StatusWith<std::tuple<bool, std::string>> SaslX509ServerMechanism::stepImpl(
                       "cluster authentication, check the --clusterAuthMode flag");
     }
 
-    if (!client->isInternalClient()) {
+    if (!client->isPossiblyUnauthenticatedInternalClient()) {
         LOGV2_WARNING(8209200,
                       "Client isn't a mongod or mongos, but is connecting with a certificate "
                       "with cluster membership");

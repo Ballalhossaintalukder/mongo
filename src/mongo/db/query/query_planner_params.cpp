@@ -29,8 +29,6 @@
 
 #include "query_planner_params.h"
 
-#include <boost/optional/optional.hpp>
-
 #include "mongo/db/exec/projection_executor_utils.h"
 #include "mongo/db/index/multikey_metadata_access_stats.h"
 #include "mongo/db/index/wildcard_access_method.h"
@@ -45,6 +43,8 @@
 #include "mongo/db/storage/storage_options.h"
 #include "mongo/db/timeseries/timeseries_index_schema_conversion_functions.h"
 #include "mongo/util/assert_util.h"
+
+#include <boost/optional/optional.hpp>
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQuery
 
@@ -148,8 +148,8 @@ void fillOutIndexEntries(OperationContext* opCtx,
     bool apiStrict = APIParameters::get(opCtx).getAPIStrict().value_or(false);
 
     std::vector<const IndexCatalogEntry*> indexCatalogEntries;
-    auto ii = collection->getIndexCatalog()->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto ii =
+        collection->getIndexCatalog()->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (ii->more()) {
         const IndexCatalogEntry* ice = ii->next();
 
@@ -490,7 +490,8 @@ void QueryPlannerParams::fillOutSecondaryCollectionsPlannerParams(
 void QueryPlannerParams::fillOutMainCollectionPlannerParams(
     OperationContext* opCtx,
     const CanonicalQuery& canonicalQuery,
-    const MultipleCollectionAccessor& collections) {
+    const MultipleCollectionAccessor& collections,
+    QueryPlanRankerModeEnum planRankerMode) {
     const auto& mainColl = collections.getMainCollection();
     // We will not output collection scans unless there are no indexed solutions. NO_TABLE_SCAN
     // overrides this behavior by not outputting a collscan even if there are no indexed
@@ -526,8 +527,7 @@ void QueryPlannerParams::fillOutMainCollectionPlannerParams(
     // appear to be ID-hack eligible as per 'isIdHackEligibleQuery()', but 'buildIdHackPlan()' fails
     // as there is no _id index. In these cases, we will end up invoking the query planner and CBR,
     // so we need this catalog information.
-    if (canonicalQuery.getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode() !=
-        QueryPlanRankerModeEnum::kMultiPlanning) {
+    if (planRankerMode != QueryPlanRankerModeEnum::kMultiPlanning) {
         mainCollectionInfo.collStats = std::make_unique<stats::CollectionStatisticsImpl>(
             static_cast<double>(mainColl->getRecordStore()->numRecords()), canonicalQuery.nss());
     }
@@ -576,8 +576,8 @@ std::vector<IndexEntry> getIndexEntriesForDistinct(
     const bool mayUnwindArrays =
         !(distinctArgs.plannerOptions & QueryPlannerParams::STRICT_DISTINCT_ONLY);
 
-    auto ii = collectionPtr->getIndexCatalog()->getIndexIterator(
-        opCtx, IndexCatalog::InclusionPolicy::kReady);
+    auto ii =
+        collectionPtr->getIndexCatalog()->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
     while (ii->more()) {
         const IndexCatalogEntry* ice = ii->next();
         const IndexDescriptor* desc = ice->descriptor();
@@ -692,8 +692,9 @@ bool shouldWaitForOplogVisibility(OperationContext* opCtx,
     // visibility timestamp to be updated, it would wait for a replication batch that would never
     // complete because it couldn't reacquire its own lock, the global lock held by the waiting
     // reader.
-    return repl::ReplicationCoordinator::get(opCtx)->canAcceptWritesForDatabase(
-        opCtx, DatabaseName::kAdmin);
+    auto* replCoord = repl::ReplicationCoordinator::get(opCtx);
+    return replCoord->canAcceptWritesForDatabase(opCtx, DatabaseName::kAdmin) &&
+        replCoord->getSettings().isReplSet();
 }
 
 }  // namespace mongo

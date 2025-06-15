@@ -27,9 +27,6 @@
  *    it in the license file.
  */
 
-#include <boost/move/utility_core.hpp>
-#include <memory>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
@@ -38,6 +35,10 @@
 #include "mongo/db/storage/sorted_data_interface_test_assert.h"
 #include "mongo/db/storage/sorted_data_interface_test_harness.h"
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+
+#include <boost/move/utility_core.hpp>
 
 namespace mongo {
 namespace {
@@ -48,18 +49,19 @@ TEST_F(SortedDataInterfaceTest, FullValidate) {
     const auto sorted(
         harnessHelper()->newSortedDataInterface(opCtx(), /*unique=*/false, /*partial=*/false));
 
-    ASSERT(sorted->isEmpty(opCtx()));
+    ASSERT(sorted->isEmpty(opCtx(), recoveryUnit()));
 
     int nToInsert = 10;
     for (int i = 0; i < nToInsert; i++) {
         StorageWriteTransaction txn(recoveryUnit());
         BSONObj key = BSON("" << i);
         RecordId loc(42, i * 2);
-        ASSERT_SDI_INSERT_OK(sorted->insert(opCtx(), makeKeyString(sorted.get(), key, loc), true));
+        ASSERT_SDI_INSERT_OK(
+            sorted->insert(opCtx(), recoveryUnit(), makeKeyString(sorted.get(), key, loc), true));
         txn.commit();
     }
 
-    ASSERT_EQUALS(nToInsert, sorted->numEntries(opCtx()));
+    ASSERT_EQUALS(nToInsert, sorted->numEntries(opCtx(), recoveryUnit()));
 }
 
 }  // namespace

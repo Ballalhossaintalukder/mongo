@@ -29,14 +29,6 @@
 
 #include "mongo/db/collection_crud/capped_collection_maintenance.h"
 
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <utility>
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/collection_options.h"
@@ -59,6 +51,14 @@
 #include "mongo/stdx/mutex.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/decorable.h"
+
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <utility>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 namespace collection_internal {
@@ -276,30 +276,6 @@ void cappedDeleteUntilBelowConfiguredMaximum(OperationContext* opCtx,
     }
 
     wuow.commit();
-}
-
-void cappedTruncateAfter(OperationContext* opCtx,
-                         const CollectionPtr& collection,
-                         const RecordId& end,
-                         bool inclusive) {
-    invariant(
-        shard_role_details::getLocker(opCtx)->isCollectionLockedForMode(collection->ns(), MODE_X));
-    invariant(collection->isCapped());
-    invariant(collection->getIndexCatalog()->numIndexesInProgress() == 0);
-
-    collection->getRecordStore()->capped()->truncateAfter(
-        opCtx, end, inclusive, [&](OperationContext* opCtx, const RecordId& loc, RecordData data) {
-            BSONObj doc = data.releaseToBson();
-            int64_t* const nullKeysDeleted = nullptr;
-            collection->getIndexCatalog()->unindexRecord(
-                opCtx, collection, doc, loc, false, nullKeysDeleted);
-
-            // We are not capturing and reporting to OpDebug the 'keysDeleted' by unindexRecord().
-            // It is questionable whether reporting will add diagnostic value to users and may
-            // instead be confusing as it depends on our internal capped collection document removal
-            // strategy. We can consider adding either keysDeleted or a new metric reporting
-            // document removal if justified by user demand.
-        });
 }
 
 }  // namespace collection_internal

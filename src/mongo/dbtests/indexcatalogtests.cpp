@@ -27,10 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/status.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
@@ -54,6 +50,10 @@
 #include "mongo/db/storage/write_unit_of_work.h"
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
 #include "mongo/unittest/unittest.h"
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace mongo {
 namespace IndexCatalogTests {
@@ -80,22 +80,20 @@ public:
     IndexIteratorTests() {
         const ServiceContext::UniqueOperationContext opCtxPtr = cc().makeOperationContext();
         OperationContext& opCtx = *opCtxPtr;
-        Lock::DBLock lk(&opCtx, _nss.dbName(), MODE_X);
-        OldClientContext ctx(&opCtx, _nss);
+        AutoGetDb autodb(&opCtx, _nss.dbName(), MODE_X);
         WriteUnitOfWork wuow(&opCtx);
 
-        ctx.db()->createCollection(&opCtx, _nss);
+        autodb.ensureDbExists(&opCtx)->createCollection(&opCtx, _nss);
         wuow.commit();
     }
 
     ~IndexIteratorTests() {
         const ServiceContext::UniqueOperationContext opCtxPtr = cc().makeOperationContext();
         OperationContext& opCtx = *opCtxPtr;
-        Lock::DBLock lk(&opCtx, _nss.dbName(), MODE_X);
-        OldClientContext ctx(&opCtx, _nss);
+        AutoGetDb autodb(&opCtx, _nss.dbName(), MODE_X);
         WriteUnitOfWork wuow(&opCtx);
 
-        ctx.db()->dropCollection(&opCtx, _nss).transitional_ignore();
+        autodb.ensureDbExists(&opCtx)->dropCollection(&opCtx, _nss).transitional_ignore();
         wuow.commit();
     }
 
@@ -111,8 +109,7 @@ public:
 
         ASSERT_TRUE(indexCatalog(&opCtx)->numIndexesReady() == numFinishedIndexesStart + 2);
 
-        auto ii =
-            indexCatalog(&opCtx)->getIndexIterator(&opCtx, IndexCatalog::InclusionPolicy::kReady);
+        auto ii = indexCatalog(&opCtx)->getIndexIterator(IndexCatalog::InclusionPolicy::kReady);
         int indexesIterated = 0;
         bool foundIndex = false;
         while (ii->more()) {
@@ -141,22 +138,20 @@ public:
     RefreshEntry() {
         const ServiceContext::UniqueOperationContext opCtxPtr = cc().makeOperationContext();
         OperationContext& opCtx = *opCtxPtr;
-        Lock::DBLock lk(&opCtx, _nss.dbName(), MODE_X);
-        OldClientContext ctx(&opCtx, _nss);
+        AutoGetDb autodb(&opCtx, _nss.dbName(), MODE_X);
         WriteUnitOfWork wuow(&opCtx);
 
-        ctx.db()->createCollection(&opCtx, _nss);
+        autodb.ensureDbExists(&opCtx)->createCollection(&opCtx, _nss);
         wuow.commit();
     }
 
     ~RefreshEntry() {
         const ServiceContext::UniqueOperationContext opCtxPtr = cc().makeOperationContext();
         OperationContext& opCtx = *opCtxPtr;
-        Lock::DBLock lk(&opCtx, _nss.dbName(), MODE_X);
-        OldClientContext ctx(&opCtx, _nss);
+        AutoGetDb autodb(&opCtx, _nss.dbName(), MODE_X);
         WriteUnitOfWork wuow(&opCtx);
 
-        ctx.db()->dropCollection(&opCtx, _nss).transitional_ignore();
+        autodb.ensureDbExists(&opCtx)->dropCollection(&opCtx, _nss).transitional_ignore();
         wuow.commit();
     }
 

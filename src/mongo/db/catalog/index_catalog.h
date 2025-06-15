@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <type_traits>
-#include <vector>
-
 #include "mongo/base/clonable_ptr.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -54,6 +46,15 @@
 #include "mongo/db/server_options.h"
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/db/storage/record_store.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -177,43 +178,11 @@ public:
         const IndexCatalogEntry* _next = nullptr;
     };
 
-    class ReadyIndexesIterator : public IndexIterator {
-    public:
-        ReadyIndexesIterator(OperationContext* opCtx,
-                             IndexCatalogEntryContainer::const_iterator beginIterator,
-                             IndexCatalogEntryContainer::const_iterator endIterator);
-
-    private:
-        const IndexCatalogEntry* _advance() override;
-
-        OperationContext* const _opCtx;
-        IndexCatalogEntryContainer::const_iterator _iterator;
-        IndexCatalogEntryContainer::const_iterator _endIterator;
-    };
-
-    class AllIndexesIterator : public IndexIterator {
-    public:
-        /**
-         * `ownedContainer` is a container whose lifetime the begin and end iterators depend
-         * on. If the caller will keep control of the container for the entire iterator lifetime,
-         * it should pass in a null value.
-         */
-        AllIndexesIterator(OperationContext* opCtx,
-                           std::unique_ptr<std::vector<const IndexCatalogEntry*>> ownedContainer);
-
-    private:
-        const IndexCatalogEntry* _advance() override;
-
-        OperationContext* const _opCtx;
-        std::vector<const IndexCatalogEntry*>::const_iterator _iterator;
-        std::vector<const IndexCatalogEntry*>::const_iterator _endIterator;
-        std::unique_ptr<std::vector<const IndexCatalogEntry*>> _ownedContainer;
-    };
-
     enum class InclusionPolicy {
         kReady = 1 << 0,
         kUnfinished = 1 << 1,
         kFrozen = 1 << 2,
+        kAll = kReady | kUnfinished | kFrozen,
     };
 
     IndexCatalog() = default;
@@ -359,7 +328,7 @@ public:
      * Returns an iterator for the index descriptors in this IndexCatalog.
      */
     virtual std::unique_ptr<IndexIterator> getIndexIterator(
-        OperationContext* opCtx, InclusionPolicy inclusionPolicy) const = 0;
+        InclusionPolicy inclusionPolicy) const = 0;
 
     // ---- index set modifiers ------
 

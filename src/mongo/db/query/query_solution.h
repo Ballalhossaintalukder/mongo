@@ -29,22 +29,15 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 #include <absl/container/flat_hash_map.h>
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <cstddef>
-#include <cstdint>
 // IWYU pragma: no_include "ext/alloc_traits.h"
-#include <iosfwd>
-#include <iterator>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
@@ -71,13 +64,21 @@
 #include "mongo/db/query/projection.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/query/record_id_bound.h"
+#include "mongo/db/query/sort_pattern.h"
 #include "mongo/db/query/stage_types.h"
 #include "mongo/db/query/timeseries/bucket_spec.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/hash_utils.h"
 #include "mongo/util/id_generator.h"
 #include "mongo/util/str.h"
+
+#include <iosfwd>
+#include <iterator>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace mongo {
 
@@ -950,14 +951,24 @@ struct MatchNode : public QuerySolutionNode {
  * UnwindNode is used for $unwind aggregation stages that are pushed down to SBE.
  */
 struct UnwindNode : public QuerySolutionNode {
-    UnwindNode(std::unique_ptr<QuerySolutionNode> child,
-               const FieldPath& fieldPath,
-               bool preserveNullAndEmptyArrays,
-               const boost::optional<FieldPath>& indexPath)
-        : QuerySolutionNode(std::move(child)),
-          fieldPath{fieldPath},
-          preserveNullAndEmptyArrays{preserveNullAndEmptyArrays},
-          indexPath(indexPath) {}
+    /**
+     * This struct describes an Unwind operation. It's factored into a separate 'Spec' type since
+     * EqLookupUnwind nodes also have to store a copy of this information.
+     */
+    struct UnwindSpec {
+        // Path in the document to the field to unwind.
+        FieldPath fieldPath;
+
+        // Iff true, then if the path is null, missing, or an empty array, unwind outputs the
+        // document.
+        bool preserveNullAndEmptyArrays;
+
+        // Optional output path in which to return the array index unwound to this output doc.
+        boost::optional<FieldPath> indexPath;
+    };
+
+    UnwindNode(std::unique_ptr<QuerySolutionNode> child, UnwindSpec spec)
+        : QuerySolutionNode(std::move(child)), spec(std::move(spec)) {}
 
     StageType getType() const override {
         return STAGE_UNWIND;
@@ -985,14 +996,7 @@ struct UnwindNode : public QuerySolutionNode {
     void appendToString(str::stream* ss, int indent) const final;
     std::unique_ptr<QuerySolutionNode> clone() const final;
 
-    // Path in the document to the field to unwind.
-    FieldPath fieldPath;
-
-    // Iff true, then if the path is null, missing, or an empty array, unwind outputs the document.
-    bool preserveNullAndEmptyArrays;
-
-    // Optional output path in which to return the array index unwound to this output doc.
-    const boost::optional<FieldPath>& indexPath;
+    UnwindSpec spec;
 };  // struct UnwindNode
 
 /**
@@ -1714,6 +1718,11 @@ struct EqLookupNode : public QuerySolutionNode {
 
         // Create a plan for a non existent foreign collection.
         kNonExistentForeignCollection,
+
+        // There is an index but it has an incompatible collation. Decide at run time (on a
+        // per-document basis) whether the index can be used to perform the lookup, or whether a
+        // collection scan must be used instead.
+        kDynamicIndexedLoopJoin,
     };
 
     static StringData serializeLookupStrategy(LookupStrategy strategy) {
@@ -1726,6 +1735,8 @@ struct EqLookupNode : public QuerySolutionNode {
                 return "NestedLoopJoin";
             case EqLookupNode::LookupStrategy::kNonExistentForeignCollection:
                 return "NonExistentForeignCollection";
+            case EqLookupNode::LookupStrategy::kDynamicIndexedLoopJoin:
+                return "DynamicIndexedLoopJoin";
             default:
                 uasserted(6357204, "Unknown $lookup strategy type");
         }
@@ -1859,10 +1870,7 @@ struct EqLookupUnwindNode : public QuerySolutionNode {
           idxEntry(std::move(idxEntry)),
           shouldProduceBson(shouldProduceBson),
           // $unwind-specific data members.
-          unwindNode{nullptr /* child */,
-                     joinField /* fieldPath */,
-                     preserveNullAndEmptyArrays,
-                     indexPath},
+          unwindSpec{joinField /* fieldPath */, preserveNullAndEmptyArrays, indexPath},
           scanDirection(scanDirection) {}
 
     StageType getType() const override {
@@ -1938,9 +1946,8 @@ struct EqLookupUnwindNode : public QuerySolutionNode {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     // Represents the absorbed $unwind stage, which may be used in the stage builder for this $LU
-    // node. Its 'child' member is set to nullptr to avoid an unwanted recursion to the current $LU,
-    // which is conceptually the $unwind's parent.
-    struct UnwindNode unwindNode;
+    // node.
+    UnwindNode::UnwindSpec unwindSpec;
 
     /**
      * Scan direction if hinted, default forward.

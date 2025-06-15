@@ -27,15 +27,12 @@
  *    it in the license file.
  */
 
-#include "mongo/bson/json.h"
-#include <boost/move/utility_core.hpp>
-#include <memory>
-#include <utility>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonmisc.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/json.h"
+#include "mongo/db/hasher.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/db/session/logical_session_id.h"
@@ -44,6 +41,9 @@
 #include "mongo/s/shard_key_pattern_query_util.h"
 #include "mongo/unittest/unittest.h"
 #include "mongo/util/duration.h"
+
+#include <memory>
+#include <utility>
 
 namespace mongo {
 namespace {

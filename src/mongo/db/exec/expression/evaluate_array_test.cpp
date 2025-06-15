@@ -29,10 +29,6 @@
 
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 // IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <climits>
-#include <cmath>
-#include <limits>
-
 #include "mongo/bson/json.h"
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/db/exec/document_value/document.h"
@@ -41,6 +37,10 @@
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_context_for_test.h"
 #include "mongo/unittest/unittest.h"
+
+#include <climits>
+#include <cmath>
+#include <limits>
 
 namespace mongo {
 namespace expression_evaluation_test {
@@ -111,7 +111,7 @@ TEST(ExpressionSortArrayTest, SortsNormalArrayForwards) {
         ExpressionSortArray::parse(&expCtx, expr.firstElement(), expCtx.variablesParseState);
     Value val = expressionSortArray->evaluate(MutableDocument().freeze(), &expCtx.variables);
 
-    ASSERT_EQ(val.getType(), BSONType::Array);
+    ASSERT_EQ(val.getType(), BSONType::array);
     ASSERT_VALUE_EQ(val, Value(BSON_ARRAY(1 << 2 << 3)));
 }
 
@@ -123,7 +123,7 @@ TEST(ExpressionSortArrayTest, SortsNormalArrayBackwards) {
         ExpressionSortArray::parse(&expCtx, expr.firstElement(), expCtx.variablesParseState);
     Value val = expressionSortArray->evaluate(MutableDocument().freeze(), &expCtx.variables);
 
-    ASSERT_EQ(val.getType(), BSONType::Array);
+    ASSERT_EQ(val.getType(), BSONType::array);
     ASSERT_VALUE_EQ(val, Value(BSON_ARRAY(3 << 2 << 1)));
 }
 
@@ -135,7 +135,7 @@ TEST(ExpressionSortArrayTest, SortsEmptyArray) {
         ExpressionSortArray::parse(&expCtx, expr.firstElement(), expCtx.variablesParseState);
     Value val = expressionSortArray->evaluate(MutableDocument().freeze(), &expCtx.variables);
 
-    ASSERT_EQ(val.getType(), BSONType::Array);
+    ASSERT_EQ(val.getType(), BSONType::array);
     ASSERT_VALUE_EQ(val, Value(std::vector<Value>()));
 }
 
@@ -147,7 +147,7 @@ TEST(ExpressionSortArrayTest, SortsOneElementArray) {
         ExpressionSortArray::parse(&expCtx, expr.firstElement(), expCtx.variablesParseState);
     Value val = expressionSortArray->evaluate(MutableDocument().freeze(), &expCtx.variables);
 
-    ASSERT_EQ(val.getType(), BSONType::Array);
+    ASSERT_EQ(val.getType(), BSONType::array);
     ASSERT_VALUE_EQ(val, Value(BSON_ARRAY(1)));
 }
 
@@ -196,12 +196,12 @@ void runTest(Document spec) {
             VariablesParseState vps = expCtx.variablesParseState;
             const intrusive_ptr<Expression> expr = Expression::parseExpression(&expCtx, obj, vps);
             Value result = expr->evaluate({}, &expCtx.variables);
-            if (result.getType() == Array) {
+            if (result.getType() == BSONType::array) {
                 result = sortSet(result);
             }
             if (ValueComparator().evaluate(result != expected)) {
                 std::string errMsg = str::stream()
-                    << "for expression " << field.first.toString() << " with argument "
+                    << "for expression " << std::string{field.first} << " with argument "
                     << args.toString() << " full tree: " << expr->serialize().toString()
                     << " expected: " << expected.toString() << " but got: " << result.toString();
                 FAIL(errMsg);

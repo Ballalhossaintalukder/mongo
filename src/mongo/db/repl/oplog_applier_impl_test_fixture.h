@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <cstdint>
-#include <functional>
-#include <memory>
-#include <string>
-#include <vector>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
@@ -45,8 +37,6 @@
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_options.h"
-#include "mongo/db/concurrency/lock_manager_defs.h"
-#include "mongo/db/db_raii.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/op_observer/op_observer.h"
 #include "mongo/db/op_observer/op_observer_noop.h"
@@ -73,6 +63,15 @@
 #include "mongo/util/duration.h"
 #include "mongo/util/time_support.h"
 #include "mongo/util/uuid.h"
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -310,7 +309,7 @@ public:
     StatusWith<BSONObj> next();
 
 private:
-    AutoGetCollectionForRead _collToScan;
+    CollectionAcquisition _collToScan;
     std::unique_ptr<PlanExecutor, PlanExecutor::Deleter> _exec;
 };
 

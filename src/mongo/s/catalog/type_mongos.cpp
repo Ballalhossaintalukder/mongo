@@ -28,10 +28,6 @@
  */
 #include "mongo/s/catalog/type_mongos.h"
 
-
-#include <boost/move/utility_core.hpp>
-#include <boost/optional/optional.hpp>
-
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status_with.h"
 #include "mongo/bson/bsonelement.h"
@@ -41,6 +37,9 @@
 #include "mongo/bson/util/bson_extract.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
+
+#include <boost/move/utility_core.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 const NamespaceString MongosType::ConfigNS(NamespaceString::kConfigMongosNamespace);
@@ -68,7 +67,7 @@ StatusWith<MongosType> MongosType::fromBSON(const BSONObj& source) {
 
     {
         BSONElement mtPingElem;
-        Status status = bsonExtractTypedField(source, ping.name(), BSONType::Date, &mtPingElem);
+        Status status = bsonExtractTypedField(source, ping.name(), BSONType::date, &mtPingElem);
         if (!status.isOK())
             return status;
         mt._ping = mtPingElem.date();
@@ -101,7 +100,7 @@ StatusWith<MongosType> MongosType::fromBSON(const BSONObj& source) {
     if (source.hasField(created.name())) {
         BSONElement mtCreatedElem;
         Status status =
-            bsonExtractTypedField(source, created.name(), BSONType::Date, &mtCreatedElem);
+            bsonExtractTypedField(source, created.name(), BSONType::date, &mtCreatedElem);
         if (!status.isOK())
             return status;
         mt._created = mtCreatedElem.date();
@@ -118,14 +117,15 @@ StatusWith<MongosType> MongosType::fromBSON(const BSONObj& source) {
     if (source.hasField(advisoryHostFQDNs.name())) {
         mt._advisoryHostFQDNs = std::vector<std::string>();
         BSONElement array;
-        Status status = bsonExtractTypedField(source, advisoryHostFQDNs.name(), Array, &array);
+        Status status =
+            bsonExtractTypedField(source, advisoryHostFQDNs.name(), BSONType::array, &array);
         if (!status.isOK())
             return status;
 
         BSONObjIterator it(array.Obj());
         while (it.more()) {
             BSONElement arrayElement = it.next();
-            if (arrayElement.type() != String) {
+            if (arrayElement.type() != BSONType::string) {
                 return Status(ErrorCodes::TypeMismatch,
                               str::stream() << "Elements in \"" << advisoryHostFQDNs.name()
                                             << "\" array must be strings but found "

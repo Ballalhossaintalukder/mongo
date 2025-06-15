@@ -29,8 +29,6 @@
 
 #include "mongo/db/op_debug.h"
 
-#include <string>
-
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -42,12 +40,13 @@
 #include "mongo/db/query/plan_executor.h"
 #include "mongo/db/query/plan_summary_stats.h"
 #include "mongo/db/repl/read_concern_args.h"
-#include "mongo/db/stats/resource_consumption_metrics.h"
 #include "mongo/logv2/log.h"
 #include "mongo/rpc/metadata/client_metadata.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/concurrency/ticketholder_queue_stats.h"
 #include "mongo/util/duration.h"
+
+#include <string>
 
 namespace mongo {
 namespace {
@@ -175,7 +174,6 @@ void addSpillingStats(const absl::flat_hash_map<PlanSummaryStats::SpillingStage,
 
 void OpDebug::report(OperationContext* opCtx,
                      const SingleThreadedLockStats* lockStats,
-                     const ResourceConsumption::OperationMetrics* operationMetrics,
                      const SingleThreadedStorageMetrics& storageMetrics,
                      long long prepareReadConflicts,
                      logv2::DynamicAttributes* pAttrs) const {
@@ -231,7 +229,7 @@ void OpDebug::report(OperationContext* opCtx,
     }
 
     if (!curop.getPlanSummary().empty()) {
-        pAttrs->addDeepCopy("planSummary", curop.getPlanSummary().toString());
+        pAttrs->addDeepCopy("planSummary", std::string{curop.getPlanSummary()});
     }
 
     if (planningTime > Microseconds::zero()) {
@@ -426,12 +424,6 @@ void OpDebug::report(OperationContext* opCtx,
 
     if (storageStats) {
         pAttrs->add("storage", storageStats->toBSON());
-    }
-
-    if (operationMetrics) {
-        BSONObjBuilder builder;
-        operationMetrics->toBsonNonZeroFields(&builder);
-        pAttrs->add("operationMetrics", builder.obj());
     }
 
     // Always report cpuNanos in rare cases that it is zero to facilitate testing that expects this
@@ -780,7 +772,7 @@ std::function<BSONObj(ProfileFilter::Args)> OpDebug::appendStaged(StringSet requ
         }
     };
 
-    addIfNeeded("ts", [](auto field, auto args, auto& b) { b.append(field, jsTime()); });
+    addIfNeeded("ts", [](auto field, auto args, auto& b) { b.append(field, Date_t::now()); });
     addIfNeeded("client", [](auto field, auto args, auto& b) {
         b.append(field, args.opCtx->getClient()->clientAddress());
     });
@@ -1100,14 +1092,6 @@ std::function<BSONObj(ProfileFilter::Args)> OpDebug::appendStaged(StringSet requ
         }
     });
 
-    addIfNeeded("operationMetrics", [](auto field, auto args, auto& b) {
-        auto& metricsCollector = ResourceConsumption::MetricsCollector::get(args.opCtx);
-        if (metricsCollector.hasCollectedMetrics()) {
-            BSONObjBuilder metricsBuilder(b.subobjStart(field));
-            metricsCollector.getMetrics().toBson(&metricsBuilder);
-        }
-    });
-
     if (!requestedFields.empty()) {
         std::stringstream ss;
         ss << "No such field (or fields) available for profile filter";
@@ -1219,7 +1203,7 @@ static void appendResolvedViewsInfoImpl(
 
         BSONArrayBuilder dependenciesArr(aView.subarrayStart("dependencyChain"));
         for (const auto& nss : dependencies) {
-            dependenciesArr.append(nss.coll().toString());
+            dependenciesArr.append(std::string{nss.coll()});
         }
         dependenciesArr.doneFast();
 

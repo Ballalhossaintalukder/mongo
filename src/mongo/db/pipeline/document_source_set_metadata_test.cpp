@@ -27,11 +27,13 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/document_source_set_metadata.h"
+
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/pipeline/aggregation_context_fixture.h"
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_mock.h"
-#include "mongo/db/pipeline/document_source_set_metadata.h"
 #include "mongo/unittest/unittest.h"
 
 namespace mongo {
@@ -89,7 +91,8 @@ TEST_F(DocumentSourceSetMetadataTest, SetFromFieldPath) {
     })");
 
     Document inputDoc = Document{{"dist", 0.4}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -111,7 +114,8 @@ TEST_F(DocumentSourceSetMetadataTest, SetFromExpression) {
     })");
 
     Document inputDoc = Document{{"foo", 1.6}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -132,7 +136,8 @@ TEST_F(DocumentSourceSetMetadataTest, ErrorsIfExpressionDoesntMatchDateTypeMetaF
     })");
 
     Document inputDoc = Document{{"foo", 1.6}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -149,7 +154,8 @@ TEST_F(DocumentSourceSetMetadataTest, ErrorsIfExpressionDoesntMatchNumericMetaFi
     Document inputDoc = Document{{"foo",
                                   BSON_ARRAY("a" << "b"
                                                  << "c")}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -164,7 +170,8 @@ TEST_F(DocumentSourceSetMetadataTest, ErrorsIfExpressionDoesntMatchBSONObjMetaFi
     })");
 
     Document inputDoc = Document{{"grade", 5}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -179,7 +186,8 @@ TEST_F(DocumentSourceSetMetadataTest, SetMetadataBSONObj) {
     })");
 
     Document inputDoc = Document{{"dist", 0.4}};
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     auto mock = DocumentSourceMock::createForTest(inputDoc, getExpCtx());
     stage->setSource(mock.get());
 
@@ -208,7 +216,8 @@ TEST_F(DocumentSourceSetMetadataTest, SetMetadataMultipleDocuments) {
                                                          Document{{"dist", 1.1}},
                                                          Document{{"dist", 0.8}, {"bar", 10}}};
     auto mock = DocumentSourceMock::createForTest(std::move(results), getExpCtx());
-    auto stage = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto source = DocumentSourceSetMetadata::createFromBson(spec.firstElement(), getExpCtx());
+    auto stage = exec::agg::buildStage(source);
     stage->setSource(mock.get());
 
     auto next = stage->getNext();

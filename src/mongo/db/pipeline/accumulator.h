@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/intrusive_ptr.hpp>
-#include <boost/none.hpp>
-#include <boost/optional.hpp>
-#include <boost/optional/optional.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <functional>
-#include <vector>
-
 #include "mongo/base/init.h"  // IWYU pragma: keep
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsontypes.h"
@@ -53,6 +45,15 @@
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/summation.h"
+
+#include <functional>
+#include <vector>
+
+#include <boost/intrusive_ptr.hpp>
+#include <boost/none.hpp>
+#include <boost/optional.hpp>
+#include <boost/optional/optional.hpp>
+#include <boost/smart_ptr/intrusive_ptr.hpp>
 
 namespace mongo {
 
@@ -213,7 +214,7 @@ public:
     static constexpr auto kName = "$addToSet"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**
@@ -244,7 +245,7 @@ public:
     static constexpr auto kName = "$first"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorFirst(ExpressionContext* expCtx);
@@ -267,7 +268,7 @@ public:
     static constexpr auto kName = "$_internalConstructStats"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorInternalConstructStats(ExpressionContext* expCtx,
@@ -292,7 +293,7 @@ public:
     static constexpr auto kName = "$last"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorLast(ExpressionContext* expCtx);
@@ -327,7 +328,7 @@ public:
     static boost::optional<Value> getConstantArgument(boost::intrusive_ptr<Expression> arg);
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorSum(ExpressionContext* expCtx);
@@ -367,8 +368,8 @@ private:
 
     // Tracks the original constant addend argument.
     boost::optional<Value> constantAddend = boost::none;
-    BSONType totalType = NumberInt;
-    BSONType nonDecimalTotalType = NumberInt;
+    BSONType totalType = BSONType::numberInt;
+    BSONType nonDecimalTotalType = BSONType::numberInt;
     std::variant<NonConstantSumState, ConstantSumState> sum =
         std::make_pair<>(DoubleDoubleSummation(), Decimal128());
 };
@@ -404,7 +405,7 @@ public:
     static constexpr auto kName = "$max"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorMax(ExpressionContext* const expCtx)
@@ -416,7 +417,7 @@ public:
     static constexpr auto kName = "$min"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorMin(ExpressionContext* const expCtx)
@@ -428,7 +429,7 @@ public:
     static constexpr auto kName = "$push"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**
@@ -451,7 +452,7 @@ public:
     static constexpr auto kName = "$avg"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorAvg(ExpressionContext* expCtx);
@@ -471,8 +472,8 @@ private:
      */
     Decimal128 _getDecimalTotal() const;
 
-    BSONType _totalType = NumberInt;
-    BSONType _nonDecimalTotalType = NumberInt;
+    BSONType _totalType = BSONType::numberInt;
+    BSONType _nonDecimalTotalType = BSONType::numberInt;
     DoubleDoubleSummation _nonDecimalTotal;
     Decimal128 _decimalTotal;
     long long _count;
@@ -502,7 +503,7 @@ public:
     static constexpr auto kName = "$stdDevPop"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorStdDevPop(ExpressionContext* const expCtx)
@@ -514,7 +515,7 @@ public:
     static constexpr auto kName = "$stdDevSamp"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     explicit AccumulatorStdDevSamp(ExpressionContext* const expCtx)
@@ -526,7 +527,7 @@ public:
     static constexpr auto kName = "$mergeObjects"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     AccumulatorMergeObjects(ExpressionContext* expCtx);
@@ -544,7 +545,7 @@ public:
     static constexpr auto kName = "$expMovingAvg"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     AccumulatorExpMovingAvg(ExpressionContext* expCtx, Decimal128 alpha);
@@ -565,7 +566,7 @@ public:
     static constexpr auto kName = "$concatArrays"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**
@@ -589,7 +590,7 @@ public:
     static constexpr auto kName = "$setUnion"_sd;
 
     const char* getOpName() const final {
-        return kName.rawData();
+        return kName.data();
     }
 
     /**

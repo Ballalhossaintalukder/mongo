@@ -29,14 +29,6 @@
 
 #pragma once
 
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-#include <boost/optional/optional.hpp>
-#include <list>
-#include <memory>
-#include <utility>
-#include <variant>
-
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/namespace_string.h"
@@ -49,6 +41,15 @@
 #include "mongo/s/database_version.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/util/uuid.h"
+
+#include <list>
+#include <memory>
+#include <utility>
+#include <variant>
+
+#include <boost/move/utility_core.hpp>
+#include <boost/none.hpp>
+#include <boost/optional/optional.hpp>
 
 namespace mongo {
 
@@ -269,11 +270,11 @@ std::unique_ptr<Locker> swapLocker(OperationContext* opCtx,
  */
 // TODO (SERVER-77213): Move implementation to .cpp file
 inline RecoveryUnit* getRecoveryUnit(OperationContext* opCtx) {
-    return opCtx->recoveryUnit_DO_NOT_USE();
+    return storage_details::getRecoveryUnit(opCtx);
 }
 
 inline const RecoveryUnit* getRecoveryUnit(const OperationContext* opCtx) {
-    return opCtx->recoveryUnit_DO_NOT_USE();
+    return storage_details::getRecoveryUnit(opCtx);
 }
 
 /**
@@ -285,21 +286,21 @@ std::unique_ptr<RecoveryUnit> releaseRecoveryUnit(OperationContext* opCtx);
 std::unique_ptr<RecoveryUnit> releaseRecoveryUnit(OperationContext* opCtx, ClientLock& clientLock);
 
 /*
+ * Similar to replaceRecoveryUnit(), but returns the previous recovery unit like
+ * releaseRecoveryUnit(). Requires holding the client lock.
+ */
+std::unique_ptr<RecoveryUnit> releaseAndReplaceRecoveryUnit(OperationContext* opCtx,
+                                                            ClientLock& clientLock);
+
+/*
  * Sets up a new, inactive RecoveryUnit in the OperationContext. Destroys any previous recovery
  * unit and executes its rollback handlers.
  */
 // TODO (SERVER-77213): Move implementation to .cpp file
 inline void replaceRecoveryUnit(OperationContext* opCtx) {
     ClientLock lk(opCtx->getClient());
-    opCtx->replaceRecoveryUnit_DO_NOT_USE(lk);
+    releaseAndReplaceRecoveryUnit(opCtx, lk);
 }
-
-/*
- * Similar to replaceRecoveryUnit(), but returns the previous recovery unit like
- * releaseRecoveryUnit(). Requires holding the client lock.
- */
-std::unique_ptr<RecoveryUnit> releaseAndReplaceRecoveryUnit(OperationContext* opCtx,
-                                                            ClientLock& clientLock);
 
 /**
  * Associates the OperatingContext with a different RecoveryUnit for getMore or

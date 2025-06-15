@@ -27,6 +27,30 @@
  *    it in the license file.
  */
 
+#include "mongo/db/pipeline/document_source_bucket_auto.h"
+
+#include "mongo/base/error_codes.h"
+#include "mongo/bson/bsonmisc.h"
+#include "mongo/bson/bsonobj.h"
+#include "mongo/bson/bsonobjbuilder.h"
+#include "mongo/bson/bsontypes.h"
+#include "mongo/bson/json.h"
+#include "mongo/db/exec/agg/document_source_to_stage_registry.h"
+#include "mongo/db/exec/document_value/document.h"
+#include "mongo/db/exec/document_value/document_metadata_fields.h"
+#include "mongo/db/exec/document_value/document_value_test_util.h"
+#include "mongo/db/exec/document_value/value.h"
+#include "mongo/db/pipeline/aggregation_context_fixture.h"
+#include "mongo/db/pipeline/dependencies.h"
+#include "mongo/db/pipeline/document_source_mock.h"
+#include "mongo/db/pipeline/expression_context_for_test.h"
+#include "mongo/db/query/explain_options.h"
+#include "mongo/idl/server_parameter_test_util.h"
+#include "mongo/unittest/temp_dir.h"
+#include "mongo/unittest/unittest.h"
+#include "mongo/util/assert_util.h"
+#include "mongo/util/debug_util.h"
+
 #include <bitset>
 #include <cmath>
 #include <cstddef>
@@ -36,28 +60,6 @@
 #include <vector>
 
 #include <boost/smart_ptr/intrusive_ptr.hpp>
-
-#include "mongo/base/error_codes.h"
-#include "mongo/bson/bsonmisc.h"
-#include "mongo/bson/bsonobj.h"
-#include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/bson/bsontypes.h"
-#include "mongo/bson/json.h"
-#include "mongo/db/exec/document_value/document.h"
-#include "mongo/db/exec/document_value/document_metadata_fields.h"
-#include "mongo/db/exec/document_value/document_value_test_util.h"
-#include "mongo/db/exec/document_value/value.h"
-#include "mongo/db/pipeline/aggregation_context_fixture.h"
-#include "mongo/db/pipeline/dependencies.h"
-#include "mongo/db/pipeline/document_source_bucket_auto.h"
-#include "mongo/db/pipeline/document_source_mock.h"
-#include "mongo/db/pipeline/expression_context_for_test.h"
-#include "mongo/db/query/explain_options.h"
-#include "mongo/idl/server_parameter_test_util.h"
-#include "mongo/unittest/temp_dir.h"
-#include "mongo/unittest/unittest.h"
-#include "mongo/util/assert_util.h"
-#include "mongo/util/debug_util.h"
 
 namespace mongo {
 namespace {
@@ -72,8 +74,12 @@ public:
         return DocumentSourceBucketAuto::createFromBson(bucketAutoSpec.firstElement(), getExpCtx());
     }
 
+    intrusive_ptr<exec::agg::Stage> createBucketAutoStage(BSONObj bucketAutoSpec) {
+        return exec::agg::buildStage(createBucketAuto(bucketAutoSpec));
+    }
+
     vector<Document> getResults(BSONObj bucketAutoSpec, deque<Document> inputs) {
-        auto bucketAutoStage = createBucketAuto(bucketAutoSpec);
+        auto bucketAutoStage = createBucketAutoStage(bucketAutoSpec);
         assertBucketAutoType(bucketAutoStage);
 
         // Convert Documents to GetNextResults.
@@ -113,6 +119,10 @@ public:
 
 private:
     void assertBucketAutoType(intrusive_ptr<DocumentSource> documentSource) {
+        const auto* bucketAutoStage = dynamic_cast<DocumentSourceBucketAuto*>(documentSource.get());
+        ASSERT(bucketAutoStage);
+    }
+    void assertBucketAutoType(intrusive_ptr<exec::agg::Stage> documentSource) {
         const auto* bucketAutoStage = dynamic_cast<DocumentSourceBucketAuto*>(documentSource.get());
         ASSERT(bucketAutoStage);
     }
@@ -346,7 +356,7 @@ TEST_F(BucketAutoTests, RespectsCanonicalTypeOrderingOfValues) {
 
 TEST_F(BucketAutoTests, ShouldPropagatePauses) {
     auto bucketAutoSpec = fromjson("{$bucketAuto : {groupBy : '$x', buckets : 2}}");
-    auto bucketAutoStage = createBucketAuto(bucketAutoSpec);
+    auto bucketAutoStage = createBucketAutoStage(bucketAutoSpec);
     auto source =
         DocumentSourceMock::createForTest({Document{{"x", 1}},
                                            DocumentSource::GetNextResult::makePauseExecution(),
@@ -662,10 +672,10 @@ TEST_F(BucketAutoTests, ShouldBeAbleToReParseSerializedStage) {
     vector<Value> serialization;
     bucketAuto->serializeToArray(serialization);
     ASSERT_EQUALS(serialization.size(), 1UL);
-    ASSERT_EQUALS(serialization[0].getType(), BSONType::Object);
+    ASSERT_EQUALS(serialization[0].getType(), BSONType::object);
 
     ASSERT_EQUALS(serialization[0].getDocument().computeSize(), 1ULL);
-    ASSERT_EQUALS(serialization[0].getDocument()["$bucketAuto"].getType(), BSONType::Object);
+    ASSERT_EQUALS(serialization[0].getDocument()["$bucketAuto"].getType(), BSONType::object);
 
     auto serializedBson = serialization[0].getDocument().toBson();
     auto roundTripped = createBucketAuto(serializedBson);
@@ -1250,7 +1260,7 @@ TEST_F(BucketAutoTests, PauseBucketAutoWithConcatArrays) {
                     array: { $concatArrays: '$arr' }
                 }
             }})");
-    auto bucketAutoStage = createBucketAuto(spec);
+    auto bucketAutoStage = createBucketAutoStage(spec);
     deque<DocumentSource::GetNextResult> mockInputs{
         Document(fromjson("{_id: 0, arr: ['string 0']}")),
         DocumentSource::GetNextResult::makePauseExecution(),
@@ -1276,7 +1286,7 @@ TEST_F(BucketAutoTests, PauseBucketAutoWithPush) {
                     array: { $push: '$arr' }
                 }
             }})");
-    auto bucketAutoStage = createBucketAuto(spec);
+    auto bucketAutoStage = createBucketAutoStage(spec);
     deque<DocumentSource::GetNextResult> mockInputs{
         Document(fromjson("{_id: 0, arr: 'string 0'}")),
         DocumentSource::GetNextResult::makePauseExecution(),
@@ -1302,7 +1312,7 @@ TEST_F(BucketAutoTests, PauseBucketAutoWithMergeObjects) {
                     obj: { $mergeObjects: '$o' }
                 }
             }})");
-    auto bucketAutoStage = createBucketAuto(spec);
+    auto bucketAutoStage = createBucketAutoStage(spec);
     deque<DocumentSource::GetNextResult> mockInputs{
         Document(fromjson("{_id: 0, o: {a: 1}}")),
         DocumentSource::GetNextResult::makePauseExecution(),
@@ -1327,7 +1337,7 @@ TEST_F(BucketAutoTests, PauseBucketAutoWithFirstN) {
                     foo: { $firstN: {input: '$a', n: 2 }}
                 }
             }})");
-    auto bucketAutoStage = createBucketAuto(spec);
+    auto bucketAutoStage = createBucketAutoStage(spec);
     deque<DocumentSource::GetNextResult> mockInputs{
         Document(fromjson("{_id: 0, a: 1}")),
         DocumentSource::GetNextResult::makePauseExecution(),
@@ -1353,7 +1363,7 @@ TEST_F(BucketAutoTests, PauseBucketAutoWithLastN) {
                     foo: { $lastN: {input: '$a', n: 2 }}
                 }
             }})");
-    auto bucketAutoStage = createBucketAuto(spec);
+    auto bucketAutoStage = createBucketAutoStage(spec);
     deque<DocumentSource::GetNextResult> mockInputs{
         Document(fromjson("{_id: 0, a: 1}")),
         Document(fromjson("{_id: 1, a: 2}")),
